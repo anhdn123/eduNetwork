@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Đăng nhập · Learning by AI</title>
+<link rel="stylesheet" href="style.css"><link rel="stylesheet" href="app.css">
+</head>
+<body data-public>
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="logo" style="margin-bottom:14px">Learning <span>by AI</span></div>
+
+    <form id="login" hidden>
+      <h1>Đăng nhập</h1>
+      <p>Dùng tài khoản do giáo viên hoặc nhà trường cấp.</p>
+      <label class="lb-field"><span>TÊN ĐĂNG NHẬP</span><input id="lu" autocomplete="username" autocapitalize="off" required></label>
+      <label class="lb-field"><span>MẬT KHẨU</span><input id="lp" type="password" autocomplete="current-password" required></label>
+      <div class="auth-err" id="le"></div>
+      <button class="btn btn-blue" style="width:100%" id="lb">Đăng nhập</button>
+      <p style="margin-top:14px;font-size:11px">Chưa có tài khoản? Hãy liên hệ giáo viên chủ nhiệm hoặc quản trị viên để được cấp.</p>
+    </form>
+
+    <form id="setup" hidden>
+      <h1>Thiết lập lần đầu</h1>
+      <p>Hệ thống chưa có tài khoản nào. Hãy tạo tài khoản <b>quản trị viên</b> — người này sẽ tạo tài khoản cho các giáo viên.</p>
+      <label class="lb-field"><span>HỌ TÊN</span><input id="sn" required maxlength="80"></label>
+      <label class="lb-field"><span>TÊN ĐĂNG NHẬP (3–32 ký tự: chữ, số, . _ -)</span><input id="su" autocapitalize="off" required maxlength="32"></label>
+      <label class="lb-field"><span>MẬT KHẨU (≥ 8 ký tự)</span><input id="sp" type="password" autocomplete="new-password" required></label>
+      <label class="lb-field"><span>NHẬP LẠI MẬT KHẨU</span><input id="sp2" type="password" autocomplete="new-password" required></label>
+      <div class="auth-err" id="se"></div>
+      <button class="btn btn-blue" style="width:100%" id="sb">Tạo tài khoản quản trị</button>
+    </form>
+  </div>
+</div>
+<script src="api.js"></script>
+<script>
+(async () => {
+  const {$, api, HOME} = LB;
+  await LB.ready;
+  if (LB.me) return go(LB.me);
+  const st = await api.get('/api/status');
+  (st.needs_setup ? $('#setup') : $('#login')).hidden = false;
+  (st.needs_setup ? $('#sn') : $('#lu')).focus();
+
+  function go(me) {
+    const next = new URLSearchParams(location.search).get('next') || '';
+    location.href = /^[a-z-]+\.html(\?[\w=&.-]*)?$/.test(next) ? next : HOME[me.role];
+  }
+  $('#login').onsubmit = async e => {
+    e.preventDefault(); $('#le').textContent = ''; $('#lb').disabled = true;
+    try { const r = await api.post('/api/login', {username: $('#lu').value.trim(), password: $('#lp').value}); go(r.user); }
+    catch (err) { $('#le').textContent = err.message; $('#lb').disabled = false; $('#lp').value = ''; $('#lp').focus(); }
+  };
+  $('#setup').onsubmit = async e => {
+    e.preventDefault(); $('#se').textContent = '';
+    if ($('#sp').value !== $('#sp2').value) return $('#se').textContent = 'Hai mật khẩu không khớp';
+    $('#sb').disabled = true;
+    try { await api.post('/api/setup', {name: $('#sn').value.trim(), username: $('#su').value.trim(), password: $('#sp').value}); location.href = 'manage.html'; }
+    catch (err) { $('#se').textContent = err.message; $('#sb').disabled = false; }
+  };
+})();
+</script>
+</body>
+</html>

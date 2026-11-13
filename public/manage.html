@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lớp học & học sinh · Learning by AI</title>
+<link rel="stylesheet" href="style.css"><link rel="stylesheet" href="app.css">
+</head>
+<body data-roles="teacher,admin">
+<div class="topbar"><span>LEARNING BY AI · QUẢN LÝ LỚP HỌC</span><span>Tài khoản học sinh · Giao đề · Kết quả</span></div>
+<header class="header"><a class="logo" href="index.html">Learning <span>by AI</span></a><nav class="nav"></nav><div class="header-actions"></div></header>
+<main class="page-wrap">
+  <h1 style="margin:0 0 4px">Lớp học & học sinh</h1>
+  <p class="section-sub" style="margin:0">Tạo lớp, cấp tài khoản cho học sinh, xem bài đã giao và kết quả.</p>
+  <div class="tabs" id="tabs">
+    <button data-tab="classes" class="on">Lớp & học sinh</button>
+    <button data-tab="practice">🎯 Mở luyện tập tự do</button>
+    <button data-tab="assign">Bài đã giao</button>
+    <button data-tab="parents">Phụ huynh</button>
+    <button data-tab="teachers" id="tab-teachers" hidden>Giáo viên (quản trị)</button>
+  </div>
+  <div id="view"></div>
+</main>
+<script src="api.js"></script>
+<script src="app.js"></script>
+<script src="manage.js"></script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Giáo viên · Learning by AI</title>
+<link rel="stylesheet" href="style.css"><link rel="stylesheet" href="app.css">
+</head>
+<body data-roles="admin,teacher,student,parent">
+<div class="topbar"><span>LEARNING BY AI · TEACHERS</span><span>Hồ sơ nghề nghiệp · Tài liệu · Chia sẻ</span></div>
+<header class="header"><a class="logo" href="index.html">Learning <span>by AI</span></a><nav class="nav"></nav><div class="header-actions"></div></header>
+<main class="page-wrap" id="main"></main>
+<script src="api.js"></script><script src="feed.js"></script>
+<script>
+(async () => {
+  const {$, $$, esc, api, toast, modal} = LB;
+  await LB.ready; const me = LB.me, main = $('#main');
+  const id = new URLSearchParams(location.search).get('id');
+
+  async function directory() {
+    const list = (await api.get('/api/directory/teachers')).teachers;
+    main.innerHTML = `<h1 style="margin:0 0 4px">Giáo viên</h1><p class="section-sub" style="margin:0 0 16px">Theo dõi giáo viên để nhận tài liệu và bài giảng mới trên bảng tin.</p>
+      <div class="grid3" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">${list.length ? list.map(t => `<div class="card" data-t="${t.id}"><div class="post-head"><div class="mini-avatar teacher-av">${esc(LB.initials(t.name))}</div><div class="post-author"><b>${esc(t.name)}</b><span>${esc(t.subject || 'Giáo viên')}</span></div></div>
+        <p style="font-size:12px;color:#667085;min-height:34px;margin:10px 0">${esc(t.bio || 'Chưa có giới thiệu.')}</p>
+        <div style="font-size:11px;color:#475467;margin-bottom:10px">${t.posts} bài đăng · ${t.followers} người theo dõi</div>
+        <div class="lb-row"><a class="btn btn-blue sm" href="teachers.html?id=${t.id}">Xem hồ sơ</a>${t.id !== me.id ? `<button class="btn btn-outline sm" data-f="${t.id}">${t.followed ? '✓ Đang theo dõi' : '+ Theo dõi'}</button>` : ''}</div></div>`).join('') : '<div class="card empty">Chưa có giáo viên nào.</div>'}</div>`;
+    $$('[data-f]').forEach(b => b.onclick = async () => { try { const r = await api.post('/api/follow/' + b.dataset.f); b.textContent = r.on ? '✓ Đang theo dõi' : '+ Theo dõi'; } catch (e) { toast(e.message); } });
+  }
+
+  async function profile(uid) {
+    const r = await api.get(`/api/users/${uid}/public`), u = r.user, mine = u.id === me.id;
+    main.innerHTML = `<a href="teachers.html" style="font-size:12px">← Danh sách giáo viên</a>
+      <div class="card" style="margin:10px 0 16px"><div class="post-head"><div class="mini-avatar teacher-av" style="width:64px;height:64px;font-size:20px">${esc(LB.initials(u.name))}</div>
+        <div class="post-author"><b style="font-size:20px">${esc(u.name)}</b><span>${LB.ROLE_VN[u.role]}${u.subject ? ' · ' + esc(u.subject) : ''} · ${r.followers} người theo dõi</span></div>
+        <div style="margin-left:auto" class="lb-row">${mine ? '<button class="btn btn-outline sm" id="edit">Chỉnh sửa hồ sơ</button><a class="btn btn-blue sm" href="teacher-builder.html">✦ AI Copilot</a>' : `<button class="btn btn-blue sm" id="fol">${r.followed ? '✓ Đang theo dõi' : '+ Theo dõi'}</button>`}</div></div>
+        <p style="font-size:13px;line-height:1.7;color:#475467;margin:12px 0 0">${esc(u.bio || 'Chưa có giới thiệu.')}</p></div>
+      <h2 style="font-size:18px">Bài đăng</h2><div id="feed" style="max-width:720px"></div>`;
+    await LBFeed.mount($('#feed'), {author: uid});
+    const fol = $('#fol'); if (fol) fol.onclick = async () => { try { const x = await api.post('/api/follow/' + uid); fol.textContent = x.on ? '✓ Đang theo dõi' : '+ Theo dõi'; } catch (e) { toast(e.message); } };
+    const ed = $('#edit'); if (ed) ed.onclick = () => {
+      const m = modal(`<h2>Chỉnh sửa hồ sơ</h2><label class="lb-field"><span>HỌ TÊN</span><input id="en" maxlength="80" value="${esc(u.name)}"></label>
+        <label class="lb-field"><span>MÔN GIẢNG DẠY</span><input id="es" maxlength="60" value="${esc(u.subject)}"></label>
+        <label class="lb-field"><span>GIỚI THIỆU</span><textarea id="eb" maxlength="600">${esc(u.bio)}</textarea></label><button class="btn btn-blue" id="ev">Lưu</button>`);
+      $('#ev', m.b).onclick = async () => { const name = $('#en', m.b).value.trim(); if (!name) return toast('Tên không được để trống'); try { await api.patch('/api/profile', {name, subject: $('#es', m.b).value.trim(), bio: $('#eb', m.b).value.trim()}); m.close(); profile(uid); } catch (e) { toast(e.message); } };
+    };
+  }
+  try { id ? await profile(+id) : await directory(); } catch (e) { main.innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
+})();
+</script>
+</body></html>

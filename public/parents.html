@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Phụ huynh · Learning by AI</title>
+<link rel="stylesheet" href="style.css"><link rel="stylesheet" href="app.css">
+</head>
+<body data-roles="parent">
+<div class="topbar"><span>LEARNING BY AI · PARENT SPACE</span><span>Hiểu con · Đồng hành · Kết nối giáo viên</span></div>
+<header class="header"><a class="logo" href="index.html">Learning <span>by AI</span></a><nav class="nav"></nav><div class="header-actions"></div></header>
+<main class="page-wrap">
+  <h1 style="margin:0 0 4px">Con của tôi</h1>
+  <p class="section-sub" style="margin:0 0 16px">Kết quả các bài kiểm tra online của con. Chỉ hiển thị dữ liệu của con bạn, theo tài khoản được giáo viên liên kết.</p>
+  <div id="kids"></div>
+</main>
+<script src="api.js"></script>
+<script>
+(async () => {
+  const {$, esc, api, fmtDate, fmtScore} = LB;
+  await LB.ready;
+  let kids; try { kids = (await api.get('/api/children')).children; } catch (e) { $('#kids').innerHTML = `<div class="card empty">${esc(e.message)}</div>`; return; }
+  $('#kids').innerHTML = kids.length ? kids.map(k => `<div class="card" style="margin-bottom:16px"><div class="post-head"><div class="mini-avatar student-av">${esc(LB.initials(k.name))}</div><div><div class="post-name">${esc(k.name)}</div><div class="post-time">${k.class_name ? 'Lớp ' + esc(k.class_name) : ''}</div></div></div>
+    <div class="grid3" style="margin:14px 0"><div class="card" style="box-shadow:none;text-align:center"><b style="font-size:24px">${fmtScore(k.avg)}</b><div class="muted" style="font-size:10px">điểm trung bình</div></div>
+      <div class="card" style="box-shadow:none;text-align:center"><b style="font-size:24px">${k.results.length}</b><div class="muted" style="font-size:10px">bài đã nộp</div></div>
+      <div class="card" style="box-shadow:none;text-align:center"><b style="font-size:24px">${k.pending}</b><div class="muted" style="font-size:10px">bài chưa làm</div></div>
+      <div class="card" style="box-shadow:none;text-align:center"><b style="font-size:24px">${k.practice ? k.practice.n : 0}</b><div class="muted" style="font-size:10px">lần tự luyện tập${k.practice && k.practice.avg != null ? ` · TB ${fmtScore(k.practice.avg)}` : ''}</div></div></div>
+    ${k.results.length ? `<table class="tbl"><tr><th>Bài</th><th>Điểm (10)</th><th>Nộp lúc</th></tr>${k.results.map(r => `<tr><td>${esc(r.title)}</td><td><b>${fmtScore(r.score10)}</b></td><td>${fmtDate(r.at)}</td></tr>`).join('')}</table>` : '<div class="empty">Con chưa nộp bài nào.</div>'}</div>`).join('')
+    : '<div class="card empty">Tài khoản này chưa được liên kết với học sinh nào. Hãy liên hệ giáo viên chủ nhiệm.</div>';
+})();
+</script>
+</body></html>

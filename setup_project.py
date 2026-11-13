@@ -1,0 +1,182 @@
+import os
+
+files = {
+    "Learning_by_AI_FINAL/.gitignore": """# Operating System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor & IDE directories
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Local environment / API keys (if any)
+.env
+.env.local
+""",
+    "Learning_by_AI_FINAL/teacher-builder.html": '''<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Teacher Copilot · Learning by AI</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="app.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<!-- Mammoth.js để đọc file Word .docx và PDF.js để đọc file PDF trực tiếp trên trình duyệt -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+  if (window.pdfjsLib) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+</script>
+</head><body>
+<div class="topbar"><span>LEARNING BY AI · AI TEACHER COPILOT</span><span>Soạn ít hơn · Hiểu học sinh hơn</span></div><header class="header"><a class="logo" href="index.html">Learning <span>by AI</span></a><nav class="nav"><a href="index.html">Bảng tin</a><a href="teachers.html">Giáo viên</a><a href="students.html">Học sinh</a><a href="parents.html">Phụ huynh</a><a class="active" href="teacher-builder.html">AI Copilot</a></nav><div class="header-actions"><button class="icon-btn">⌕</button><div class="avatar">NA</div></div></header>
+<section class="hero" style="padding:50px 0"><div class="container"><div class="eyebrow">AI TEACHER COPILOT</div><h1 style="font-size:42px">Một lần giao mục tiêu.<br>AI lo phần cá nhân hóa.</h1><p>Trợ lý AI riêng của giáo viên: học từ kho tài liệu và phong cách của giáo viên, cập nhật nguồn giáo dục được chọn, tạo đề custom, xuất bản in/online, chấm và phân tích — nhưng giáo viên luôn là người duyệt quyết định cuối cùng.</p></div></section>
+<main class="builder-layout"><section><div class="card"><h2 class="section-title" style="font-size:22px">1. Giáo viên muốn tạo gì?</h2><div class="option-grid" style="margin-top:16px"><div class="option active"><b>📝 Đề kiểm tra</b><span>Ma trận · đặc tả · đáp án</span></div><div class="option"><b>📚 Chuyên đề</b><span>Worksheet · bài mẫu · luyện tập</span></div><div class="option"><b>🎯 Bài tập cá nhân hóa</b><span>Mỗi học sinh một mức phù hợp</span></div></div><h2 class="section-title" style="font-size:22px;margin-top:28px">2. Cấu hình đề</h2>
+<div class="grid3" style="margin-top:14px">
+  <div>
+    <label class="muted" style="font-size:10px">Môn học</label>
+    <select id="cfg-subject" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:12px;background:#fff">
+      <option value="Toán" selected>Toán học</option>
+      <option value="Ngữ văn">Ngữ văn</option>
+      <option value="Tiếng Anh">Tiếng Anh</option>
+      <option value="Vật lý">Vật lý (KHTN)</option>
+      <option value="Hóa học">Hóa học (KHTN)</option>
+      <option value="Sinh học">Sinh học (KHTN)</option>
+      <option value="Lịch sử & Địa lý">Lịch sử & Địa lý</option>
+      <option value="Tin học">Tin học</option>
+    </select>
+  </div>
+  <div>
+    <label class="muted" style="font-size:10px">Khối lớp</label>
+    <select id="cfg-grade" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:12px;background:#fff">
+      <option value="6">Khối 6</option>
+      <option value="7">Khối 7</option>
+      <option value="8">Khối 8</option>
+      <option value="9" selected>Khối 9</option>
+      <option value="10">Khối 10</option>
+      <option value="11">Khối 11</option>
+      <option value="12">Khối 12</option>
+    </select>
+  </div>
+  <div>
+    <label class="muted" style="font-size:10px">Chuyên đề bài học</label>
+    <select id="cfg-topic" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:12px;background:#fff"></select>
+    <input id="cfg-topic-custom" type="text" placeholder="Nhập chuyên đề riêng của bạn..." style="display:none;width:100%;margin-top:6px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:11px">
+  </div>
+</div>
+
+<div class="card" style="box-shadow:none;background:#f8fafc;margin-top:16px">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+    <h3 style="font-size:13px;margin:0">Cấu trúc câu hỏi & Số mã đề</h3>
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:6px">
+        <label class="muted" style="font-size:10px">Số mã đề tạo:</label>
+        <select id="cfg-exam-count" style="padding:4px 8px;border:1px solid var(--line);border-radius:6px;font-size:11px;background:#fff">
+          <option value="2">2 mã đề (Đề A, Đề B)</option>
+          <option value="3" selected>3 mã đề (101, 102, 103)</option>
+          <option value="4">4 mã đề (101, 102, 103, 104)</option>
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <label class="muted" style="font-size:10px">Quy tắc sinh đề:</label>
+        <select id="cfg-exam-mode" style="padding:4px 8px;border:1px solid var(--line);border-radius:6px;font-size:11px;background:#fff">
+          <option value="shuffle" selected>Đề song song (Trộn câu & đảo phương án)</option>
+          <option value="differentiated">Đề phân hóa (Cơ bản, Tiêu chuẩn, Nâng cao)</option>
+          <option value="equivalent">Đề tương đương (Đổi số liệu & biến số)</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:16px;flex-wrap:wrap;margin:10px 0 8px">
+    <label class="check" style="display:flex;gap:8px;font-size:10px"><input type="checkbox" data-t="mcq" checked> Trắc nghiệm (MCQ)</label>
+    <label class="check" style="display:flex;gap:8px;font-size:10px"><input type="checkbox" data-t="tf" checked> Đúng / Sai</label>
+    <label class="check" style="display:flex;gap:8px;font-size:10px"><input type="checkbox" data-t="short"> Điền đáp số ngắn</label>
+    <label class="check" style="display:flex;gap:8px;font-size:10px"><input type="checkbox" data-t="essay" checked> Tự luận / Chi tiết</label>
+  </div>
+
+  <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+    <div>
+      <label class="muted" style="font-size:10px">Số câu / đề:</label>
+      <input id="cfg-n" type="number" min="3" max="30" value="10" style="width:60px;padding:5px;border:1px solid var(--line);border-radius:6px;margin-left:4px">
+    </div>
+    <div style="flex:1;min-width:180px">
+      <div style="display:flex;justify-content:space-between;font-size:9px;color:#7a8697;margin-bottom:2px">
+        <span>Củng cố</span><span>Vận dụng</span><span>Nâng cao</span>
+      </div>
+      <input class="range" type="range" min="0" max="100" value="35">
+    </div>
+  </div>
+
+  <!-- LỰA CHỌN ĐỘNG CƠ CỐT LÕI & AI TÙY CHỌN -->
+  <div style="margin-top:14px;padding:12px 14px;border-radius:10px;background:#f0fdf4;border:1px solid #bbf7d0;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+    <div>
+      <b style="font-size:11px;color:#166534;display:flex;align-items:center;gap:6px">
+        <span>⚡</span> Động cơ mặc định: Thuật toán Rule-Based (100% Local & Siêu tốc)
+      </b>
+      <span style="font-size:9px;color:#15803d;display:block;margin-top:2px">
+        Tự động bóc tách web, trộn thứ tự câu hỏi và hoán vị đáp án A/B/C/D tức thì mà không phụ thuộc API hay lo đứt mạng.
+      </span>
+    </div>
+    <label class="check" style="display:flex;align-items:center;gap:7px;font-size:11px;background:#fff;border:1px solid #86efac;padding:6px 12px;border-radius:8px;cursor:pointer">
+      <input type="checkbox" id="cfg-use-ai">
+      <span style="font-weight:700;color:#15803d">🤖 Sử dụng AI viết lại văn phong (Tùy chọn)</span>
+    </label>
+  </div>
+</div>
+
+<h2 class="section-title" style="font-size:22px;margin-top:28px">3. Nguồn tri thức & Động cơ</h2>
+<div class="grid4" style="margin-top:14px">
+  <div class="card" style="box-shadow:none;background:#f0fdf4;border:1px solid #bbf7d0">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <b style="font-size:11px;color:#166534">⚡ Thuật toán Rule-Based</b>
+      <span style="font-size:8px;padding:2px 6px;border-radius:10px;background:#dcfce7;color:#15803d;font-weight:700">Mặc định</span>
+    </div>
+    <p class="muted" style="font-size:9px">Ngân hàng chuẩn GDPT & Trộn đề Fisher-Yates 100% Local</p>
+    <div style="font-size:9px;color:#166534;font-weight:700;padding:6px 0">✓ Sẵn sàng hoạt động</div>
+  </div>
+
+  <div class="card" style="box-shadow:none;background:#fbfdff;border:1px solid #93c5fd">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <b style="font-size:11px;color:#1e40af">🌐 Cào đề từ Link Web</b>
+      <span id="web-status-badge" style="font-size:8px;padding:2px 6px;border-radius:10px;background:#f1f5f9;color:#64748b;font-weight:700">Chưa có link</span>
+    </div>
+    <p class="muted" style="font-size:9px" id="web-status-desc">Bóc tách tự động bằng Regex không cần AI</p>
+    <button class="btn btn-blue" style="font-size:9px;width:100%;padding:8px" data-act="import-web">🔗 Nhập link web cào đề</button>
+  </div>
+
+  <div class="card" style="box-shadow:none;border:1px solid var(--line)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <b style="font-size:11px;color:#475467">🔑 Gemini AI (Tùy chọn)</b>
+      <span id="api-status-badge" style="font-size:8px;padding:2px 6px;border-radius:10px;background:#fee2e2;color:#b91c1c;font-weight:700">Chưa có Key</span>
+    </div>
+    <p class="muted" style="font-size:9px" id="api-status-desc">Chỉ dùng khi tích chọn Bật AI</p>
+    <button class="btn btn-outline" style="font-size:9px;width:100%;padding:8px" data-act="set-apikey">Cài đặt API Key</button>
+  </div>
+
+  <div class="card" style="box-shadow:none;border:1px solid #94a3b8;background:#f8fafc">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <b style="font-size:11px;color:#0f172a">📁 Kho câu hỏi & Phân loại</b>
+      <span id="bank-count-badge" style="font-size:8px;padding:2px 6px;border-radius:10px;background:#dcfce7;color:#15803d;font-weight:700">0 câu</span>
+    </div>
+    <p class="muted" style="font-size:9px" id="bank-status-desc">Tự động phân loại chuyên đề, nạp file 50 đề & quản lý kho</p>
+    <div style="display:flex;gap:4px">
+      <button class="btn btn-blue" style="font-size:9px;flex:1;padding:8px" data-act="view-bank">👁 Xem Kho</button>
+      <button class="btn btn-outline" style="font-size:9px;flex:1;padding:8px" data-act="upload-bulk-file">📥 Nạp file Word/PDF/TXT</button>
+    </div>
+  </div>
+</div>
+<h2 class="section-title" style="font-size:22px;margin-top:28px" id="personalize">4. Giao bài & cá nhân hóa</h2><div class="ai-box"><b>🎯 AI đọc Learning Profile của lớp 9A1</b><p style="font-size:10px;line-height:1.7">42 học sinh → tự tạo phiên bản phù hợp theo năng lực thành phần, không chỉ dựa vào điểm tổng. Giáo viên có thể xem và chỉnh trước khi giao.</p><div class="grid3"><div><b style="font-size:10px">An</b><p style="font-size:9px">Mức 2 · củng cố nền tảng</p></div><div><b style="font-size:10px">Bình</b><p style="font-size:9px">Mức 3 · cơ bản → vận dụng</p></div><div><b style="font-size:10px">Dũng</b><p style="font-size:9px">Mức 5 · nâng cao</p></div></div></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px"><button class="btn btn-outline" data-act="print">📄 Bản in</button><button class="btn btn-outline" data-act="online">💻 Bản online</button><button class="btn btn-blue" data-act="gen">✦ Generate & giao bài</button></div></div></section>
+<aside><div class="card"><div class="eyebrow" style="color:#64809f">AI RESEARCH</div><h3 style="margin-top:8px">Nguồn mới phù hợp với bạn</h3><div class="resource"><div class="resource-icon">NEW</div><div class="resource-info"><b>Đề thi mới cập nhật</b><span>Nguồn xác minh · 2 giờ trước</span></div></div><div class="resource"><div class="resource-icon">DOC</div><div class="resource-info"><b>Tài liệu chuyên môn</b><span>Phù hợp với Toán 9</span></div></div><button class="btn btn-outline" style="width:100%" data-act="research">Xem tất cả</button></div><div class="card" style="margin-top:16px"><div class="eyebrow" style="color:#64809f">OUTPUT</div><h3 style="margin-top:8px">Một nguồn → nhiều sản phẩm</h3><p class="section-sub" style="font-size:10px">Đề thi mới có thể được AI phân tích thành dạng kiến thức, câu tương tự, worksheet, mini test, slide và bài tập cá nhân hóa.</p><div class="notice">⏱ AI giúp giáo viên giảm công việc lặp lại; giáo viên vẫn duyệt nội dung trước khi dùng.</div></div><div class="card" style="margin-top:16px"><div class="eyebrow" style="color:#64809f">TEACHER PRO</div><h3 style="margin-top:8px">AI Copilot giá thấp</h3><p style="font-size:10px;line-height:1.6">Gói đề xuất: <b>79k Basic</b> · <b>149k Pro/tháng</b>. Free tier giúp giáo viên trải nghiệm trước.</p><button class="btn btn-red" style="width:100%" data-act="plans">Xem gói</button></div></aside></main>
+<footer class="footer"><div class="footer-grid"><div><h4>Learning by AI</h4><p>AI làm việc phía sau để giáo viên có thêm thời gian cho việc quan trọng nhất: dạy học.</p></div><div><h4>Copilot</h4><a href="#personalize">Cá nhân hóa</a><br><a href="#">AI Research</a><br><a href="#">Tạo đề</a></div><div><h4>Output</h4><a href="#">Bản in</a><br><a href="#">Online</a><br><a href="#">Chấm & phân tích</a></div><div><h4>Human in the loop</h4><span class="privacy">AI đề xuất; giáo viên duyệt. Không tự động đưa ra quyết định giáo dục quan trọng.</span></div></div><div class="footer-bottom">© 2026 Learning by AI</div></footer><script src="app.js"></script></body></html>'''
+}
+
+for path, content in files.items():
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(content)
+
+print("Setup completed successfully! Mở file teacher-builder.html để chạy.")
