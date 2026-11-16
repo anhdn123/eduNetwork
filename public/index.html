@@ -50,7 +50,7 @@
   if (me.role === 'student' || me.role === 'parent') $$('.t-only').forEach(b => b.remove());
   const todo = $('#side-todo');
   if (me.role === 'student') api.get('/api/assignments').then(r => { const n = r.assignments.filter(a => !a.closed && a.attempts < a.max_attempts).length; todo.innerHTML = `<div class="side-title">VIỆC CẦN LÀM</div><a class="side-link" href="students.html"><span>📝</span>${n} bài cần làm</a><a class="side-link" href="students.html#practice"><span>🎯</span>Tự luyện tập</a>`; });
-  else if (me.role === 'teacher' || me.role === 'admin') todo.innerHTML = '<div class="side-title">QUẢN LÝ</div><a class="side-link" href="manage.html"><span>🏫</span>Lớp & học sinh</a><a class="side-link" href="teacher-builder.html"><span>✦</span>Tạo đề (AI Copilot)</a><a class="side-link" href="manage.html#practice"><span>🎯</span>Mở luyện tập tự do</a>';
+  else if (me.role === 'teacher' || me.role === 'admin') todo.innerHTML = '<div class="side-title">QUẢN LÝ</div><a class="side-link" href="manage.html"><span>🏫</span>Lớp & học sinh</a><a class="side-link" href="manage.html#attend"><span>📋</span>Điểm danh hôm nay</a><a class="side-link" href="teacher-builder.html"><span>✦</span>Tạo đề (AI Copilot)</a><a class="side-link" href="manage.html#practice"><span>🎯</span>Mở luyện tập tự do</a>';
   else todo.innerHTML = '<div class="side-title">CON CỦA TÔI</div><a class="side-link" href="parents.html"><span>👨‍👩‍👧</span>Xem kết quả của con</a>';
 
   const params = {mode: 'foryou', q: ''}; let reload;

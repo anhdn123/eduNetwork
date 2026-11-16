@@ -8,6 +8,9 @@ Biến môi trường:
   LBAI_COOKIE_SECURE=1  bật cờ Secure cho cookie (khi chạy sau HTTPS)
 """
 import base64
+import calendar
+import datetime
+import hashlib
 import http.server
 import json
 import mimetypes
@@ -479,13 +482,18 @@ def clean_html(s):
     return "".join(out)
 
 
+def valid_img_id(v):
+    return isinstance(v, str) and bool(re.fullmatch(r"[a-f0-9]{16,40}", v))
+
+
 def clean_question(q):
     if not isinstance(q, dict) or not isinstance(q.get("id"), str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", q["id"]):
         raise ApiError(400, "Câu hỏi không hợp lệ (id)")
     if q.get("t") not in ("mcq", "tf", "short", "essay") or not isinstance(q.get("q"), str):
         raise ApiError(400, "Câu hỏi không hợp lệ (dạng câu / nội dung)")
-    if q.get("img") is not None and not (isinstance(q["img"], str) and re.fullmatch(r"[a-f0-9]{16,40}", q["img"])):
-        raise ApiError(400, "Câu hỏi không hợp lệ (ảnh)")
+    for k in ("img", "solImg"):
+        if q.get(k) is not None and not valid_img_id(q[k]):
+            raise ApiError(400, "Câu hỏi không hợp lệ (ảnh)")
     q["q"] = clean_html(q["q"])
     if "sol" in q:
         q["sol"] = clean_html(q["sol"])
@@ -522,10 +530,11 @@ def r_bank_sync(c):
         if isinstance(qid, str):
             row = c.con.execute("SELECT data FROM bank WHERE owner_id=? AND id=?", (c.user["id"], qid)).fetchone()
             if row:
-                img = json.loads(row["data"]).get("img")
+                old = json.loads(row["data"])
                 c.con.execute("DELETE FROM bank WHERE owner_id=? AND id=?", (c.user["id"], qid))
-                if img:
-                    drop_image_if_unused(c.con, img)
+                for k in ("img", "solImg"):
+                    if valid_img_id(old.get(k)):
+                        drop_image_if_unused(c.con, old[k])
     return {"ok": True}
 
 
@@ -574,7 +583,7 @@ def check_variations(vs):
             q["q"] = clean_html(q["q"])
             if "sol" in q:
                 q["sol"] = clean_html(q["sol"])
-            if q.get("img") is not None and not (isinstance(q["img"], str) and re.fullmatch(r"[a-f0-9]{16,40}", q["img"])):
+            if any(q.get(k) is not None and not valid_img_id(q[k]) for k in ("img", "solImg")):
                 raise ApiError(400, "Có câu hỏi không hợp lệ trong đề (ảnh)")
         out.append({"code": str(v.get("code") or f"Mã đề {101 + i}")[:30], "name": str(v.get("name") or f"Đề số {i + 1}")[:60],
                     "desc": str(v.get("desc") or "")[:120], "questions": qs})
@@ -598,18 +607,77 @@ def adaptive_variation(con, sid, n):
     return min(tier, n - 1)
 
 
+def balanced_random(n_students, n_vars):
+    """Chia ngẫu nhiên nhưng đều: số học sinh mỗi mã đề chênh nhau tối đa 1."""
+    lst = [i % n_vars for i in range(n_students)]
+    random.shuffle(lst)
+    return lst
+
+
+def parse_var_choice(v, n_vars):
+    """Lựa chọn mã đề cho một học sinh: số thứ tự mã đề · 'free' (học sinh tự chọn) · 'none'/None (không giao)."""
+    if v is None or v == "none":
+        return "none"
+    if v == "free":
+        return None
+    if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v < n_vars:
+        raise ApiError(400, "Mã đề chỉ định không hợp lệ")
+    return v
+
+
+def show_result_value(v):
+    """0: không cho xem đáp án · 1: xem ngay sau khi nộp · 2: xem sau khi hết hạn nộp hoặc giáo viên đóng bài."""
+    if v is True or v is None:
+        return 1
+    if v is False:
+        return 0
+    if isinstance(v, int) and v in (0, 1, 2):
+        return v
+    raise ApiError(400, "Chế độ xem đáp án không hợp lệ")
+
+
+def can_reveal(a, now=None):
+    """Học sinh đã được xem đáp án và lời giải của bài này chưa."""
+    s = a["show_result"]
+    if s == 1:
+        return True
+    if s == 2:
+        now = now or db.now()
+        return bool(a["closed"]) or bool(a["due_at"] and now > a["due_at"])
+    return False
+
+
+def reveal_note(a):
+    if a["show_result"] == 2:
+        return "Đáp án và lời giải sẽ hiện sau khi hết hạn nộp bài" + ("" if a["due_at"] else " (khi giáo viên đóng bài)") + "."
+    return "Giáo viên không cho xem đáp án chi tiết của bài này."
+
+
 @route("POST", "/api/assignments", TEACHER_ROLES)
 def r_assign_new(c):
     b = c.body
     cls = get_class(c.con, c.user, need_int(b, "class_id"))
     ex = b.get("exam") or {}
     vs = check_variations(ex.get("variations"))
-    mode = b.get("dist_mode") if b.get("dist_mode") in ("alt", "random", "free", "adaptive") else "alt"
-    if len(vs) == 1:
+    mode = b.get("dist_mode") if b.get("dist_mode") in ("alt", "random", "free", "adaptive", "manual") else "alt"
+    if len(vs) == 1 and mode != "manual":
         mode = "alt"
     students = c.con.execute("SELECT id FROM users WHERE class_id=? AND role='student' AND active=1 ORDER BY name", (cls["id"],)).fetchall()
     if not students:
         raise ApiError(400, "Lớp chưa có học sinh — hãy tạo tài khoản học sinh trước")
+    plan = None   # [(student_id, mã đề | None = tự chọn)] khi giáo viên chỉ định từng học sinh
+    if mode == "manual":
+        vm = b.get("variation_map")
+        if not isinstance(vm, dict):
+            raise ApiError(400, "Thiếu bảng chỉ định mã đề cho từng học sinh")
+        plan = []
+        for s in students:
+            v = parse_var_choice(vm.get(str(s["id"])), len(vs))
+            if v != "none":
+                plan.append((s["id"], v))
+        if not plan:
+            raise ApiError(400, "Chưa chọn học sinh nào để giao bài")
+    show = show_result_value(b.get("show_result", True))
     title = need_str(b, "title", 150)
     ecur = c.con.execute("INSERT INTO exams(owner_id,title,subject,grade,topic,variations,created_at) VALUES(?,?,?,?,?,?,?)",
                          (c.user["id"], title, str(ex.get("subject") or "")[:60], str(ex.get("grade") or "")[:4], str(ex.get("topic") or "")[:200],
@@ -618,17 +686,22 @@ def r_assign_new(c):
     due = int(due) if isinstance(due, (int, float)) and due > 0 else None
     acur = c.con.execute("INSERT INTO assignments(exam_id,owner_id,class_id,title,dist_mode,due_at,duration_min,max_attempts,show_result,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
                          (ecur.lastrowid, c.user["id"], cls["id"], title, mode, due, need_int(b, "duration_min", 0, 300, 0),
-                          need_int(b, "max_attempts", 1, 10, 1), 1 if b.get("show_result", True) else 0, db.now()))
+                          need_int(b, "max_attempts", 1, 10, 1), show, db.now()))
     tiers = [0] * len(vs)
-    for i, s in enumerate(students):
-        if mode == "adaptive":
-            var = adaptive_variation(c.con, s["id"], len(vs))
-            tiers[var] += 1
-        else:
-            var = None if mode == "free" else (random.randrange(len(vs)) if mode == "random" else i % len(vs))
-        c.con.execute("INSERT INTO assignment_students(assignment_id,student_id,variation) VALUES(?,?,?)", (acur.lastrowid, s["id"], var))
-    audit(c.con, c.user["id"], "assign", f"{title} → lớp {cls['name']} ({len(students)} HS, {mode})")
-    out = {"id": acur.lastrowid, "students": len(students)}
+    if plan is None:
+        rnd = balanced_random(len(students), len(vs)) if mode == "random" else None
+        plan = []
+        for i, s in enumerate(students):
+            if mode == "adaptive":
+                var = adaptive_variation(c.con, s["id"], len(vs))
+                tiers[var] += 1
+            else:
+                var = None if mode == "free" else (rnd[i] if rnd else i % len(vs))
+            plan.append((s["id"], var))
+    for sid, var in plan:
+        c.con.execute("INSERT INTO assignment_students(assignment_id,student_id,variation) VALUES(?,?,?)", (acur.lastrowid, sid, var))
+    audit(c.con, c.user["id"], "assign", f"{title} → lớp {cls['name']} ({len(plan)} HS, {mode})")
+    out = {"id": acur.lastrowid, "students": len(plan)}
     if mode == "adaptive":
         out["tiers"] = tiers
     return out
@@ -652,7 +725,7 @@ def r_assign_list(c):
             bests = [s["best"] for s in subs if s["best"] is not None]
             out.append({"id": a["id"], "title": a["title"], "class_id": a["class_id"], "class_name": a["cname"], "due_at": a["due_at"],
                         "duration_min": a["duration_min"], "dist_mode": a["dist_mode"], "closed": bool(a["closed"]), "created_at": a["created_at"],
-                        "max_attempts": a["max_attempts"],
+                        "max_attempts": a["max_attempts"], "show_result": a["show_result"],
                         "total": tot, "submitted": len(subs), "avg": round(sum(bests) / len(bests), 2) if bests else None})
         return {"assignments": out}
     if u["role"] == "student":
@@ -666,8 +739,9 @@ def r_assign_list(c):
             best = max((score10(s["score"], s["max_score"]) or 0 for s in done), default=None)
             out.append({"id": a["id"], "title": a["title"], "class_name": a["cname"], "due_at": a["due_at"], "duration_min": a["duration_min"],
                         "closed": bool(a["closed"]), "free": a["variation"] is None, "attempts": len(done), "max_attempts": a["max_attempts"],
-                        "doing": bool(doing), "best": best, "show_result": bool(a["show_result"]),
-                        "last_submitted": done[-1]["submitted_at"] if done else None})
+                        "doing": bool(doing), "best": best, "show_result": a["show_result"], "reveal": can_reveal(a),
+                        "last_submitted": done[-1]["submitted_at"] if done else None,
+                        "last_sub_id": done[-1]["id"] if done else None})
         return {"assignments": out}
     raise ApiError(403, "Không có quyền")
 
@@ -784,9 +858,70 @@ def r_assign_edit(c):
     else:
         due = int(due)
     att = need_int(c.body, "max_attempts", 1, 10, a["max_attempts"])
-    c.con.execute("UPDATE assignments SET due_at=?, max_attempts=? WHERE id=?", (due, att, a["id"]))
+    show = show_result_value(c.body["show_result"]) if "show_result" in c.body else a["show_result"]
+    c.con.execute("UPDATE assignments SET due_at=?, max_attempts=?, show_result=? WHERE id=?", (due, att, show, a["id"]))
     audit(c.con, c.user["id"], "edit_assignment", a["title"])
     return {"ok": True}
+
+
+def assignment_roster(con, a):
+    """Học sinh của lớp (đang hoạt động) và học sinh đã được giao bài, kèm mã đề và tình trạng làm bài."""
+    links = {r["student_id"]: r["variation"] for r in con.execute("SELECT student_id, variation FROM assignment_students WHERE assignment_id=?", (a["id"],)).fetchall()}
+    rows = con.execute("SELECT id, name, username FROM users WHERE role='student' AND ((class_id=? AND active=1) OR id IN (SELECT student_id FROM assignment_students WHERE assignment_id=?)) ORDER BY name",
+                       (a["class_id"], a["id"])).fetchall()
+    out = []
+    for r in rows:
+        subs = con.execute("SELECT submitted_at FROM submissions WHERE assignment_id=? AND student_id=?", (a["id"], r["id"])).fetchall()
+        out.append({"id": r["id"], "name": r["name"], "username": r["username"], "assigned": r["id"] in links,
+                    "variation": links.get(r["id"]), "started": bool(subs), "doing": any(s["submitted_at"] is None for s in subs)})
+    return out
+
+
+@route("GET", r"/api/assignments/(\d+)/students", TEACHER_ROLES)
+def r_assign_students(c):
+    a = get_assignment(c.con, c.user, int(c.p[0]))
+    ex = json.loads(c.con.execute("SELECT variations FROM exams WHERE id=?", (a["exam_id"],)).fetchone()["variations"])
+    return {"variations": [{"code": v["code"], "name": v["name"], "count": len(v["questions"])} for v in ex],
+            "students": assignment_roster(c.con, a)}
+
+
+@route("POST", r"/api/assignments/(\d+)/students", TEACHER_ROLES)
+def r_assign_students_set(c):
+    """Giáo viên đổi mã đề / giao thêm / bỏ giao cho từng học sinh của bài đã giao.
+    Học sinh đang làm dở giữ nguyên mã đề của lượt đang làm; mã đề mới áp dụng từ lượt làm sau."""
+    a = get_assignment(c.con, c.user, int(c.p[0]))
+    vm = c.body.get("variation_map")
+    if not isinstance(vm, dict) or not vm or len(vm) > 500:
+        raise ApiError(400, "Thiếu bảng chỉ định mã đề")
+    n = len(json.loads(c.con.execute("SELECT variations FROM exams WHERE id=?", (a["exam_id"],)).fetchone()["variations"]))
+    roster = {s["id"]: s for s in assignment_roster(c.con, a)}
+    changed = 0
+    for k, v in vm.items():
+        try:
+            sid = int(k)
+        except (TypeError, ValueError):
+            raise ApiError(400, "Học sinh không hợp lệ")
+        s = roster.get(sid)
+        if not s:
+            raise ApiError(404, "Học sinh không thuộc lớp của bài này")
+        var = parse_var_choice(v, n)
+        if var == "none":
+            if not s["assigned"]:
+                continue
+            if s["started"]:
+                raise ApiError(400, f"{s['name']} đã làm bài này nên không bỏ giao được")
+            c.con.execute("DELETE FROM assignment_students WHERE assignment_id=? AND student_id=?", (a["id"], sid))
+        elif s["assigned"]:
+            if s["variation"] == var:
+                continue
+            c.con.execute("UPDATE assignment_students SET variation=? WHERE assignment_id=? AND student_id=?", (var, a["id"], sid))
+        else:
+            c.con.execute("INSERT INTO assignment_students(assignment_id,student_id,variation) VALUES(?,?,?)", (a["id"], sid, var))
+        changed += 1
+    if changed:
+        c.con.execute("UPDATE assignments SET dist_mode='manual' WHERE id=?", (a["id"],))
+        audit(c.con, c.user["id"], "assign_variations", f"{a['title']} ({changed} HS)")
+    return {"ok": True, "changed": changed}
 
 
 @route("DELETE", r"/api/assignments/(\d+)", TEACHER_ROLES)
@@ -864,13 +999,17 @@ def r_submit(c):
     qs = ex[sub["variation"]]["questions"]
     now = db.now()
     late = 1 if (a["duration_min"] and now > sub["started_at"] + a["duration_min"] * 60 + 60) or (a["due_at"] and now > a["due_at"] + 60) else 0
-    sc, mx, details = grading.grade(qs, answers, reveal=bool(a["show_result"]))
+    # lưu bài làm không kèm đáp án; đáp án và lời giải được gắn lúc học sinh xem lại (theo chế độ giáo viên chọn)
+    sc, mx, details = grading.grade(qs, answers, reveal=False)
     c.con.execute("UPDATE submissions SET answers=?, score=?, max_score=?, details=?, late=?, submitted_at=? WHERE id=?",
                   (json.dumps(answers, ensure_ascii=False)[:200000], sc, mx, json.dumps(details, ensure_ascii=False), late, now, sub["id"]))
-    res = {"score": sc, "max": mx, "score10": score10(sc, mx), "late": bool(late), "essay": sum(1 for q in qs if q.get("t") == "essay")}
-    if a["show_result"]:
-        res["details"] = details
+    res = {"score": sc, "max": mx, "score10": score10(sc, mx), "late": bool(late), "essay": sum(1 for q in qs if q.get("t") == "essay"),
+           "submission_id": sub["id"]}
+    if can_reveal(a, now):
+        res["details"] = grading.reveal_details(qs, details)
         res["questions"] = [grading.sanitize_question(q) for q in qs]
+    else:
+        res["reveal_note"] = reveal_note(a)
     return res
 
 
@@ -880,6 +1019,30 @@ def r_my(c):
     rows = c.con.execute("SELECT * FROM submissions WHERE assignment_id=? AND student_id=? AND submitted_at IS NOT NULL ORDER BY id DESC", (a["id"], c.user["id"])).fetchall()
     return {"submissions": [{"id": s["id"], "attempt": s["attempt"], "score": s["score"], "max": s["max_score"], "score10": score10(s["score"], s["max_score"]),
                              "submitted_at": s["submitted_at"], "late": bool(s["late"])} for s in rows]}
+
+
+@route("GET", r"/api/assignments/(\d+)/my/(\d+)", ("student",))
+def r_my_review(c):
+    """Học sinh xem lại một lần nộp bài: bài làm của mình, đúng/sai từng câu; đáp án và lời giải khi giáo viên cho phép."""
+    a, _ = student_assignment(c, int(c.p[0]))
+    s = c.con.execute("SELECT * FROM submissions WHERE id=? AND assignment_id=? AND student_id=? AND submitted_at IS NOT NULL",
+                      (int(c.p[1]), a["id"], c.user["id"])).fetchone()
+    if not s:
+        raise ApiError(404, "Không tìm thấy bài làm")
+    v = json.loads(c.con.execute("SELECT variations FROM exams WHERE id=?", (a["exam_id"],)).fetchone()["variations"])[s["variation"]]
+    qs, details = v["questions"], json.loads(s["details"] or "[]")
+    answers = json.loads(s["answers"] or "[]")
+    details = [details[i] if i < len(details) else {"i": i, "t": q.get("t"), "score": None, "given": answers[i] if i < len(answers) else None}
+               for i, q in enumerate(qs)]
+    manual = {r["qi"]: r["score"] for r in c.con.execute("SELECT qi,score FROM essay_grades WHERE submission_id=?", (s["id"],)).fetchall()}
+    reveal = can_reveal(a)
+    out = {"title": a["title"], "code": v["code"], "attempt": s["attempt"], "score": s["score"], "max": s["max_score"],
+           "score10": score10(s["score"], s["max_score"]), "submitted_at": s["submitted_at"], "late": bool(s["late"]), "reveal": reveal,
+           "questions": [grading.sanitize_question(q) for q in qs],
+           "details": grading.reveal_details(qs, details, manual) if reveal else grading.hide_details(details, manual)}
+    if not reveal:
+        out["reveal_note"] = reveal_note(a)
+    return out
 
 
 @route("GET", "/api/children", ("parent",))
@@ -1049,16 +1212,19 @@ def r_practice_submit(c):
         raise ApiError(400, "Dữ liệu bài làm không hợp lệ")
     qs = json.loads(p["questions"])
     sc, mx, details = grading.grade(qs, answers, reveal=True)
+    now = db.now()
     c.con.execute("UPDATE practice SET answers=?, score=?, max_score=?, details=?, submitted_at=? WHERE id=?",
-                  (json.dumps(answers, ensure_ascii=False), sc, mx, json.dumps(details, ensure_ascii=False), db.now(), p["id"]))
+                  (json.dumps(answers, ensure_ascii=False), sc, mx, json.dumps(details, ensure_ascii=False), now, p["id"]))
+    bonus = award_bonus(c.con, c.user, p["id"], qs, details, now)
     return {"score": sc, "max": mx, "score10": score10(sc, mx), "late": False, "essay": 0, "details": details,
-            "questions": [grading.sanitize_question(q) for q in qs]}
+            "questions": [grading.sanitize_question(q) for q in qs], "bonus": bonus}
 
 
 def practice_sessions(con, student_id):
-    rows = con.execute("SELECT * FROM practice WHERE student_id=? AND submitted_at IS NOT NULL ORDER BY id DESC LIMIT 100", (student_id,)).fetchall()
+    rows = con.execute("SELECT p.*, b.points bonus FROM practice p LEFT JOIN bonus_log b ON b.practice_id=p.id "
+                       "WHERE p.student_id=? AND p.submitted_at IS NOT NULL ORDER BY p.id DESC LIMIT 100", (student_id,)).fetchall()
     out = [{"id": r["id"], "title": r["title"], "topics": json.loads(r["topics"] or "[]"), "score": r["score"], "max": r["max_score"],
-            "score10": score10(r["score"], r["max_score"]), "at": r["submitted_at"]} for r in rows]
+            "score10": score10(r["score"], r["max_score"]), "at": r["submitted_at"], "bonus": r["bonus"] or 0} for r in rows]
     vals = [x["score10"] for x in out if x["score10"] is not None]
     return {"sessions": out, "avg": round(sum(vals) / len(vals), 2) if vals else None}
 
@@ -1100,6 +1266,470 @@ def r_student_practice_review(c):
 def practice_stats(con, student_id):
     r = con.execute("SELECT COUNT(*) n, AVG(score*10.0/NULLIF(max_score,0)) a FROM practice WHERE student_id=? AND submitted_at IS NOT NULL", (student_id,)).fetchone()
     return {"n": r["n"], "avg": round(r["a"], 2) if r["a"] is not None else None}
+
+
+# ---------- điểm cộng tự luyện tập ----------
+# Giáo viên đặt số điểm cộng cho mỗi câu làm đúng theo dạng câu (theo lớp). Điểm cộng dồn theo tháng (giờ Việt Nam) và
+# tự về 0 khi sang tháng mới; các tháng cũ vẫn giữ để xem lại. Mỗi câu hỏi chỉ được cộng điểm lần đầu làm đúng trong tháng
+# (luyện lại câu đã biết đáp án không được cộng thêm). Câu đúng/sai chỉ được cộng khi đúng cả 4 ý.
+BONUS_DEFAULT = {"mcq": 10, "tf": 40, "short": 50}
+BONUS_TYPES = ("mcq", "tf", "short")
+VN_OFFSET = 7 * 3600
+MONTH_RE = re.compile(r"\d{4}-(0[1-9]|1[0-2])")
+
+
+def month_key(ts=None) -> str:
+    return time.strftime("%Y-%m", time.gmtime((db.now() if ts is None else ts) + VN_OFFSET))
+
+
+def bonus_config(con, class_id) -> dict:
+    r = con.execute("SELECT mcq, tf, short FROM bonus_config WHERE class_id=?", (class_id,)).fetchone() if class_id else None
+    return {t: r[t] for t in BONUS_TYPES} if r else dict(BONUS_DEFAULT)
+
+
+def bonus_qid(q) -> str:
+    qid = q.get("id")
+    if isinstance(qid, str) and qid:
+        return qid
+    return "h" + hashlib.sha1(json.dumps([q.get("q"), q.get("opts"), q.get("sts")], ensure_ascii=False).encode()).hexdigest()[:20]
+
+
+def award_bonus(con, user, practice_id, qs, details, ts) -> dict:
+    """Cộng điểm cho các câu làm đúng hoàn toàn trong một lần tự luyện tập; ghi sổ để không cộng trùng."""
+    cfg, month = bonus_config(con, user["class_id"]), month_key(ts)
+    n = {t: 0 for t in BONUS_TYPES}
+    repeat = 0
+    for q, d in zip(qs, details):
+        t = q.get("t")
+        if t not in BONUS_TYPES or d.get("score") != 1 or not cfg[t]:
+            continue
+        cur = con.execute("INSERT OR IGNORE INTO bonus_q(student_id, month, qid) VALUES(?,?,?)", (user["id"], month, bonus_qid(q)))
+        if cur.rowcount:
+            n[t] += 1
+        else:
+            repeat += 1
+    pts = sum(n[t] * cfg[t] for t in BONUS_TYPES)
+    con.execute("INSERT OR REPLACE INTO bonus_log(practice_id, student_id, class_id, month, points, n_mcq, n_tf, n_short, n_repeat, at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (practice_id, user["id"], user["class_id"], month, pts, n["mcq"], n["tf"], n["short"], repeat, ts))
+    total = con.execute("SELECT COALESCE(SUM(points),0) s FROM bonus_log WHERE student_id=? AND month=?", (user["id"], month)).fetchone()["s"]
+    return {"points": pts, "counts": n, "repeat": repeat, "month": month, "month_total": total, "config": cfg}
+
+
+def need_month(v) -> str:
+    v = str(v or "").strip() or month_key()
+    if not MONTH_RE.fullmatch(v):
+        raise ApiError(400, "Tháng không hợp lệ (định dạng YYYY-MM)")
+    return v
+
+
+def class_bonus_table(con, class_id, month):
+    """Bảng điểm cộng của các học sinh đang ở lớp trong một tháng, xếp hạng giảm dần (bằng điểm thì cùng hạng)."""
+    studs = con.execute("SELECT id, name, username FROM users WHERE role='student' AND active=1 AND class_id=? ORDER BY name", (class_id,)).fetchall()
+    agg = {r["student_id"]: r for r in con.execute(
+        "SELECT student_id, SUM(points) pts, COUNT(*) n, SUM(n_mcq) m, SUM(n_tf) t, SUM(n_short) s, MAX(at) last FROM bonus_log "
+        "WHERE month=? AND student_id IN (SELECT id FROM users WHERE role='student' AND class_id=?) GROUP BY student_id", (month, class_id)).fetchall()}
+    rows = []
+    for s in studs:
+        a = agg.get(s["id"])
+        rows.append({"id": s["id"], "name": s["name"], "username": s["username"], "points": a["pts"] if a else 0, "sessions": a["n"] if a else 0,
+                     "mcq": a["m"] if a else 0, "tf": a["t"] if a else 0, "short": a["s"] if a else 0, "last": a["last"] if a else None})
+    rows.sort(key=lambda r: (-r["points"], r["name"]))
+    for i, r in enumerate(rows):
+        r["rank"] = rows[i - 1]["rank"] if i and rows[i - 1]["points"] == r["points"] else i + 1
+    return rows
+
+
+def bonus_months(con, class_id):
+    cur = month_key()
+    ms = {r["month"] for r in con.execute(
+        "SELECT DISTINCT month FROM bonus_log WHERE student_id IN (SELECT id FROM users WHERE role='student' AND class_id=?)", (class_id,)).fetchall()}
+    return sorted(ms | {cur}, reverse=True)
+
+
+@route("GET", r"/api/classes/(\d+)/bonus", TEACHER_ROLES)
+def r_class_bonus(c):
+    cls = get_class(c.con, c.user, int(c.p[0]))
+    month = need_month(c.query.get("month"))
+    return {"class": cls["name"], "month": month, "current": month_key(), "months": bonus_months(c.con, cls["id"]),
+            "config": bonus_config(c.con, cls["id"]), "default": BONUS_DEFAULT, "students": class_bonus_table(c.con, cls["id"], month)}
+
+
+@route("POST", r"/api/classes/(\d+)/bonus-config", TEACHER_ROLES)
+def r_class_bonus_config(c):
+    cls = get_class(c.con, c.user, int(c.p[0]))
+    cfg = {t: need_int(c.body, t, 0, 10000, BONUS_DEFAULT[t]) for t in BONUS_TYPES}
+    c.con.execute("INSERT OR REPLACE INTO bonus_config(class_id, mcq, tf, short, updated_by, updated_at) VALUES(?,?,?,?,?,?)",
+                  (cls["id"], cfg["mcq"], cfg["tf"], cfg["short"], c.user["id"], db.now()))
+    audit(c.con, c.user["id"], "bonus_config", f"lớp {cls['name']}: TN {cfg['mcq']} · Đ/S {cfg['tf']} · TLN {cfg['short']}")
+    return {"ok": True, "config": cfg}
+
+
+@route("GET", r"/api/students/(\d+)/bonus", TEACHER_ROLES)
+def r_student_bonus(c):
+    s = get_student(c.con, c.user, int(c.p[0]))
+    month = need_month(c.query.get("month"))
+    rows = c.con.execute("SELECT b.*, p.title, p.score, p.max_score FROM bonus_log b JOIN practice p ON p.id=b.practice_id "
+                         "WHERE b.student_id=? AND b.month=? ORDER BY b.at DESC", (s["id"], month)).fetchall()
+    return {"student": s["name"], "month": month, "total": sum(r["points"] for r in rows),
+            "sessions": [{"id": r["practice_id"], "title": r["title"], "points": r["points"], "mcq": r["n_mcq"], "tf": r["n_tf"], "short": r["n_short"],
+                          "repeat": r["n_repeat"], "score": r["score"], "max": r["max_score"], "at": r["at"]} for r in rows]}
+
+
+@route("GET", "/api/bonus/me", ("student",))
+def r_my_bonus(c):
+    month = month_key()
+    total = c.con.execute("SELECT COALESCE(SUM(points),0) s FROM bonus_log WHERE student_id=? AND month=?", (c.user["id"], month)).fetchone()["s"]
+    hist = [dict(month=r["month"], points=r["s"]) for r in c.con.execute(
+        "SELECT month, SUM(points) s FROM bonus_log WHERE student_id=? GROUP BY month ORDER BY month DESC LIMIT 12", (c.user["id"],)).fetchall()]
+    rank = size = None
+    if c.user["class_id"]:
+        table = class_bonus_table(c.con, c.user["class_id"], month)
+        size = len(table)
+        rank = next((r["rank"] for r in table if r["id"] == c.user["id"]), None)
+    return {"month": month, "points": total, "config": bonus_config(c.con, c.user["class_id"]), "rank": rank, "class_size": size, "history": hist}
+
+
+# ---------- lịch học & điểm danh ----------
+# Mỗi lớp có lịch học theo thứ trong tuần (kèm giờ học) và học phí mỗi buổi. Lịch lưu theo "áp dụng từ ngày" nên đổi lịch
+# không làm sai các tháng đã qua. Ngày lớp có lịch: học sinh mặc định "có đi học"; giáo viên chỉ cần đánh dấu em nghỉ.
+# Ngày không có lịch: mặc định không học; giáo viên vẫn tick "có học" được (học bù, học thêm).
+WEEKDAY_VN = ("Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật")
+ATT_STATUS = ("present", "absent", "none")
+
+
+def today_vn() -> datetime.date:
+    return datetime.datetime.fromtimestamp(db.now() + VN_OFFSET, datetime.timezone.utc).date()
+
+
+def need_date(v, default=None) -> datetime.date:
+    if not v:
+        return default or today_vn()
+    try:
+        return datetime.date.fromisoformat(str(v))
+    except ValueError:
+        raise ApiError(400, "Ngày không hợp lệ (định dạng YYYY-MM-DD)")
+
+
+def clean_days(v) -> dict:
+    if not isinstance(v, dict):
+        raise ApiError(400, "Lịch học không hợp lệ")
+    out = {}
+    for k, t in v.items():
+        if str(k) not in ("0", "1", "2", "3", "4", "5", "6"):
+            raise ApiError(400, "Lịch học không hợp lệ (thứ)")
+        out[str(k)] = str(t or "").strip()[:40]
+    return dict(sorted(out.items()))
+
+
+def schedules(con, class_ids) -> dict:
+    """{class_id: [(from_date, days, fee), ...]} sắp theo ngày áp dụng tăng dần."""
+    out = {cid: [] for cid in class_ids}
+    if class_ids:
+        q = ",".join("?" * len(class_ids))
+        for r in con.execute(f"SELECT class_id, from_date, days, fee FROM class_schedule WHERE class_id IN ({q}) ORDER BY from_date", list(class_ids)).fetchall():
+            out[r["class_id"]].append((r["from_date"], json.loads(r["days"]), r["fee"]))
+    return out
+
+
+def sched_on(rows, d: datetime.date):
+    """Lịch đang áp dụng ngày d: (days, fee) hoặc None nếu lớp chưa có lịch vào ngày đó."""
+    iso, cur = d.isoformat(), None
+    for f, days, fee in rows or []:
+        if f <= iso:
+            cur = (days, fee)
+    return cur
+
+
+def visible_classes(con, user):
+    if user["role"] == "admin":
+        return con.execute("SELECT * FROM classes ORDER BY name").fetchall()
+    return con.execute("SELECT * FROM classes WHERE owner_id=? ORDER BY name", (user["id"],)).fetchall()
+
+
+def att_students(con, user, class_id=None):
+    cls = {k["id"]: k for k in visible_classes(con, user)}
+    if class_id is not None:
+        if class_id not in cls:
+            raise ApiError(404, "Không tìm thấy lớp")
+        cls = {class_id: cls[class_id]}
+    if not cls:
+        return cls, []
+    q = ",".join("?" * len(cls))
+    studs = con.execute(f"SELECT id, name, username, class_id, created_at FROM users WHERE role='student' AND active=1 AND class_id IN ({q}) ORDER BY name",
+                        list(cls)).fetchall()
+    return cls, studs
+
+
+def joined_on(s) -> str:
+    return datetime.datetime.fromtimestamp(s["created_at"] + VN_OFFSET, datetime.timezone.utc).date().isoformat()
+
+
+def day_status(rec, sched, d: datetime.date, joined: str):
+    """(trạng thái, có lịch?, giờ học) của một học sinh trong một ngày."""
+    wd = str(d.weekday())
+    # Ngày lớp có lịch thì học sinh nào của lớp cũng có lịch (không phụ thuộc ngày tạo tài khoản: giáo viên thường nhập học sinh sau khi lớp đã học)
+    scheduled = bool(sched and wd in sched[0])
+    if rec:
+        return rec, scheduled, sched[0].get(wd, "") if sched else ""
+    return ("present" if scheduled else "none"), scheduled, sched[0].get(wd, "") if sched else ""
+
+
+@route("GET", r"/api/classes/(\d+)/schedule", TEACHER_ROLES)
+def r_schedule(c):
+    cls = get_class(c.con, c.user, int(c.p[0]))
+    rows = schedules(c.con, [cls["id"]])[cls["id"]]
+    cur = sched_on(rows, today_vn())
+    nxt = [r for r in rows if r[0] > today_vn().isoformat()]
+    show = nxt[-1] if nxt else (rows[-1] if rows else None)
+    return {"class": cls["name"], "has": bool(rows), "days": show[1] if show else {}, "fee": show[2] if show else 0,
+            "from": show[0] if show else None, "current": {"days": cur[0], "fee": cur[1]} if cur else None,
+            "history": [{"from": f, "days": d, "fee": fee} for f, d, fee in rows][::-1][:10]}
+
+
+@route("POST", r"/api/classes/(\d+)/schedule", TEACHER_ROLES)
+def r_schedule_set(c):
+    cls = get_class(c.con, c.user, int(c.p[0]))
+    days = clean_days(c.body.get("days"))
+    fee = need_int(c.body, "fee", 0, 100_000_000, 0)
+    frm = need_date(c.body.get("from"))
+    if abs((frm - today_vn()).days) > 400:
+        raise ApiError(400, "Ngày áp dụng phải trong khoảng một năm quanh hôm nay")
+    c.con.execute("INSERT OR REPLACE INTO class_schedule(class_id, from_date, days, fee, updated_by, updated_at) VALUES(?,?,?,?,?,?)",
+                  (cls["id"], frm.isoformat(), json.dumps(days, ensure_ascii=False), fee, c.user["id"], db.now()))
+    # lịch mới thay mọi lịch đặt cho các ngày sau đó
+    c.con.execute("DELETE FROM class_schedule WHERE class_id=? AND from_date>?", (cls["id"], frm.isoformat()))
+    audit(c.con, c.user["id"], "schedule", f"lớp {cls['name']}: {', '.join(WEEKDAY_VN[int(k)] for k in days) or 'không có buổi'} · {fee}đ/buổi · từ {frm.isoformat()}")
+    return {"ok": True}
+
+
+@route("GET", "/api/attendance", TEACHER_ROLES)
+def r_attendance(c):
+    d = need_date(c.query.get("date"))
+    cid = int(c.query["class_id"]) if str(c.query.get("class_id") or "").isdigit() else None
+    cls, studs = att_students(c.con, c.user, cid)
+    sch = schedules(c.con, list(cls))
+    recs = {r["student_id"]: r for r in c.con.execute("SELECT * FROM attendance WHERE date=?", (d.isoformat(),)).fetchall()}
+    closed = {r["class_id"]: r for r in c.con.execute("SELECT * FROM att_close WHERE date=?", (d.isoformat(),)).fetchall()}
+    out = []
+    for s in studs:
+        r = recs.get(s["id"])
+        st, scheduled, tm = day_status(r["status"] if r else None, sched_on(sch[s["class_id"]], d), d, joined_on(s))
+        out.append({"id": s["id"], "name": s["name"], "username": s["username"], "class_id": s["class_id"], "class_name": cls[s["class_id"]]["name"],
+                    "scheduled": scheduled, "time": tm, "status": st, "marked": bool(r), "note": r["note"] if r else "",
+                    "late_min": r["late_min"] if r and st == "present" else 0})
+    classes = []
+    for k in cls.values():
+        sc = sched_on(sch[k["id"]], d)
+        classes.append({"id": k["id"], "name": k["name"], "has_schedule": bool(sch[k["id"]]),
+                        "scheduled": bool(sc and str(d.weekday()) in sc[0]), "time": sc[0].get(str(d.weekday()), "") if sc else "",
+                        "closed": k["id"] in closed, "closed_at": closed[k["id"]]["closed_at"] if k["id"] in closed else None})
+    return {"date": d.isoformat(), "weekday": WEEKDAY_VN[d.weekday()], "today": today_vn().isoformat(), "classes": classes, "students": out}
+
+
+@route("POST", "/api/attendance", TEACHER_ROLES)
+def r_attendance_set(c):
+    d = need_date(c.body.get("date"))
+    if (d - today_vn()).days > 31:
+        raise ApiError(400, "Chỉ điểm danh trước tối đa 31 ngày")
+    items = c.body.get("items")
+    if not isinstance(items, list) or not items or len(items) > 2000:
+        raise ApiError(400, "Danh sách điểm danh không hợp lệ")
+    _, studs = att_students(c.con, c.user)
+    mine = {s["id"]: s for s in studs}
+    closed = {r["class_id"] for r in c.con.execute("SELECT class_id FROM att_close WHERE date=?", (d.isoformat(),)).fetchall()}
+    n = 0
+    for it in items:
+        sid = it.get("student_id") if isinstance(it, dict) else None
+        if sid not in mine:
+            raise ApiError(404, "Không tìm thấy học sinh trong các lớp của bạn")
+        if mine[sid]["class_id"] in closed:
+            raise ApiError(409, f"Ngày {d.strftime('%d/%m/%Y')} đã chốt điểm danh cho lớp này — hãy bấm “Mở lại” để sửa")
+        st = it.get("status")
+        old = c.con.execute("SELECT late_min FROM attendance WHERE student_id=? AND date=?", (sid, d.isoformat())).fetchone()
+        late = it.get("late_min", old["late_min"] if old else 0)
+        if isinstance(late, bool) or not isinstance(late, (int, float)) or not 0 <= late <= 600:
+            raise ApiError(400, "Số phút đi muộn phải từ 0 đến 600")
+        if st == "auto":   # bỏ đánh dấu, quay về mặc định theo lịch
+            c.con.execute("DELETE FROM attendance WHERE student_id=? AND date=?", (sid, d.isoformat()))
+        elif st in ATT_STATUS:
+            c.con.execute("INSERT OR REPLACE INTO attendance(student_id, date, status, class_id, note, marked_by, marked_at, late_min) VALUES(?,?,?,?,?,?,?,?)",
+                          (sid, d.isoformat(), st, mine[sid]["class_id"], str(it.get("note") or "").strip()[:200], c.user["id"], db.now(),
+                           int(late) if st == "present" else 0))   # chỉ học sinh đi học mới có số phút muộn
+        else:
+            raise ApiError(400, "Trạng thái điểm danh không hợp lệ")
+        n += 1
+    audit(c.con, c.user["id"], "attendance", f"{d.isoformat()}: {n} học sinh")
+    return {"ok": True, "saved": n}
+
+
+@route("POST", "/api/attendance/close", TEACHER_ROLES)
+def r_attendance_close(c):
+    """Chốt (hoặc mở lại) điểm danh của một ngày cho một lớp (không gửi class_id = mọi lớp của giáo viên).
+    Khi chốt: học sinh có lịch mà chưa được đánh dấu sẽ được ghi cố định là đi học; sau đó không sửa được cho đến khi mở lại."""
+    d = need_date(c.body.get("date"))
+    if d > today_vn():
+        raise ApiError(400, "Chưa tới ngày này nên chưa chốt điểm danh được")
+    cid = c.body.get("class_id")
+    cls, studs = att_students(c.con, c.user, int(cid) if str(cid or "").isdigit() else None)
+    if not cls:
+        raise ApiError(404, "Không tìm thấy lớp")
+    sch, iso, done, filled = schedules(c.con, list(cls)), d.isoformat(), 0, 0
+    if c.body.get("closed", True):
+        have = {r["student_id"] for r in c.con.execute("SELECT student_id FROM attendance WHERE date=?", (iso,)).fetchall()}
+        for s in studs:
+            sc = sched_on(sch[s["class_id"]], d)
+            if s["id"] not in have and sc and str(d.weekday()) in sc[0]:
+                c.con.execute("INSERT INTO attendance(student_id, date, status, class_id, note, marked_by, marked_at, late_min) VALUES(?,?,?,?,?,?,?,0)",
+                              (s["id"], iso, "present", s["class_id"], "", c.user["id"], db.now()))
+                filled += 1
+        for k in cls:
+            c.con.execute("INSERT OR REPLACE INTO att_close(date, class_id, closed_by, closed_at) VALUES(?,?,?,?)", (iso, k, c.user["id"], db.now()))
+            done += 1
+        audit(c.con, c.user["id"], "attendance_close", f"{iso}: {done} lớp, ghi cố định {filled} học sinh")
+    else:
+        for k in cls:
+            c.con.execute("DELETE FROM att_close WHERE date=? AND class_id=?", (iso, k))
+            done += 1
+        audit(c.con, c.user["id"], "attendance_reopen", f"{iso}: {done} lớp")
+    return {"ok": True, "classes": done, "filled": filled}
+
+
+# ---------- quy tắc phạt đi muộn / thưởng điểm (đổi được theo tháng, áp dụng từ tháng đặt trở đi) ----------
+RULE_DEFAULT = {"late_fee": 1000, "reward_min": 8.0, "reward_amount": 5000}
+
+
+def att_rules(con, owner_id, month) -> dict:
+    """Quy tắc của giáo viên có hiệu lực ở tháng `month`: bản ghi gần nhất không muộn hơn tháng đó, chưa đặt thì dùng mặc định."""
+    r = con.execute("SELECT late_fee, reward_min, reward_amount, month FROM att_rules WHERE owner_id=? AND month<=? ORDER BY month DESC LIMIT 1",
+                    (owner_id, month)).fetchone()
+    out = dict(RULE_DEFAULT)
+    out["from"] = None
+    if r:
+        out.update({k: r[k] for k in ("late_fee", "reward_min", "reward_amount")})
+        out["from"] = r["month"]
+    return out
+
+
+def student_reward_min(con, sid, month, default_min) -> float:
+    r = con.execute("SELECT reward_min FROM student_reward WHERE student_id=? AND month<=? ORDER BY month DESC LIMIT 1", (sid, month)).fetchone()
+    return default_min if (not r or r["reward_min"] < 0) else r["reward_min"]
+
+
+def test_rewards(con, sid, owner_id, month) -> list:
+    """Các bài kiểm tra (bài giáo viên giao) được thưởng trong tháng: mỗi bài tính một lần, theo lần nộp đầu tiên đạt mức thưởng của học sinh.
+    Điểm thưởng cộng dồn qua các bài."""
+    rows = con.execute("SELECT s.assignment_id, s.score, s.max_score, s.submitted_at, a.title FROM submissions s JOIN assignments a ON a.id=s.assignment_id "
+                       "WHERE s.student_id=? AND s.submitted_at IS NOT NULL AND s.max_score>0 ORDER BY s.submitted_at", (sid,)).fetchall()
+    seen, out = set(), []
+    for r in rows:
+        if r["assignment_id"] in seen:
+            continue
+        mm = month_key(r["submitted_at"])
+        rules = att_rules(con, owner_id, mm)
+        s10 = r["score"] * 10.0 / r["max_score"]
+        if s10 + 1e-9 >= student_reward_min(con, sid, mm, rules["reward_min"]) and rules["reward_amount"] > 0:
+            seen.add(r["assignment_id"])
+            if mm == month:
+                out.append({"title": r["title"], "score10": round(s10, 2), "amount": rules["reward_amount"]})
+    return out
+
+
+@route("GET", "/api/att-rules", TEACHER_ROLES)
+def r_att_rules(c):
+    month = need_month(c.query.get("month") or month_key())
+    cls, studs = att_students(c.con, c.user)
+    rules = att_rules(c.con, c.user["id"], month)
+    return {"month": month, "rules": rules, "default": RULE_DEFAULT,
+            "students": [{"id": s["id"], "name": s["name"], "class_name": cls[s["class_id"]]["name"],
+                          "reward_min": student_reward_min(c.con, s["id"], month, rules["reward_min"]),
+                          "custom": abs(student_reward_min(c.con, s["id"], month, rules["reward_min"]) - rules["reward_min"]) > 1e-9} for s in studs]}
+
+
+@route("POST", "/api/att-rules", TEACHER_ROLES)
+def r_att_rules_set(c):
+    month = need_month(c.body.get("month") or month_key())
+    fee = need_int(c.body, "late_fee", 0, 1_000_000, RULE_DEFAULT["late_fee"])
+    amount = need_int(c.body, "reward_amount", 0, 100_000_000, RULE_DEFAULT["reward_amount"])
+    rmin = c.body.get("reward_min", RULE_DEFAULT["reward_min"])
+    if isinstance(rmin, bool) or not isinstance(rmin, (int, float)) or not 0 <= rmin <= 10:
+        raise ApiError(400, "Mức điểm được thưởng phải từ 0 đến 10")
+    c.con.execute("INSERT OR REPLACE INTO att_rules(owner_id, month, late_fee, reward_min, reward_amount, updated_at) VALUES(?,?,?,?,?,?)",
+                  (c.user["id"], month, fee, float(rmin), amount, db.now()))
+    audit(c.con, c.user["id"], "att_rules", f"từ {month}: muộn {fee}đ/phút · thưởng ≥{rmin} → +{amount}")
+    return {"ok": True}
+
+
+@route("POST", "/api/att-rules/student", TEACHER_ROLES)
+def r_att_rules_student(c):
+    month = need_month(c.body.get("month") or month_key())
+    _, studs = att_students(c.con, c.user)
+    sid = need_int(c.body, "student_id")
+    if sid not in {s["id"] for s in studs}:
+        raise ApiError(404, "Không tìm thấy học sinh trong các lớp của bạn")
+    v = c.body.get("reward_min")
+    if v is None or v == "":
+        v = -1   # dùng mức mặc định
+    elif isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 10:
+        raise ApiError(400, "Mức điểm được thưởng phải từ 0 đến 10")
+    c.con.execute("INSERT OR REPLACE INTO student_reward(student_id, month, reward_min) VALUES(?,?,?)", (sid, month, float(v)))
+    return {"ok": True}
+
+
+@route("GET", "/api/attendance/stats", TEACHER_ROLES)
+def r_attendance_stats(c):
+    month = need_month(c.query.get("month"))
+    cid = int(c.query["class_id"]) if str(c.query.get("class_id") or "").isdigit() else None
+    y, m = int(month[:4]), int(month[5:])
+    first, ndays = datetime.date(y, m, 1), calendar.monthrange(y, m)[1]
+    last, today = datetime.date(y, m, ndays), today_vn()
+    cls, studs = att_students(c.con, c.user, cid)
+    sch = schedules(c.con, list(cls))
+    recs = {}
+    if studs:
+        q = ",".join("?" * len(studs))
+        for r in c.con.execute(f"SELECT student_id, date, status, note, late_min FROM attendance WHERE date BETWEEN ? AND ? AND student_id IN ({q})",
+                               [first.isoformat(), last.isoformat()] + [s["id"] for s in studs]).fetchall():
+            recs[(r["student_id"], r["date"])] = r
+    out = []
+    for s in studs:
+        joined, marks, present, absent, planned, amount, notes, late = joined_on(s), [], 0, 0, 0, 0, [], 0
+        for i in range(ndays):
+            d = first + datetime.timedelta(days=i)
+            if d > today:
+                marks.append(" ")
+                continue
+            r = recs.get((s["id"], d.isoformat()))
+            sc = sched_on(sch[s["class_id"]], d)
+            st, scheduled, _ = day_status(r["status"] if r else None, sc, d, joined)
+            planned += scheduled
+            if st == "present":
+                present += 1
+                amount += sc[1] if sc else 0
+                late += r["late_min"] if r else 0
+                marks.append("P" if r else "p")
+            elif st == "absent":
+                absent += 1
+                marks.append("A")
+                if r["note"]:
+                    notes.append(f"{d.day:02d}/{m:02d}: {r['note']}")
+            else:
+                marks.append("x" if scheduled else ".")   # x: có lịch nhưng giáo viên đánh dấu không học (lớp nghỉ)
+        # điểm phạt đi muộn + điểm thưởng (bài kiểm tra đạt mức thưởng, bài tự luyện tập) → điểm ròng của tháng
+        owner = cls[s["class_id"]]["owner_id"]
+        rules = att_rules(c.con, owner, month)
+        fine = late * rules["late_fee"]
+        tests = test_rewards(c.con, s["id"], owner, month)
+        test_pts = sum(t["amount"] for t in tests)
+        practice_pts = c.con.execute("SELECT COALESCE(SUM(points),0) s FROM bonus_log WHERE student_id=? AND month=?", (s["id"], month)).fetchone()["s"]
+        out.append({"id": s["id"], "name": s["name"], "username": s["username"], "class_id": s["class_id"], "class_name": cls[s["class_id"]]["name"],
+                    "present": present, "absent": absent, "planned": planned, "amount": amount, "marks": "".join(marks), "notes": notes,
+                    "late_min": late, "late_fine": fine, "tests": tests, "test_reward": test_pts, "practice_bonus": practice_pts,
+                    "net_points": test_pts + practice_pts - fine})
+    fees = {k: (sched_on(sch[k], min(today, last)) or (None, 0))[1] for k in cls}
+    return {"month": month, "days": ndays, "first_weekday": first.weekday(), "today": today.isoformat(),
+            "classes": [{"id": k["id"], "name": k["name"], "fee": fees[k["id"]]} for k in cls.values()], "students": out,
+            "total": sum(x["amount"] for x in out), "total_late_fine": sum(x["late_fine"] for x in out),
+            "total_reward": sum(x["test_reward"] + x["practice_bonus"] for x in out)}
 
 
 # ---------- bảng tin ----------
@@ -1299,6 +1929,15 @@ def r_public_profile(c):
         raise ApiError(404, "Không tìm thấy")
     return {"user": dict(r), "followers": c.con.execute("SELECT COUNT(*) n FROM follows WHERE target_id=?", (r["id"],)).fetchone()["n"],
             "followed": bool(c.con.execute("SELECT 1 FROM follows WHERE user_id=? AND target_id=?", (c.user["id"], r["id"])).fetchone())}
+
+
+@route("GET", "/api/server-info", TEACHER_ROLES)
+def r_server_info(c):
+    """Địa chỉ để máy khác trong mạng (điện thoại, máy học sinh) vào hệ thống — dùng để hiện mã QR đăng nhập."""
+    host, port = c.h.server.server_address[:2]
+    lan = host not in ("127.0.0.1", "localhost", "::1")
+    ips = (lan_addresses() if host in ("0.0.0.0", "", "::") else [host]) if lan else []
+    return {"lan": lan, "port": port, "urls": [f"http://{ip}:{port}/login.html" for ip in ips]}
 
 
 # ---------- HTTP ----------

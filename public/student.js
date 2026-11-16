@@ -20,9 +20,27 @@ async function draw() {
     const can = !a.closed && !over && (a.doing || left > 0);
     return `<div class="card" style="margin-bottom:12px" data-a="${a.id}"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><div><b style="font-size:15px">${esc(a.title)}</b><div style="font-size:11px;color:#667085;margin-top:3px">${a.duration_min ? '⏱ ' + a.duration_min + ' phút' : '⏱ Không giới hạn thời gian'} · ${a.due_at ? 'Hạn nộp: ' + fmtDate(a.due_at) : 'Không có hạn nộp'} · Làm tối đa ${a.max_attempts} lần (đã làm ${a.attempts})</div></div><div>${st}</div></div>
       ${a.best != null ? `<div style="margin:8px 0;font-size:13px">Điểm cao nhất: <b style="font-size:18px">${fmtScore(a.best)}</b>/10</div>` : ''}
-      <div class="lb-row" style="margin-top:10px">${can ? `<button class="btn btn-blue sm" data-go="1">${a.doing ? '▶ Làm tiếp' : '▶ Bắt đầu làm bài'}</button>` : ''}</div></div>`;
+      <div class="lb-row" style="margin-top:10px">${can ? `<button class="btn btn-blue sm" data-go="1">${a.doing ? '▶ Làm tiếp' : '▶ Bắt đầu làm bài'}</button>` : ''}
+        ${a.attempts ? `<button class="btn btn-outline sm" data-rv="1">📖 Xem lại bài${a.reveal ? ' · đáp án & lời giải' : ''}</button>` : ''}
+        ${a.attempts && !a.reveal && a.show_result === 2 ? '<span style="font-size:11px;color:#667085">Đáp án và lời giải sẽ mở sau khi hết hạn nộp.</span>' : ''}</div></div>`;
   }).join('') : '<div class="card empty">Giáo viên chưa giao bài nào cho bạn.<br>Khi có bài mới, bài sẽ hiện ở đây.</div>';
   $$('[data-go]').forEach(b => b.onclick = () => start(A.find(x => x.id === +b.closest('[data-a]').dataset.a)));
+  $$('[data-rv]').forEach(b => b.onclick = () => review(A.find(x => x.id === +b.closest('[data-a]').dataset.a)).catch(e => toast(e.message)));
+}
+
+/* Xem lại bài đã nộp: bài làm của mình, đúng/sai từng câu, đáp án đúng và lời giải chi tiết (khi giáo viên cho xem) */
+async function review(a, subId) {
+  const subs = (await api.get(`/api/assignments/${a.id}/my`)).submissions;
+  if (!subs.length) return toast('Bạn chưa nộp bài này');
+  const id = subId || subs[0].id, r = await api.get(`/api/assignments/${a.id}/my/${id}`);
+  const m = modal(`<h2>📖 Xem lại · ${esc(r.title)} · ${esc(r.code)}</h2>
+    ${subs.length > 1 ? `<div class="lb-tabs" style="margin-bottom:8px">${subs.slice().reverse().map(s => `<button data-sub="${s.id}" class="${s.id === id ? 'on' : ''}">Lần ${s.attempt} · ${fmtScore(s.score10)}</button>`).join('')}</div>` : ''}
+    <div style="display:flex;gap:14px;align-items:baseline;flex-wrap:wrap;margin:4px 0 10px"><div class="res-big" style="font-size:34px">${r.score10 == null ? '—' : fmtScore(r.score10)}<small style="font-size:14px;color:#667085"> / 10</small></div>
+      <div style="font-size:12px;color:#475467">Lần làm thứ ${r.attempt} · nộp lúc ${fmtDate(r.submitted_at)} · đúng ${fmtScore(r.score)}/${r.max} câu chấm tự động${r.late ? ' · <b style="color:#b91c1c">nộp trễ</b>' : ''}</div></div>
+    ${r.reveal ? '<div class="lb-note">Câu <b style="color:#166534">viền xanh</b> là làm đúng, <b style="color:#b91c1c">viền đỏ</b> là làm sai. Đọc kỹ đáp án đúng và <b>📘 lời giải chi tiết</b> để biết mình sai ở đâu.</div>'
+      : `<div class="lb-note" style="background:#fff7ed;border-color:#fed7aa;color:#9a3412">${esc(r.reveal_note || 'Giáo viên chưa cho xem đáp án.')} Hiện bạn xem được bài làm của mình và câu nào đúng/sai.</div>`}
+    <div>${LBX.reviewHTML(r.questions, r.details)}</div>`, true);
+  $$('[data-sub]', m.b).forEach(b => b.onclick = () => review(a, +b.dataset.sub).catch(e => toast(e.message)));
 }
 
 async function start(a) {
@@ -46,11 +64,19 @@ const TYPE_VN = {mcq: 'Trắc nghiệm', tf: 'Đúng/Sai', short: 'Trả lời n
 async function drawPractice() {
   const host = $('#v-practice');
   host.innerHTML = '<div class="card empty">Đang tải...</div>';
-  let tp, hist;
+  let tp, hist, bn = null;
   try { [tp, hist] = await Promise.all([api.get('/api/practice/topics'), api.get('/api/practice')]); }
   catch (e) { host.innerHTML = `<div class="card empty">${esc(e.message)}</div>`; return; }
-  const G = tp.groups;
-  host.innerHTML = `<div class="grid2" style="grid-template-columns:minmax(300px,420px) 1fr"><div class="card">
+  try { bn = await api.get('/api/bonus/me'); } catch (e) { /* không có điểm cộng thì bỏ qua khung này */ }
+  const G = tp.groups, fmtM = m => m.slice(5) + '/' + m.slice(0, 4), cfg = bn && bn.config;
+  const rule = cfg ? ['mcq', 'tf', 'short'].filter(t => cfg[t] > 0).map(t => `${TYPE_VN[t]} <b>+${cfg[t]}</b>`).join(' · ') : '';
+  const prev = bn ? bn.history.filter(h => h.month !== bn.month).slice(0, 3) : [];
+  host.innerHTML = (bn ? `<div class="card" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:14px;background:linear-gradient(90deg,#fffbeb,#fff)">
+      <div style="font-size:34px">⭐</div>
+      <div><div style="font-size:12px;color:#667085">Điểm cộng tháng ${fmtM(bn.month)}</div><div style="font-size:28px;font-weight:800;color:#b45309">${bn.points.toLocaleString('vi-VN')} <small style="font-size:13px;font-weight:400;color:#667085">điểm${bn.rank && bn.points ? ` · hạng ${bn.rank}/${bn.class_size} trong lớp` : ''}</small></div></div>
+      <div style="flex:1;min-width:240px;font-size:12px;color:#475467">${rule ? `Mỗi câu làm đúng: ${rule}. ` : 'Giáo viên chưa bật điểm cộng cho lớp. '}Mỗi câu chỉ được cộng lần đầu làm đúng trong tháng; câu đúng/sai phải đúng cả 4 ý. Điểm cộng về 0 vào ngày 1 hằng tháng.
+        ${prev.length ? `<div style="margin-top:4px;color:#667085">Các tháng trước: ${prev.map(h => `${fmtM(h.month)}: <b>${h.points.toLocaleString('vi-VN')}</b>`).join(' · ')}</div>` : ''}</div></div>` : '')
+    + `<div class="grid2" style="grid-template-columns:minmax(300px,420px) 1fr"><div class="card">
       <h2 style="margin:0 0 4px;font-size:18px">🎯 Tự tạo đề luyện tập</h2>
       <p class="section-sub" style="margin:0 0 12px">Chọn chuyên đề và số câu, hệ thống tạo đề cho bạn. Nộp bài xong sẽ có điểm, đáp án và lời giải ngay.</p>
       ${G.length ? `<div style="font-size:11px;font-weight:700;margin-bottom:6px">1. Chọn khối, môn và chuyên đề</div>
@@ -66,7 +92,7 @@ async function drawPractice() {
       : '<div class="empty">Giáo viên chưa mở chuyên đề luyện tập cho lớp của bạn.<br>Khi giáo viên mở, chuyên đề sẽ hiện ở đây.</div>'}
     </div>
     <div class="card"><h2 style="margin:0 0 10px;font-size:18px">Lịch sử luyện tập${hist.avg != null ? ` <small style="font-weight:400;color:#667085">· điểm trung bình ${fmtScore(hist.avg)}</small>` : ''}</h2>
-      ${hist.sessions.length ? `<table class="tbl"><tr><th>Bài</th><th>Điểm (10)</th><th>Đúng/Tổng</th><th>Lúc</th><th></th></tr>${hist.sessions.map(s => `<tr data-s="${s.id}"><td>${esc(s.title)}</td><td><b>${fmtScore(s.score10)}</b></td><td>${fmtScore(s.score)}/${s.max}</td><td>${fmtDate(s.at)}</td><td><button class="btn btn-outline sm" data-v="1">Xem lại</button></td></tr>`).join('')}</table>` : '<div class="empty">Bạn chưa luyện tập lần nào.</div>'}</div></div>`;
+      ${hist.sessions.length ? `<table class="tbl"><tr><th>Bài</th><th>Điểm (10)</th><th>Đúng/Tổng</th><th>Điểm cộng</th><th>Lúc</th><th></th></tr>${hist.sessions.map(s => `<tr data-s="${s.id}"><td>${esc(s.title)}</td><td><b>${fmtScore(s.score10)}</b></td><td>${fmtScore(s.score)}/${s.max}</td><td>${s.bonus ? `<b style="color:#b45309">+${s.bonus.toLocaleString('vi-VN')}</b>` : '<span style="color:#98a2b3">0</span>'}</td><td>${fmtDate(s.at)}</td><td><button class="btn btn-outline sm" data-v="1">Xem lại</button></td></tr>`).join('')}</table>` : '<div class="empty">Bạn chưa luyện tập lần nào.</div>'}</div></div>`;
 
   // lọc theo khối / môn (mặc định: khối của lớp mình nếu có chuyên đề); các chuyên đề đã tick được giữ khi đổi bộ lọc
   const pick = new Set(), uniq = f => [...new Set(G.map(f).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi', {numeric: true}));
@@ -117,5 +143,7 @@ $$('#stabs button').forEach(b => b.onclick = () => {
 });
 
 draw();
-if (location.hash === '#practice') { const b = $('#stabs [data-t="practice"]'); if (b) b.click(); }
+const hashTab = () => { if (location.hash === '#practice') { const b = $('#stabs [data-t="practice"]'); if (b) b.click(); } };
+hashTab();
+window.addEventListener('hashchange', hashTab);
 })();

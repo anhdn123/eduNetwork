@@ -10,9 +10,63 @@ let tab = 'classes', classes = [], curClass = null;
 if (me.role === 'admin') $('#tab-teachers').hidden = false;
 $$('#tabs button').forEach(b => b.onclick = () => { tab = b.dataset.tab; $$('#tabs button').forEach(x => x.classList.toggle('on', x === b)); draw(); });
 
-const draw = () => ({classes: drawClasses, practice: drawPractice, assign: drawAssign, parents: drawParents, teachers: drawTeachers})[tab]();
-if (location.hash === '#practice') { tab = 'practice'; $$('#tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === 'practice')); }
+const draw = () => ({classes: drawClasses, attend: drawAttend, practice: drawPractice, bonus: drawBonus, assign: drawAssign, parents: drawParents, teachers: drawTeachers})[tab]();
+const hashTab = () => { if (['#practice', '#bonus', '#attend'].includes(location.hash)) { tab = location.hash.slice(1); $$('#tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === tab)); return true; } };
+hashTab();
+window.addEventListener('hashchange', () => { if (hashTab()) draw(); });
 const fail = e => toast(e.message || 'Có lỗi xảy ra');
+
+/* ---------- Mã QR đăng nhập: máy khác cùng mạng wifi/LAN quét để vào hệ thống, không phải gõ địa chỉ ---------- */
+let SERVER = {lan: false, urls: []}, qrIdx = 0;
+const LOCAL = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/i.test(location.hostname);
+// địa chỉ dùng cho QR: đang mở bằng IP mạng nội bộ thì dùng luôn; mở bằng localhost thì lấy IP máy chủ báo về
+const loginUrls = () => LOCAL ? SERVER.urls : [`${location.origin}/login.html`, ...SERVER.urls.filter(u => !u.startsWith(location.origin + '/'))];
+const loginUrl = () => loginUrls()[qrIdx] || loginUrls()[0] || `${location.origin}/login.html`;
+const qrPref = (k, v) => { try { if (v === undefined) return localStorage.getItem('lbai_qr_' + k); localStorage.setItem('lbai_qr_' + k, v); } catch (e) { return null; } };
+async function drawQrCard() {
+  const box = $('#qr-card'); if (!box || !window.QR) return;
+  try { SERVER = await api.get('/api/server-info'); } catch (e) { /* giữ mặc định */ }
+  const urls = loginUrls();
+  const open = qrPref('open') == null ? me.role === 'admin' : qrPref('open') === '1';
+  if (!urls.length) {
+    box.innerHTML = SERVER.lan
+      ? '<div class="lb-note" style="margin:0">📱 <b>Mã QR đăng nhập chưa dùng được:</b> máy chủ chưa có địa chỉ mạng nội bộ. Hãy kết nối máy này vào wifi/LAN rồi tải lại trang.</div>'
+      : '<div class="lb-note" style="margin:0">📱 <b>Mã QR đăng nhập chưa dùng được:</b> máy chủ đang chạy chế độ <b>chỉ máy này</b> (run.bat), điện thoại và máy khác không vào được. Hãy tắt cửa sổ máy chủ rồi chạy <b>run-lan.bat</b> — mã QR sẽ hiện ở đây để mọi người quét vào hệ thống.</div>';
+    return;
+  }
+  qrIdx = Math.min(qrIdx, urls.length - 1);
+  const url = loginUrl();
+  if (!open) {
+    box.innerHTML = `<div class="card" style="padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="font-size:13px">📱 <b>Mã QR đăng nhập</b> · <span style="color:#667085">${esc(url)}</span></span><button class="btn btn-outline sm" id="qr-open" style="margin-left:auto">Hiện mã QR</button></div>`;
+    $('#qr-open').onclick = () => { qrPref('open', '1'); drawQrCard(); };
+    return;
+  }
+  box.innerHTML = `<div class="card" style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
+    <div title="Quét bằng camera điện thoại" style="border:1px solid var(--line);border-radius:12px;padding:6px;background:#fff">${QR.svg(url, {px: 170, label: 'Mã QR đăng nhập ' + url})}</div>
+    <div style="flex:1;min-width:240px">
+      <h2 style="margin:0 0 4px;font-size:18px">📱 Quét mã để vào hệ thống</h2>
+      <p style="font-size:12px;color:#475467;margin:0 0 8px">Học sinh, giáo viên, phụ huynh <b>dùng chung mạng wifi/LAN với máy này</b> mở camera điện thoại quét mã là vào trang đăng nhập, không cần gõ địa chỉ.</p>
+      <div style="font-size:13px;margin-bottom:8px">Địa chỉ: <b id="qr-url" style="color:#1e40af;word-break:break-all">${esc(url)}</b></div>
+      ${urls.length > 1 ? `<label style="font-size:11px;color:#667085;display:block;margin-bottom:8px">Máy chủ có nhiều card mạng — chọn địa chỉ cùng mạng wifi với học sinh:
+        <select id="qr-sel" style="display:block;margin-top:3px;padding:6px;border:1px solid var(--line);border-radius:8px">${urls.map((u, i) => `<option value="${i}" ${i === qrIdx ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select></label>` : ''}
+      <div class="lb-row"><button class="btn btn-blue sm" id="qr-big">⛶ Phóng to để chiếu</button><button class="btn btn-outline sm" id="qr-copy">📋 Sao chép địa chỉ</button><button class="btn btn-outline sm" id="qr-print">🖨 In mã QR</button><button class="btn btn-outline sm" id="qr-hide">Thu gọn</button></div>
+    </div></div>`;
+  const sel = $('#qr-sel'); if (sel) sel.onchange = () => { qrIdx = +sel.value; drawQrCard(); };
+  $('#qr-hide').onclick = () => { qrPref('open', '0'); drawQrCard(); };
+  $('#qr-copy').onclick = async () => { try { await navigator.clipboard.writeText(url); toast('Đã sao chép địa chỉ'); } catch (e) { toast('Không sao chép được — hãy bôi đen địa chỉ để sao chép'); } };
+  $('#qr-big').onclick = () => modal(`<div style="text-align:center"><h2 style="font-size:24px">📱 Quét mã để vào Learning by AI</h2>
+    <div style="display:inline-block;padding:10px;background:#fff;border-radius:12px">${QR.svg(url, {px: Math.max(220, Math.min(520, Math.floor(window.innerHeight * 0.62))), label: 'Mã QR đăng nhập'})}</div>
+    <div style="font-size:22px;font-weight:700;margin-top:10px;word-break:break-all">${esc(url)}</div>
+    <p style="font-size:14px;color:#475467">Kết nối cùng mạng wifi → mở camera → quét mã → đăng nhập bằng tài khoản thầy cô đã phát.</p></div>`, true);
+  $('#qr-print').onclick = () => {
+    const w = window.open('', '_blank'); if (!w) return toast('Trình duyệt đang chặn cửa sổ in — hãy cho phép pop-up');
+    w.document.write(`<html><head><meta charset="utf-8"><title>Mã QR đăng nhập</title><style>body{font-family:Arial,sans-serif;text-align:center;padding:30px}svg{margin:20px auto}</style></head><body>
+      <h1>Quét mã để vào Learning by AI</h1>${QR.svg(url, {px: 380})}<div style="font-size:22px;font-weight:bold">${esc(url)}</div>
+      <p style="font-size:16px">Kết nối cùng mạng wifi của trường → mở camera điện thoại → quét mã → đăng nhập bằng tài khoản được phát.</p></body></html>`);
+    w.document.close(); w.focus(); w.print();
+  };
+}
+drawQrCard();
 
 /* ---------- phiếu tài khoản (mật khẩu chỉ hiện một lần) ---------- */
 function showCredentials(title, accounts, errors) {
@@ -25,7 +79,9 @@ function showCredentials(title, accounts, errors) {
   $('#c-csv', m.b).onclick = () => download('tai-khoan.csv', 'Họ tên,Tên đăng nhập,Mật khẩu\n' + accounts.map(a => [a.name, a.username, a.password].map(csvCell).join(',')).join('\n'));
   $('#c-print', m.b).onclick = () => {
     const w = window.open('', '_blank'); if (!w) return toast('Trình duyệt đang chặn cửa sổ in — hãy cho phép pop-up');
-    w.document.write(`<html><head><meta charset="utf-8"><title>Phiếu tài khoản</title><style>body{font-family:Arial,sans-serif}.c{border:1px dashed #666;border-radius:8px;padding:10px 14px;margin:6px;display:inline-block;width:46%;vertical-align:top;font-size:13px;break-inside:avoid}code{font-size:15px;font-weight:bold}</style></head><body>${accounts.map(a => `<div class="c"><b>${esc(a.name)}</b><br>Tên đăng nhập: <code>${esc(a.username)}</code><br>Mật khẩu: <code>${esc(a.password)}</code><br><small>Đăng nhập tại: ${esc(location.origin)}/login.html</small></div>`).join('')}</body></html>`);
+    // địa chỉ đăng nhập trên phiếu: địa chỉ mạng nội bộ (không phải localhost) + mã QR để học sinh quét
+    const url = loginUrl(), qr = window.QR && !/\/\/(localhost|127\.)/.test(url) ? QR.svg(url, {px: 92}) : '';
+    w.document.write(`<html><head><meta charset="utf-8"><title>Phiếu tài khoản</title><style>body{font-family:Arial,sans-serif}.c{border:1px dashed #666;border-radius:8px;padding:10px 14px;margin:6px;display:inline-flex;gap:10px;align-items:center;width:46%;vertical-align:top;font-size:13px;break-inside:avoid;box-sizing:border-box}code{font-size:15px;font-weight:bold}</style></head><body>${accounts.map(a => `<div class="c">${qr}<div><b>${esc(a.name)}</b><br>Tên đăng nhập: <code>${esc(a.username)}</code><br>Mật khẩu: <code>${esc(a.password)}</code><br><small>${qr ? 'Quét mã QR hoặc vào' : 'Đăng nhập tại'}: ${esc(url)}</small></div></div>`).join('')}</body></html>`);
     w.document.close(); w.focus(); w.print();
   };
   $('#c-ok', m.b).onclick = m.close;
@@ -148,6 +204,256 @@ async function drawPractice() {
   };
   render();
 }
+/* ---------- TAB: điểm danh (lịch học từng lớp · điểm danh theo ngày · thống kê tháng để thu học phí) ---------- */
+const WD = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ nhật'];
+const WD_S = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
+const vnd = n => Number(n || 0).toLocaleString('vi-VN') + ' VNĐ';
+const pts = n => Number(n || 0).toLocaleString('vi-VN');   // điểm thưởng/phạt (1 điểm = 1 đồng), vd 5.000
+const dmy = iso => iso ? iso.slice(8, 10) + '/' + iso.slice(5, 7) + '/' + iso.slice(0, 4) : '';
+const isoShift = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const att = {sub: 'day', date: null, cls: '', q: '', month: null, scls: ''};
+async function drawAttend() {
+  view.innerHTML = `<div class="lb-row" style="margin-bottom:12px">${[['day', '✅ Điểm danh'], ['sched', '🗓 Lịch học các lớp'], ['stats', '📊 Thống kê tháng · học phí'], ['rules', '⚙ Phạt đi muộn · Thưởng điểm']].map(([k, l]) => `<button class="btn ${att.sub === k ? 'btn-blue' : 'btn-outline'} sm" data-asub="${k}">${l}</button>`).join('')}</div><div id="apane"><div class="card empty">Đang tải...</div></div>`;
+  $$('[data-asub]', view).forEach(b => b.onclick = () => { att.sub = b.dataset.asub; drawAttend(); });
+  try { await ({day: attDay, sched: attSched, stats: attStats, rules: attRules})[att.sub]($('#apane')); } catch (e) { fail(e); }
+}
+async function attDay(pane) {
+  const r = await api.get('/api/attendance?' + (att.date ? 'date=' + att.date : ''));
+  att.date = r.date;
+  if (!r.classes.length) { pane.innerHTML = '<div class="card empty">Bạn chưa có lớp nào. Hãy tạo lớp ở tab “Lớp & học sinh”.</div>'; return; }
+  const noSched = r.classes.filter(c => !c.has_schedule);
+  const render = () => {
+    const q = att.q.trim().toLowerCase();
+    const list = r.students.filter(s => (!att.cls || s.class_id === +att.cls) && (!q || (s.name + ' ' + s.username).toLowerCase().includes(q)))
+      .sort((a, b) => (b.scheduled - a.scheduled) || a.class_name.localeCompare(b.class_name, 'vi', {numeric: true}) || a.name.localeCompare(b.name, 'vi'));
+    const cnt = st => list.filter(s => s.status === st).length, sch = list.filter(s => s.scheduled).length;
+    const todayCls = r.classes.filter(c => c.scheduled && (!att.cls || c.id === +att.cls));
+    const scope = r.classes.filter(c => (!att.cls || c.id === +att.cls) && (c.scheduled || r.students.some(s => s.class_id === c.id && s.marked)));   // lớp sẽ được chốt
+    const isClosed = id => (r.classes.find(c => c.id === id) || {}).closed;
+    const allClosed = scope.length > 0 && scope.every(c => c.closed), canClose = r.date <= r.today;
+    const closedAt = (scope.find(c => c.closed) || {}).closed_at;
+    pane.innerHTML = `<div class="card">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <button class="btn btn-outline sm" id="ad-prev" title="Ngày trước">◀</button>
+        <input type="date" id="ad-date" value="${r.date}" style="padding:7px;border:1px solid var(--line);border-radius:8px">
+        <button class="btn btn-outline sm" id="ad-next" title="Ngày sau">▶</button>
+        ${r.date !== r.today ? '<button class="btn btn-outline sm" id="ad-today">Hôm nay</button>' : ''}
+        <h2 style="margin:0 8px;font-size:18px">${r.weekday}, ${dmy(r.date)}${r.date === r.today ? ' <span class="pill ok" style="font-size:11px">hôm nay</span>' : ''}</h2>
+        <select id="ad-cls" style="margin-left:auto;padding:7px;border:1px solid var(--line);border-radius:8px"><option value="">Tất cả lớp</option>${r.classes.map(c => `<option value="${c.id}" ${+att.cls === c.id ? 'selected' : ''}>${esc(c.name)}${c.scheduled ? ' · có lịch' : ''}</option>`).join('')}</select>
+        <input id="ad-q" placeholder="Tìm học sinh..." value="${esc(att.q)}" style="padding:7px 10px;border:1px solid var(--line);border-radius:8px;min-width:160px">
+      </div>
+      <div style="font-size:13px;margin-bottom:10px">Lớp có lịch hôm nay: ${todayCls.length ? todayCls.map(c => `<b>${esc(c.name)}</b>${c.time ? ` (${esc(c.time)})` : ''}`).join(', ') : '<span style="color:#667085">không có</span>'}
+        · <span class="pill ok">${cnt('present')} đi học</span> <span class="pill bad">${cnt('absent')} nghỉ</span> <span class="pill">${sch} có lịch</span></div>
+      ${noSched.length ? `<div class="lb-note" style="margin-bottom:10px">Lớp chưa đặt lịch học: ${noSched.map(c => esc(c.name)).join(', ')}. Vào <a href="#" id="ad-go-sched">🗓 Lịch học các lớp</a> để đặt — ngày có lịch, học sinh sẽ tự được tick đi học.</div>` : ''}
+      <div class="lb-note" style="margin-bottom:10px;font-size:12px">Học sinh có lịch hôm nay được <b>tự tick đi học</b>. Em nào nghỉ thì tick <b>Nghỉ</b> (ghi lý do nếu cần). Em đi học muộn thì ghi <b>số phút muộn</b> (bị phạt theo quy tắc ở tab “Phạt đi muộn · Thưởng điểm”). Em không có lịch nhưng đến học bù thì tick <b>Đi học</b>. Mọi thay đổi được lưu ngay; cuối buổi bấm <b>Chốt điểm danh</b>.</div>
+      <div class="lb-row" style="margin-bottom:10px;align-items:center">
+        ${allClosed ? `<span class="pill ok">🔒 Đã chốt${closedAt ? ' lúc ' + fmtDate(closedAt) : ''}</span><button class="btn btn-outline sm" id="ad-reopen">↺ Mở lại để sửa</button>`
+          : `<button class="btn btn-blue sm" id="ad-close" ${canClose && scope.length ? '' : 'disabled'} title="${canClose ? '' : 'Chưa tới ngày này'}">🔒 Chốt điểm danh${att.cls ? '' : ' (' + scope.length + ' lớp)'}</button>${scope.some(c => c.closed) ? '<span class="pill warn">một số lớp đã chốt</span>' : ''}`}
+        ${att.cls && todayCls.length && !isClosed(+att.cls) ? `<button class="btn btn-outline sm" id="ad-off">🚫 Lớp ${esc(r.classes.find(c => c.id === +att.cls).name)} không học hôm nay</button><button class="btn btn-outline sm" id="ad-reset">↺ Trả về theo lịch</button>` : ''}</div>
+      ${list.length ? `<div style="max-height:62vh;overflow:auto"><table class="tbl"><tr><th>Họ tên</th><th>Lớp</th><th>Lịch hôm nay</th><th style="text-align:center">Đi học</th><th style="text-align:center">Nghỉ</th><th style="text-align:center">Muộn (phút)</th><th>Ghi chú / lý do nghỉ</th></tr>
+        ${list.map(s => { const lock = isClosed(s.class_id) ? 'disabled' : ''; return `<tr data-s="${s.id}" style="${s.status === 'absent' ? 'background:#fef2f2' : s.status === 'present' ? '' : 'color:#98a2b3'}"><td><b>${esc(s.name)}</b><br><small style="color:#667085">${esc(s.username)}</small></td><td>${esc(s.class_name)}</td>
+          <td>${s.scheduled ? `<span class="pill ok">Có lịch</span>${s.time ? ' <small>' + esc(s.time) + '</small>' : ''}` : '<span style="color:#98a2b3">Không có lịch</span>'}${s.marked ? ' <small title="Giáo viên đã điểm danh" style="color:#1e40af">✎</small>' : ''}</td>
+          <td style="text-align:center"><input type="checkbox" data-st="present" ${s.status === 'present' ? 'checked' : ''} ${lock} style="width:20px;height:20px"></td>
+          <td style="text-align:center"><input type="checkbox" data-st="absent" ${s.status === 'absent' ? 'checked' : ''} ${lock} style="width:20px;height:20px;accent-color:#dc2626"></td>
+          <td style="text-align:center"><input type="number" data-late min="0" max="600" step="1" value="${s.late_min || ''}" placeholder="0" ${s.status === 'present' && !lock ? '' : 'disabled'} title="Số phút đi muộn của buổi này" style="width:64px;padding:5px;border:1px solid ${s.late_min ? '#f59e0b' : 'var(--line)'};border-radius:6px;text-align:center"></td>
+          <td><input data-note maxlength="200" value="${esc(s.note)}" ${lock} placeholder="${s.status === 'absent' ? 'Lý do nghỉ (ốm, việc gia đình...)' : ''}" style="width:100%;min-width:140px;padding:5px 8px;border:1px solid var(--line);border-radius:6px"></td></tr>`; }).join('')}</table></div>`
+        : '<div class="empty">Không có học sinh nào khớp.</div>'}</div>`;
+    const go = d => { att.date = d; attDay(pane).catch(fail); };
+    $('#ad-prev', pane).onclick = () => go(isoShift(r.date, -1));
+    $('#ad-next', pane).onclick = () => go(isoShift(r.date, 1));
+    $('#ad-date', pane).onchange = e => e.target.value && go(e.target.value);
+    const td = $('#ad-today', pane); if (td) td.onclick = () => go(r.today);
+    $('#ad-cls', pane).onchange = e => { att.cls = e.target.value; render(); };
+    const qi = $('#ad-q', pane); qi.oninput = () => { att.q = qi.value; const p = qi.selectionStart; render(); const n = $('#ad-q', pane); n.focus(); n.setSelectionRange(p, p); };
+    const gs = $('#ad-go-sched', pane); if (gs) gs.onclick = e => { e.preventDefault(); att.sub = 'sched'; drawAttend(); };
+    const save = async (items, msg) => {
+      try { await api.post('/api/attendance', {date: r.date, items}); toast(msg || 'Đã lưu điểm danh'); attDay(pane).catch(fail); } catch (e) { fail(e); render(); }
+    };
+    $$('[data-st]', pane).forEach(cb => cb.onchange = () => {
+      const s = r.students.find(x => x.id === +cb.closest('tr').dataset.s), note = $('[data-note]', cb.closest('tr')).value;
+      // bỏ tick "Nghỉ" → trả về theo lịch; bỏ tick "Đi học" ở ngày có lịch → buổi này em không học (không tính tiền)
+      const st = cb.checked ? cb.dataset.st : (cb.dataset.st === 'present' && s.scheduled ? 'none' : 'auto');
+      save([{student_id: s.id, status: st, note}], cb.checked ? (st === 'absent' ? `Đã ghi nhận ${s.name} nghỉ` : `Đã ghi nhận ${s.name} đi học`) : `Đã bỏ đánh dấu ${s.name}`);
+    });
+    $$('[data-note]', pane).forEach(inp => inp.onchange = () => {
+      const s = r.students.find(x => x.id === +inp.closest('tr').dataset.s);
+      save([{student_id: s.id, status: s.status, note: inp.value}], 'Đã lưu ghi chú');
+    });
+    $$('[data-late]', pane).forEach(inp => inp.onchange = () => {
+      const s = r.students.find(x => x.id === +inp.closest('tr').dataset.s), v = Math.max(0, Math.min(600, Math.floor(+inp.value || 0)));
+      save([{student_id: s.id, status: 'present', note: $('[data-note]', inp.closest('tr')).value, late_min: v}], v ? `Đã ghi ${s.name} đi muộn ${v} phút` : `Đã bỏ số phút muộn của ${s.name}`);
+    });
+    const cl = $('#ad-close', pane); if (cl) cl.onclick = async () => {
+      if (!confirm(`Chốt điểm danh ngày ${dmy(r.date)} cho: ${scope.map(c => c.name).join(', ')}?\n\nHọc sinh có lịch mà chưa đánh dấu sẽ được ghi cố định là đi học. Sau khi chốt không sửa được (bấm “Mở lại để sửa” nếu cần).`)) return;
+      try { for (const c of scope) await api.post('/api/attendance/close', {date: r.date, class_id: c.id}); toast('🔒 Đã chốt điểm danh'); attDay(pane).catch(fail); } catch (e) { fail(e); }
+    };
+    const ro = $('#ad-reopen', pane); if (ro) ro.onclick = async () => {
+      if (!confirm('Mở lại điểm danh ngày này để sửa?')) return;
+      try { for (const c of scope.filter(x => x.closed)) await api.post('/api/attendance/close', {date: r.date, class_id: c.id, closed: false}); toast('Đã mở lại điểm danh'); attDay(pane).catch(fail); } catch (e) { fail(e); }
+    };
+    const off = $('#ad-off', pane); if (off) off.onclick = () => {
+      const ids = r.students.filter(s => s.class_id === +att.cls && s.scheduled);
+      if (confirm(`Đánh dấu lớp không học ngày ${dmy(r.date)}? Buổi này sẽ không tính cho ${ids.length} học sinh.`)) save(ids.map(s => ({student_id: s.id, status: 'none', note: 'Lớp nghỉ'})), 'Đã đánh dấu lớp không học');
+    };
+    const rs = $('#ad-reset', pane); if (rs) rs.onclick = () => {
+      const ids = r.students.filter(s => s.class_id === +att.cls);
+      if (confirm('Xóa mọi đánh dấu của lớp trong ngày này và trả về theo lịch học?')) save(ids.map(s => ({student_id: s.id, status: 'auto'})), 'Đã trả về theo lịch');
+    };
+  };
+  render();
+}
+async function attSched(pane) {
+  const cls = (await api.get('/api/classes')).classes;
+  if (!cls.length) { pane.innerHTML = '<div class="card empty">Bạn chưa có lớp nào.</div>'; return; }
+  const all = await Promise.all(cls.map(c => api.get(`/api/classes/${c.id}/schedule`)));
+  const today = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+  pane.innerHTML = `<div class="lb-note" style="margin-bottom:12px">Tick các thứ lớp có buổi học, ghi giờ học (không bắt buộc) và học phí mỗi buổi. <b>Ngày áp dụng</b>: lịch mới tính từ ngày này; các ngày trước vẫn theo lịch cũ nên thống kê các tháng đã qua không bị thay đổi.</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px">${cls.map((c, i) => { const s = all[i]; return `<div class="card" data-sc="${c.id}">
+      <h2 style="margin:0 0 4px;font-size:16px">Lớp ${esc(c.name)} <small style="color:#667085;font-weight:400">· ${c.students} HS</small></h2>
+      <div style="font-size:12px;color:${s.has ? '#166534' : '#b45309'};margin-bottom:8px">${s.has ? `Đang áp dụng${s.from ? ' từ ' + dmy(s.from) : ''}: ${Object.keys(s.days).map(k => WD_S[k]).join(', ') || 'không có buổi'} · ${vnd(s.fee)}/buổi` : '⚠ Chưa có lịch học'}</div>
+      ${WD.map((w, k) => `<label style="display:flex;gap:8px;align-items:center;font-size:13px;padding:3px 0"><input type="checkbox" data-wd="${k}" ${k in s.days ? 'checked' : ''}><span style="width:70px">${w}</span><input data-tm="${k}" maxlength="40" placeholder="giờ học, vd 18:00–19:30" value="${esc(s.days[k] || '')}" style="flex:1;padding:5px 8px;border:1px solid var(--line);border-radius:6px"></label>`).join('')}
+      <label style="font-size:12px;color:#475467;display:block;margin-top:8px">Học phí mỗi buổi (VNĐ)<input type="number" min="0" step="1000" data-fee value="${s.fee || 0}" style="display:block;width:100%;padding:7px;border:1px solid var(--line);border-radius:8px;margin-top:3px"></label>
+      <label style="font-size:12px;color:#475467;display:block;margin-top:8px">Áp dụng từ ngày<input type="date" data-from value="${s.has ? today : today.slice(0, 8) + '01'}" style="display:block;padding:7px;border:1px solid var(--line);border-radius:8px;margin-top:3px"></label>
+      <div class="lb-row" style="margin-top:10px"><button class="btn btn-blue sm" data-save>Lưu lịch học</button></div>
+      ${s.history.length > 1 ? `<details style="margin-top:8px;font-size:11px;color:#667085"><summary>Lịch các giai đoạn trước</summary>${s.history.map(h => `<div>Từ ${dmy(h.from)}: ${Object.keys(h.days).map(k => WD_S[k]).join(', ') || 'không có buổi'} · ${vnd(h.fee)}/buổi</div>`).join('')}</details>` : ''}
+    </div>`; }).join('')}</div>`;
+  $$('[data-sc]', pane).forEach(card => {
+    $$('[data-tm]', card).forEach(t => t.oninput = () => { if (t.value.trim()) $(`[data-wd="${t.dataset.tm}"]`, card).checked = true; });
+    $('[data-save]', card).onclick = async () => {
+      const days = {}; $$('[data-wd]:checked', card).forEach(cb => { days[cb.dataset.wd] = $(`[data-tm="${cb.dataset.wd}"]`, card).value.trim(); });
+      const fee = Math.floor(+$('[data-fee]', card).value || 0);
+      if (fee < 0) return toast('Học phí không hợp lệ');
+      try { await api.post(`/api/classes/${card.dataset.sc}/schedule`, {days, fee, from: $('[data-from]', card).value}); toast('Đã lưu lịch học'); attSched(pane).catch(fail); } catch (e) { fail(e); }
+    };
+  });
+}
+/* Quy tắc phạt đi muộn + thưởng điểm: đặt theo tháng (áp dụng từ tháng đặt trở đi), mỗi học sinh có thể có mức điểm được thưởng riêng */
+async function attRules(pane) {
+  const now = new Date(Date.now() + 7 * 3600e3), months = [];
+  for (let i = -1; i < 12; i++) { const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)); months.push(d.toISOString().slice(0, 7)); }
+  if (!att.rmonth) att.rmonth = months[1];
+  const r = await api.get('/api/att-rules?month=' + att.rmonth), ru = r.rules, mlabel = x => x.slice(5) + '/' + x.slice(0, 4);
+  const fld = 'padding:8px;border:1px solid var(--line);border-radius:8px;width:120px;margin:0 6px';
+  pane.innerHTML = `<div class="card"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+      <h2 style="margin:0;font-size:18px">⚙ Phạt đi muộn · Thưởng điểm</h2>
+      <select id="ar-m" style="margin-left:auto;padding:7px;border:1px solid var(--line);border-radius:8px">${months.map(x => `<option value="${x}" ${x === r.month ? 'selected' : ''}>Tháng ${mlabel(x)}</option>`).join('')}</select></div>
+    <div class="lb-note" style="margin-bottom:12px">Quy tắc đặt cho một tháng sẽ <b>áp dụng từ tháng đó trở đi</b> cho tới khi bạn đặt lại ở tháng sau — nên mỗi tháng đều đổi được mà các tháng cũ vẫn giữ nguyên số liệu.
+      ${ru.from ? `Tháng ${mlabel(r.month)} đang theo quy tắc đặt từ tháng <b>${mlabel(ru.from)}</b>.` : 'Chưa đặt quy tắc nào — đang dùng mặc định.'}</div>
+    <div style="display:flex;flex-direction:column;gap:12px;font-size:14px">
+      <div>⏰ <b>Phạt đi muộn:</b> mỗi phút muộn trừ <input type="number" id="ar-fee" min="0" max="1000000" step="100" value="${ru.late_fee}" style="${fld}"> điểm (mặc định ${pts(r.default.late_fee)} điểm = 1.000đ/phút)</div>
+      <div>🏆 <b>Thưởng bài kiểm tra:</b> điểm từ <input type="number" id="ar-min" min="0" max="10" step="0.25" value="${ru.reward_min}" style="${fld};width:90px"> /10 trở lên được cộng <input type="number" id="ar-amt" min="0" max="100000000" step="500" value="${ru.reward_amount}" style="${fld}"> điểm cho <b>mỗi bài</b> (cộng dồn qua các bài; mặc định ≥ ${r.default.reward_min} → +${pts(r.default.reward_amount)})</div>
+      <div><button class="btn btn-blue" id="ar-save">Lưu quy tắc từ tháng ${mlabel(r.month)}</button></div></div>
+    <h3 style="margin:20px 0 6px;font-size:15px">Mức điểm được thưởng của từng học sinh</h3>
+    <p style="font-size:12px;color:#667085;margin:0 0 8px">Để trống = dùng mức chung (${String(ru.reward_min).replace('.', ',')}). Nhập mức riêng nếu em cần ngưỡng cao hơn hoặc thấp hơn; áp dụng từ tháng ${mlabel(r.month)} trở đi. Lưu ngay khi đổi.</p>
+    ${r.students.length ? `<div style="max-height:50vh;overflow:auto"><table class="tbl"><tr><th>Học sinh</th><th>Lớp</th><th>Mức điểm được thưởng (/10)</th><th></th></tr>
+      ${r.students.map(s => `<tr data-s="${s.id}"><td><b>${esc(s.name)}</b></td><td>${esc(s.class_name)}</td><td><input type="number" data-sm min="0" max="10" step="0.25" value="${s.custom ? s.reward_min : ''}" placeholder="${String(ru.reward_min).replace('.', ',')} (chung)" style="width:150px;padding:6px;border:1px solid ${s.custom ? '#2563eb' : 'var(--line)'};border-radius:6px"></td>
+        <td>${s.custom ? '<a href="#" data-sr>Đặt lại mức chung</a>' : ''}</td></tr>`).join('')}</table></div>` : '<div class="empty">Chưa có học sinh.</div>'}</div>`;
+  $('#ar-m', pane).onchange = e => { att.rmonth = e.target.value; attRules(pane).catch(fail); };
+  $('#ar-save', pane).onclick = async () => {
+    const body = {month: r.month, late_fee: Math.max(0, Math.floor(+$('#ar-fee', pane).value || 0)), reward_min: +$('#ar-min', pane).value, reward_amount: Math.max(0, Math.floor(+$('#ar-amt', pane).value || 0))};
+    if (!(body.reward_min >= 0 && body.reward_min <= 10)) return toast('Mức điểm được thưởng phải từ 0 đến 10');
+    try { await api.post('/api/att-rules', body); toast(`Đã lưu quy tắc từ tháng ${mlabel(r.month)}`); attRules(pane).catch(fail); } catch (e) { fail(e); }
+  };
+  const setStu = async (sid, v) => { try { await api.post('/api/att-rules/student', {student_id: sid, month: r.month, reward_min: v}); toast('Đã lưu mức điểm thưởng'); attRules(pane).catch(fail); } catch (e) { fail(e); } };
+  $$('[data-sm]', pane).forEach(i => i.onchange = () => { const v = i.value === '' ? null : +i.value; if (v !== null && !(v >= 0 && v <= 10)) return toast('Mức điểm phải từ 0 đến 10'); setStu(+i.closest('tr').dataset.s, v); });
+  $$('[data-sr]', pane).forEach(a => a.onclick = e => { e.preventDefault(); setStu(+a.closest('tr').dataset.s, null); });
+}
+async function attStats(pane) {
+  const now = new Date(Date.now() + 7 * 3600e3), months = [];
+  for (let i = 0; i < 12; i++) { const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)); months.push(d.toISOString().slice(0, 7)); }
+  if (!att.month) att.month = months[0];
+  const r = await api.get(`/api/attendance/stats?month=${att.month}${att.scls ? '&class_id=' + att.scls : ''}`);
+  const [y, m] = r.month.split('-').map(Number);
+  const dayHead = [...Array(r.days)].map((_, i) => { const wd = (r.first_weekday + i) % 7; return `<th style="padding:4px 2px;text-align:center;font-size:10px;min-width:22px;${wd >= 5 ? 'color:#b45309' : ''}">${i + 1}<br><span style="font-weight:400">${WD_S[wd]}</span></th>`; }).join('');
+  const CELL = {P: ['✓', '#dcfce7', '#166534', 'Đi học (đã điểm danh)'], p: ['✓', '#f0fdf4', '#16a34a', 'Đi học (theo lịch)'], A: ['✗', '#fee2e2', '#b91c1c', 'Nghỉ'], x: ['–', '#f1f5f9', '#64748b', 'Có lịch nhưng không học'], '.': ['', '', '', ''], ' ': ['', '#fafafa', '', 'Chưa tới']};
+  const cell = ch => { const [t, bg, fg, tip] = CELL[ch] || CELL['.']; return `<td title="${tip}" style="padding:3px 2px;text-align:center;font-size:11px;font-weight:700;background:${bg};color:${fg};border:1px solid #f1f5f9">${t}</td>`; };
+  pane.innerHTML = `<div class="card"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+      <h2 style="margin:0;font-size:18px">📊 Thống kê đi học tháng ${String(m).padStart(2, '0')}/${y}</h2>
+      <select id="as-m" style="margin-left:auto;padding:7px;border:1px solid var(--line);border-radius:8px">${months.map(x => `<option value="${x}" ${x === r.month ? 'selected' : ''}>Tháng ${x.slice(5)}/${x.slice(0, 4)}</option>`).join('')}</select>
+      <select id="as-c" style="padding:7px;border:1px solid var(--line);border-radius:8px"><option value="">Tất cả lớp</option>${r.classes.map(c => `<option value="${c.id}" ${+att.scls === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
+      <button class="btn btn-outline sm" id="as-csv">⬇ Tải CSV</button><button class="btn btn-outline sm" id="as-print">🖨 In bảng học phí</button></div>
+    <p style="font-size:12px;color:#667085;margin:0 0 8px">Tính đến hết ngày ${dmy(r.today < r.month + '-' + String(r.days).padStart(2, '0') ? r.today : r.month + '-' + String(r.days).padStart(2, '0'))}. Thành tiền = số buổi đi học × học phí mỗi buổi của lớp (theo lịch đang áp dụng ngày đó). ${r.students.length} học sinh · tổng <b style="color:#1e40af">${vnd(r.total)}</b> · phạt muộn <b style="color:#b91c1c">−${pts(r.total_late_fine)}</b> · thưởng <b style="color:#166534">+${pts(r.total_reward)}</b> điểm. Điểm ròng = thưởng bài kiểm tra + thưởng luyện tập − phạt đi muộn (quy tắc đặt ở tab “Phạt đi muộn · Thưởng điểm”).</p>
+    <div style="font-size:11px;color:#475467;margin-bottom:8px;display:flex;gap:12px;flex-wrap:wrap">${['P', 'p', 'A', 'x'].map(k => `<span><span style="display:inline-block;width:18px;text-align:center;background:${CELL[k][1]};color:${CELL[k][2]};font-weight:700;border-radius:3px">${CELL[k][0]}</span> ${CELL[k][3]}</span>`).join('')}</div>
+    ${r.students.length ? `<div style="max-height:64vh;overflow:auto"><table class="tbl" style="font-size:12px"><tr><th style="position:sticky;left:0;background:#fff;z-index:1">Học sinh</th><th>Lớp</th>${dayHead}<th style="text-align:center">Có lịch</th><th style="text-align:center">Đi học</th><th style="text-align:center">Nghỉ</th><th style="text-align:right">Thành tiền</th><th style="text-align:center" title="Tổng số phút đi muộn trong tháng">Phút muộn</th><th style="text-align:right">Phạt muộn</th><th style="text-align:right">Thưởng bài KT</th><th style="text-align:right">Thưởng luyện tập</th><th style="text-align:right" title="Thưởng bài kiểm tra + thưởng luyện tập − phạt đi muộn">Điểm ròng</th></tr>
+      ${r.students.map(s => `<tr><td style="position:sticky;left:0;background:#fff;white-space:nowrap" ${s.notes.length ? `title="${esc(s.notes.join('\n'))}"` : ''}><b>${esc(s.name)}</b>${s.notes.length ? ' <small style="color:#b91c1c">ⓘ</small>' : ''}</td><td>${esc(s.class_name)}</td>${[...s.marks].map(cell).join('')}
+        <td style="text-align:center">${s.planned}</td><td style="text-align:center"><b style="color:#166534">${s.present}</b></td><td style="text-align:center">${s.absent ? `<b style="color:#b91c1c">${s.absent}</b>` : 0}</td><td style="text-align:right;white-space:nowrap"><b>${vnd(s.amount)}</b></td>
+        <td style="text-align:center">${s.late_min ? `<b style="color:#b45309">${s.late_min}</b>` : 0}</td><td style="text-align:right;color:#b91c1c;white-space:nowrap">${s.late_fine ? '−' + pts(s.late_fine) : 0}</td>
+        <td style="text-align:right;color:#166534;white-space:nowrap" ${s.tests.length ? `title="${esc(s.tests.map(t => t.title + ': ' + String(t.score10).replace('.', ',') + ' điểm → +' + t.amount).join('\n'))}"` : ''}>${s.test_reward ? '+' + pts(s.test_reward) + (s.tests.length > 1 ? ` <small>(${s.tests.length} bài)</small>` : '') : 0}</td>
+        <td style="text-align:right;color:#166534">${s.practice_bonus ? '+' + pts(s.practice_bonus) : 0}</td>
+        <td style="text-align:right;white-space:nowrap"><b style="color:${s.net_points < 0 ? '#b91c1c' : '#1e40af'}">${s.net_points > 0 ? '+' : s.net_points < 0 ? '−' : ''}${pts(Math.abs(s.net_points))}</b></td></tr>`).join('')}</table></div>`
+      : '<div class="empty">Chưa có học sinh.</div>'}</div>`;
+  $('#as-m', pane).onchange = e => { att.month = e.target.value; attStats(pane).catch(fail); };
+  $('#as-c', pane).onchange = e => { att.scls = e.target.value; attStats(pane).catch(fail); };
+  const fee = s => (r.classes.find(c => c.id === s.class_id) || {}).fee || 0;
+  $('#as-csv', pane).onclick = () => download(`diem-danh-${r.month}.csv`, ['Họ tên', 'Tên đăng nhập', 'Lớp', ...[...Array(r.days)].map((_, i) => String(i + 1)), 'Buổi có lịch', 'Buổi đi học', 'Buổi nghỉ', 'Thành tiền (VNĐ)', 'Phút muộn', 'Phạt muộn', 'Thưởng bài KT', 'Thưởng luyện tập', 'Điểm ròng', 'Ghi chú nghỉ'].join(',') + '\n'
+    + r.students.map(s => [s.name, s.username, s.class_name, ...[...s.marks].map(ch => ({P: 'x', p: 'x', A: 'N', x: '-'})[ch] || ''), s.planned, s.present, s.absent, s.amount, s.late_min, s.late_fine, s.test_reward, s.practice_bonus, s.net_points, s.notes.join('; ')].map(csvCell).join(',')).join('\n'));
+  $('#as-print', pane).onclick = () => {
+    const w = window.open('', '_blank'); if (!w) return toast('Trình duyệt đang chặn cửa sổ in — hãy cho phép pop-up');
+    w.document.write(`<html><head><meta charset="utf-8"><title>Học phí tháng ${r.month.slice(5)}/${r.month.slice(0, 4)}</title><style>body{font-family:Arial,sans-serif;font-size:13px;padding:20px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #999;padding:5px 8px}th{background:#eee}td.n{text-align:right}</style></head><body>
+      <h2>Bảng học phí tháng ${r.month.slice(5)}/${r.month.slice(0, 4)}${att.scls ? ' · lớp ' + esc(r.classes.find(c => c.id === +att.scls).name) : ''}</h2>
+      <table><tr><th>STT</th><th>Họ tên</th><th>Lớp</th><th>Số buổi đi học</th><th>Số buổi nghỉ</th><th>Học phí/buổi</th><th>Thành tiền</th><th>Ký nhận</th></tr>
+      ${r.students.map((s, i) => `<tr><td>${i + 1}</td><td>${esc(s.name)}</td><td>${esc(s.class_name)}</td><td class="n">${s.present}</td><td class="n">${s.absent}</td><td class="n">${vnd(fee(s))}</td><td class="n"><b>${vnd(s.amount)}</b></td><td style="width:90px"></td></tr>`).join('')}
+      <tr><th colspan="6" style="text-align:right">Tổng cộng</th><th class="n">${vnd(r.total)}</th><th></th></tr></table></body></html>`);
+    w.document.close(); w.focus(); w.print();
+  };
+}
+/* ---------- TAB: điểm cộng tự luyện tập (cộng dồn theo tháng, sang tháng mới tự về 0) ---------- */
+const fmtMonth = m => m ? m.slice(5) + '/' + m.slice(0, 4) : '';
+const BONUS_VN = {mcq: 'Trắc nghiệm', tf: 'Đúng/Sai', short: 'Trả lời ngắn'};
+let bonusClass = null, bonusMonth = null;
+async function drawBonus() {
+  let cls = [];
+  try { cls = (await api.get('/api/classes')).classes; } catch (e) { return fail(e); }
+  if (!cls.length) { view.innerHTML = '<div class="card empty">Bạn chưa có lớp nào.<br>Hãy vào tab “Lớp & học sinh” tạo lớp trước.</div>'; return; }
+  if (!cls.find(c => c.id === bonusClass)) bonusClass = (cls.find(c => c.id === curClass) || cls[0]).id;
+  let r;
+  try { r = await api.get(`/api/classes/${bonusClass}/bonus` + (bonusMonth ? '?month=' + bonusMonth : '')); } catch (e) { return fail(e); }
+  bonusMonth = r.month;
+  const cur = r.month === r.current, top = r.students.filter(s => s.points > 0).length;
+  const cfgIn = t => `<label style="font-size:11px;color:#475467">${BONUS_VN[t]}<span style="display:flex;align-items:center;gap:4px;margin-top:3px"><input type="number" min="0" max="10000" step="1" value="${r.config[t]}" data-bc="${t}" style="width:90px;padding:7px;border:1px solid var(--line);border-radius:8px"> điểm / câu đúng</span></label>`;
+  view.innerHTML = `<div class="grid2" style="grid-template-columns:minmax(240px,320px) 1fr">
+    <div>
+      <div class="card"><h2 style="margin:0 0 8px;font-size:15px">Lớp</h2>
+        ${cls.map(c => `<div class="cls-item ${c.id === bonusClass ? 'on' : ''}" data-bcl="${c.id}"><span>${esc(c.name)}</span><span class="pill">${c.students} HS</span></div>`).join('')}</div>
+      <div class="card" style="margin-top:12px"><h2 style="margin:0 0 4px;font-size:15px">⚙ Cài đặt điểm cộng · lớp ${esc(r.class)}</h2>
+        <p style="font-size:11px;color:#667085;margin:0 0 10px">Áp dụng cho <b>bài tự luyện tập</b> của học sinh. Đặt 0 để không cộng điểm cho dạng câu đó. Thay đổi chỉ áp dụng cho các lần nộp bài sau, điểm đã cộng giữ nguyên.</p>
+        <div style="display:flex;flex-direction:column;gap:8px">${['mcq', 'tf', 'short'].map(cfgIn).join('')}</div>
+        <div class="lb-row" style="margin-top:12px"><button class="btn btn-blue sm" id="bc-save">Lưu cài đặt</button><button class="btn btn-outline sm" id="bc-def" title="Trắc nghiệm ${r.default.mcq} · Đúng/Sai ${r.default.tf} · Trả lời ngắn ${r.default.short}">Về mặc định</button></div>
+        <div class="lb-note" style="margin:12px 0 0;font-size:11px"><b>Quy tắc tính:</b><br>• Câu đúng/sai chỉ được cộng khi đúng <b>cả 4 ý</b>.<br>• Mỗi câu hỏi chỉ được cộng <b>một lần trong tháng</b> (lần đầu làm đúng); luyện lại câu đã làm đúng không được cộng thêm.<br>• Điểm cộng tính theo tháng (giờ Việt Nam); <b>ngày 1 hằng tháng tự về 0</b>, các tháng trước vẫn xem lại được.</div>
+      </div>
+    </div>
+    <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+        <h2 style="margin:0;font-size:18px">⭐ Bảng điểm cộng · lớp ${esc(r.class)} · tháng ${fmtMonth(r.month)}${cur ? ' <span class="pill ok" style="font-size:11px">tháng này</span>' : ''}</h2>
+        <div class="lb-row"><select id="bm" style="padding:7px;border:1px solid var(--line);border-radius:8px">${r.months.map(m => `<option value="${m}" ${m === r.month ? 'selected' : ''}>Tháng ${fmtMonth(m)}${m === r.current ? ' (hiện tại)' : ''}</option>`).join('')}</select>
+        <button class="btn btn-outline sm" id="b-csv">⬇ Tải CSV</button></div></div>
+      <p style="font-size:12px;color:#667085;margin:0 0 8px">${top}/${r.students.length} học sinh có điểm cộng · tổng ${r.students.reduce((n, s) => n + s.points, 0).toLocaleString('vi-VN')} điểm</p>
+      ${r.students.length ? `<div style="max-height:60vh;overflow:auto"><table class="tbl"><tr><th>Hạng</th><th>Họ tên</th><th style="text-align:right">Điểm cộng</th><th>Câu đúng được cộng (TN · Đ/S · TLN)</th><th>Số bài luyện</th><th>Lần gần nhất</th><th></th></tr>
+        ${r.students.map(s => `<tr data-s="${s.id}"><td>${s.points ? (s.rank <= 3 ? ['🥇', '🥈', '🥉'][s.rank - 1] : s.rank) : '—'}</td><td><b>${esc(s.name)}</b><br><small style="color:#667085">${esc(s.username)}</small></td>
+          <td style="text-align:right;font-size:16px"><b style="color:${s.points ? '#b45309' : '#98a2b3'}">${s.points.toLocaleString('vi-VN')}</b></td>
+          <td>${s.mcq} · ${s.tf} · ${s.short}</td><td>${s.sessions}</td><td>${s.last ? fmtDate(s.last) : '<span style="color:#98a2b3">—</span>'}</td>
+          <td>${s.sessions ? '<button class="btn btn-outline sm" data-bd="1">Chi tiết</button>' : ''}</td></tr>`).join('')}</table></div>`
+        : '<div class="empty">Lớp chưa có học sinh.</div>'}
+    </div></div>`;
+  $$('[data-bcl]', view).forEach(el => el.onclick = () => { bonusClass = +el.dataset.bcl; drawBonus(); });
+  $('#bm', view).onchange = e => { bonusMonth = e.target.value; drawBonus(); };
+  const save = async cfg => { try { await api.post(`/api/classes/${bonusClass}/bonus-config`, cfg); toast('Đã lưu cài đặt điểm cộng'); drawBonus(); } catch (e) { fail(e); } };
+  $('#bc-save', view).onclick = () => {
+    const cfg = Object.fromEntries($$('[data-bc]', view).map(i => [i.dataset.bc, Math.floor(+i.value)]));
+    if (Object.values(cfg).some(v => !(v >= 0 && v <= 10000))) return toast('Điểm cộng mỗi câu từ 0 đến 10.000');
+    save(cfg);
+  };
+  $('#bc-def', view).onclick = () => save(r.default);
+  $('#b-csv', view).onclick = () => download(`diem-cong-${r.class}-${r.month}.csv`, 'Hạng,Họ tên,Tên đăng nhập,Điểm cộng,Câu TN đúng,Câu Đ/S đúng,Câu TLN đúng,Số bài luyện\n'
+    + r.students.map(s => [s.points ? s.rank : '', s.name, s.username, s.points, s.mcq, s.tf, s.short, s.sessions].map(csvCell).join(',')).join('\n'));
+  $$('[data-bd]', view).forEach(b => b.onclick = async () => {
+    try {
+      const d = await api.get(`/api/students/${b.closest('tr').dataset.s}/bonus?month=${r.month}`);
+      modal(`<h2>⭐ Điểm cộng · ${esc(d.student)}</h2><p style="font-size:13px;margin:0 0 8px">Tháng ${fmtMonth(d.month)} · tổng <b style="color:#b45309">${d.total.toLocaleString('vi-VN')}</b> điểm</p>
+        <div style="max-height:56vh;overflow:auto"><table class="tbl"><tr><th>Bài luyện tập</th><th>Đúng/Tổng</th><th>Câu được cộng (TN · Đ/S · TLN)</th><th>Câu làm lại</th><th style="text-align:right">Điểm cộng</th><th>Lúc</th></tr>
+        ${d.sessions.map(x => `<tr><td>${esc(x.title)}</td><td>${fmtScore(x.score)}/${x.max}</td><td>${x.mcq} · ${x.tf} · ${x.short}</td><td>${x.repeat ? `<span title="Câu đã làm đúng trước đó trong tháng, không cộng thêm">${x.repeat}</span>` : '—'}</td><td style="text-align:right"><b>+${x.points.toLocaleString('vi-VN')}</b></td><td>${fmtDate(x.at)}</td></tr>`).join('')}</table></div>`, true);
+    } catch (e) { fail(e); }
+  });
+}
 /* Giáo viên mở các chuyên đề trong ngân hàng của mình cho lớp để học sinh tự tạo đề luyện tập */
 async function practiceSettings(cls) {
   const groups = (await api.get(`/api/classes/${cls.id}/practice`)).groups;
@@ -220,12 +526,13 @@ async function drawAssign() {
     ${list.length ? `<table class="tbl"><tr><th>Bài</th><th>Lớp</th><th>Hạn nộp</th><th>Thời gian</th><th>Đã nộp</th><th>Điểm TB</th><th>Trạng thái</th><th></th></tr>
     ${list.map(a => `<tr data-a="${a.id}"><td><b>${esc(a.title)}</b><br><small style="color:#667085">${fmtDate(a.created_at)}</small></td><td>${esc(a.class_name)}</td><td>${a.due_at ? fmtDate(a.due_at) : 'Không giới hạn'}</td>
       <td>${a.duration_min ? a.duration_min + ' phút' : 'Tự do'}</td><td>${a.submitted}/${a.total}</td><td>${fmtScore(a.avg)}</td><td>${statusPill(a)}</td>
-      <td style="text-align:right;white-space:nowrap"><button class="btn btn-blue sm" data-x="res">Kết quả</button> <button class="btn btn-outline sm" data-x="print">In đề</button> <button class="btn btn-outline sm" data-x="edit">Gia hạn</button> <button class="btn btn-outline sm" data-x="close">${a.closed ? 'Mở lại' : 'Đóng'}</button> <button class="btn btn-outline sm" data-x="del" style="color:#b91c1c">Xóa</button></td></tr>`).join('')}</table>`
+      <td style="text-align:right;white-space:nowrap"><button class="btn btn-blue sm" data-x="res">Kết quả</button> <button class="btn btn-outline sm" data-x="vars" title="Chỉ định / đổi mã đề, giao thêm hoặc bỏ giao cho từng học sinh">🔀 Mã đề</button> <button class="btn btn-outline sm" data-x="print">In đề</button> <button class="btn btn-outline sm" data-x="edit">Gia hạn</button> <button class="btn btn-outline sm" data-x="close">${a.closed ? 'Mở lại' : 'Đóng'}</button> <button class="btn btn-outline sm" data-x="del" style="color:#b91c1c">Xóa</button></td></tr>`).join('')}</table>`
       : '<div class="empty">Chưa giao bài nào.<br>Vào <a href="teacher-builder.html">AI Copilot</a> để tạo đề từ ngân hàng câu hỏi rồi giao cho lớp.</div>'}</div>`;
   $$('[data-x]').forEach(b => b.onclick = async () => {
     const id = +b.closest('tr').dataset.a, a = list.find(x => x.id === id);
     try {
       if (b.dataset.x === 'res') await showResults(a);
+      else if (b.dataset.x === 'vars') await editVariations(a);
       else if (b.dataset.x === 'print') await printAssignment(a);
       else if (b.dataset.x === 'edit') editAssignment(a);
       else if (b.dataset.x === 'close') { await api.post(`/api/assignments/${id}/close`, {closed: !a.closed}); drawAssign(); }
@@ -238,11 +545,40 @@ function editAssignment(a) {
   const m = modal(`<h2>Gia hạn · ${esc(a.title)}</h2>
     <label class="lb-field"><span>HẠN NỘP MỚI (để trống = không giới hạn)</span><input id="ad" type="datetime-local" value="${toLocal(a.due_at)}"></label>
     <label class="lb-field"><span>SỐ LẦN LÀM TỐI ĐA (1–10)</span><input id="am" type="number" min="1" max="10" value="${a.max_attempts || 1}"></label>
+    <label class="lb-field"><span>HỌC SINH XEM ĐÁP ÁN & LỜI GIẢI</span><select id="ash">${[[1, 'Ngay sau khi nộp bài'], [2, 'Sau khi hết hạn nộp (hoặc khi đóng bài)'], [0, 'Không cho xem']].map(([v, t]) => `<option value="${v}" ${a.show_result === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
     <button class="btn btn-blue" id="as2">Lưu</button>`);
   $('#as2', m.b).onclick = async () => {
     const v = $('#ad', m.b).value, due = v ? Math.floor(new Date(v).getTime() / 1000) : null;
-    try { await api.patch('/api/assignments/' + a.id, {due_at: due, max_attempts: Math.min(10, Math.max(1, +$('#am', m.b).value || 1))}); m.close(); toast('Đã cập nhật bài giao'); drawAssign(); } catch (e) { fail(e); }
+    try { await api.patch('/api/assignments/' + a.id, {due_at: due, max_attempts: Math.min(10, Math.max(1, +$('#am', m.b).value || 1)), show_result: +$('#ash', m.b).value}); m.close(); toast('Đã cập nhật bài giao'); drawAssign(); } catch (e) { fail(e); }
   };
+}
+/* Chỉ định / đổi mã đề cho từng học sinh của bài đã giao; giao thêm cho em chưa được giao hoặc bỏ giao em chưa làm */
+async function editVariations(a) {
+  const r = await api.get(`/api/assignments/${a.id}/students`), X = window.LBX, vs = r.variations, roster = r.students;
+  const pick = {}, orig = {};
+  roster.forEach(s => { pick[s.id] = orig[s.id] = !s.assigned ? 'none' : (s.variation == null ? 'free' : s.variation); });
+  const lock = s => s.doing ? 'Đang làm dở: giữ mã đề của lượt đang làm, mã đề mới áp dụng từ lượt sau' : s.started ? 'Đã nộp bài: không bỏ giao được; mã đề mới áp dụng nếu em còn lượt làm lại' : '';
+  const m = modal('', true);
+  const draw = () => {
+    const changed = roster.filter(s => String(pick[s.id]) !== String(orig[s.id]));
+    const cnt = vs.map((_, i) => roster.filter(s => pick[s.id] === i).length);
+    m.b.innerHTML = `<h2>🔀 Mã đề từng học sinh · ${esc(a.title)}</h2>
+      <p style="font-size:12px;color:#667085;margin:0 0 8px">Chọn mã đề cho từng em, giao thêm cho em chưa được giao, hoặc chọn “Không giao”. Các nút chia nhanh chỉ đổi học sinh <b>chưa làm bài</b>; em đã làm vẫn đổi tay được (áp dụng từ lượt làm sau).</p>
+      ${X.varPickerHTML(vs, roster, pick, 'ev', lock)}
+      <div style="font-size:11px;color:#475467;margin-top:6px">${vs.map((v, i) => `<b>${esc(v.code)}</b>: ${cnt[i]} HS`).join(' · ')}</div>
+      <div class="lb-row" style="margin-top:10px"><button class="btn btn-blue" id="ev-save" ${changed.length ? '' : 'disabled'}>💾 Lưu ${changed.length} thay đổi</button><button class="btn btn-outline" id="ev-x">Đóng</button></div>`;
+    X.bindVarPicker(m.b, vs, roster, pick, 'ev', draw, s => !s.started);
+    $('#ev-x', m.b).onclick = m.close;
+    $('#ev-save', m.b).onclick = async () => {
+      const bad = changed.filter(s => s.started && pick[s.id] === 'none');
+      if (bad.length) return toast(`${bad.map(s => s.name).join(', ')} đã làm bài nên không bỏ giao được`);
+      try {
+        const res = await api.post(`/api/assignments/${a.id}/students`, {variation_map: Object.fromEntries(changed.map(s => [s.id, pick[s.id]]))});
+        m.close(); toast(`Đã cập nhật mã đề cho ${res.changed} học sinh`); drawAssign();
+      } catch (e) { fail(e); }
+    };
+  };
+  draw();
 }
 async function showResults(a) {
   const rs = (await api.get(`/api/assignments/${a.id}/results`)).results;
@@ -264,7 +600,8 @@ async function viewSubmission(id, onSaved) {
     ${s.questions.map((q, i) => { const d = s.details[i] || {}, ok = d.score, man = s.manual[i];
       const grader = ok == null ? `<div style="margin-top:6px;font-size:12px">Điểm giáo viên chấm (0–1): <input type="number" min="0" max="1" step="0.25" data-g="${i}" value="${man == null ? '' : man}" style="width:80px;padding:5px;border:1px solid var(--line);border-radius:6px"></div>` : '';
       return `<div class="q-item"><div class="qn">Câu ${i + 1}. ${X.qBody(q)} ${ok == null ? (man == null ? '<span class="pill warn">Chờ chấm</span>' : `<span class="pill ok">${fmtScore(man)} điểm</span>`) : ok === 1 ? '<span class="pill ok">Đúng</span>' : ok > 0 ? `<span class="pill warn">${ok} điểm</span>` : '<span class="pill bad">Sai</span>'}</div>
-      <div style="font-size:12px;white-space:pre-wrap">Học sinh trả lời: <b>${given(q, s.answers[i])}</b>${ok == null ? '' : ` · Đáp án: <b>${esc(X.ansText(q))}</b>`}</div>${grader}</div>`; }).join('')}</div>
+      <div style="font-size:12px;white-space:pre-wrap">Học sinh trả lời: <b>${given(q, s.answers[i])}</b>${ok == null ? '' : ` · Đáp án: <b>${esc(X.ansText(q))}</b>`}</div>${grader}
+      ${q.solImg || q.sol ? `<details style="margin-top:6px;font-size:12px"><summary style="cursor:pointer;color:#166534;font-weight:700">📘 Lời giải chi tiết</summary><div class="sol" style="margin-top:4px">${X.solBody(q)}</div></details>` : ''}</div>`; }).join('')}</div>
     ${manualN ? '<div class="lb-row" style="margin-top:12px"><button class="btn btn-blue" id="gsave">Lưu điểm chấm tay</button></div>' : ''}`, true);
   const sv = $('#gsave', m.b); if (sv) sv.onclick = async () => {
     const grades = {}; $$('[data-g]', m.b).forEach(inp => { grades[inp.dataset.g] = inp.value === '' ? null : Math.min(1, Math.max(0, +inp.value)); });

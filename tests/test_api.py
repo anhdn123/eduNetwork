@@ -316,6 +316,9 @@ class ApiTest(unittest.TestCase):
                 answers.append(q["opts"].index(f"{'xyzw'[n % 4]}{n}"))
         st, res = an.post(f"/api/practice/{r['id']}/submit", {"answers": answers})
         self.assertEqual((res["score"], res["max"], res["score10"]), (12, 12, 10.0))
+        # điểm cộng mặc định: 8 TN × 10 + 2 Đ/S × 40 + 2 TLN × 50 = 260
+        b = res["bonus"]
+        self.assertEqual((b["points"], b["counts"], b["repeat"], b["month_total"]), (260, {"mcq": 8, "tf": 2, "short": 2}, 0, 260))
         self.assertEqual(an.post("/api/practice/start", {"groups": [key], "counts": {}})[0], 400)  # phải chọn số câu
 
         # lịch sử và xem lại
@@ -333,6 +336,59 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(an.get(f"/api/students/{an_id['id']}/practice")[0], 403)                   # học sinh không xem của người khác
         if hasattr(self.__class__, "binh_pw"):
             self.assertEqual(binh.get(f"/api/students/{an_id['id']}/practice")[0], 404)             # giáo viên lớp khác cũng không xem được
+
+        # ---- điểm cộng ----
+        self.assertEqual(hist["sessions"][0]["bonus"], 260)
+        self.assertEqual(hist["sessions"][1]["bonus"], 0)
+        # làm lại đúng các câu đã được cộng trong tháng → không cộng thêm
+        st, r = an.post("/api/practice/start", {"groups": [key], "counts": {"mcq": 8, "tf": 2, "short": 2}})
+        answers = []
+        for q in r["questions"]:
+            n = int(q["q"].split()[-1])
+            answers.append([0, 1, 0, 1] if q.get("sts") else str(n + 1) + ",5" if q["t"] == "short" else q["opts"].index(f"{'xyzw'[n % 4]}{n}"))
+        b = an.post(f"/api/practice/{r['id']}/submit", {"answers": answers})[1]["bonus"]
+        self.assertEqual((b["points"], b["repeat"], b["month_total"]), (0, 12, 260))
+        # giáo viên đổi điểm cộng; câu mới làm đúng tính theo mức mới; Đ/S sai 1 ý không được cộng
+        self.assertEqual(an.post(f"/api/classes/{cid}/bonus-config", {"mcq": 1})[0], 403)          # học sinh không sửa được
+        self.assertEqual(lan.post(f"/api/classes/{cid}/bonus-config", {"mcq": -1, "tf": 0, "short": 0})[0], 400)
+        self.assertEqual(lan.post(f"/api/classes/{cid}/bonus-config", {"mcq": 5, "tf": 100, "short": 0})[1]["config"], {"mcq": 5, "tf": 100, "short": 0})
+        lan.post("/api/bank/sync", {"upsert": [
+            {"id": "pm9", "t": "mcq", "q": "Luyện TN 9", "opts": ["x9", "y9", "z9", "w9"], "ans": 1, "subject": "Toán", "grade": "9", "topic": "Luyện"},
+            {"id": "pg9", "t": "tf", "q": "Luyện ĐS 9", "sts": ["a", "b", "c", "d"], "ans": [1, 1, 1, 1], "subject": "Toán", "grade": "9", "topic": "Luyện"},
+            {"id": "ps9", "t": "short", "q": "Luyện TLN 9", "ans": "7", "subject": "Toán", "grade": "9", "topic": "Luyện"}]})
+        st, r = an.post("/api/practice/start", {"groups": [key], "counts": {"mcq": 9, "tf": 3, "short": 3}})
+        answers = []
+        for q in r["questions"]:
+            n = int(q["q"].split()[-1])
+            if q.get("sts"):
+                answers.append([1, 1, 1, 0] if n == 9 else [0, 1, 0, 1])                       # câu Đ/S mới sai 1 ý
+            elif q["t"] == "short":
+                answers.append("7" if n == 9 else str(n + 1) + ",5")
+            else:
+                answers.append(q["opts"].index(f"{'xyzw'[1 if n == 9 else n % 4]}{n}"))
+        b = an.post(f"/api/practice/{r['id']}/submit", {"answers": answers})[1]["bonus"]
+        self.assertEqual((b["points"], b["counts"], b["month_total"]), (5, {"mcq": 1, "tf": 0, "short": 0}, 265))   # TLN đặt 0 điểm
+        # bảng điểm cộng của giáo viên
+        st, t = lan.get(f"/api/classes/{cid}/bonus")
+        self.assertEqual(st, 200)
+        self.assertEqual(t["month"], app.month_key())
+        row = [s for s in t["students"] if s["username"] == "an.nv"][0]
+        self.assertEqual((row["points"], row["rank"], row["sessions"], row["mcq"], row["tf"], row["short"]), (265, 1, 4, 9, 2, 2))
+        self.assertTrue(all(s["rank"] == 2 for s in t["students"] if s["username"] != "an.nv"))  # chưa có điểm: đồng hạng
+        d = lan.get(f"/api/students/{an_id['id']}/bonus")[1]
+        self.assertEqual((d["total"], len(d["sessions"])), (265, 4))
+        # sang tháng khác: điểm về 0; tháng sai định dạng bị từ chối; người ngoài lớp không xem được
+        self.assertTrue(all(s["points"] == 0 for s in lan.get(f"/api/classes/{cid}/bonus?month=2001-01")[1]["students"]))
+        self.assertEqual(lan.get(f"/api/classes/{cid}/bonus?month=2026-13")[0], 400)
+        self.assertEqual(an.get(f"/api/classes/{cid}/bonus")[0], 403)
+        if hasattr(self.__class__, "binh_pw"):
+            self.assertEqual(binh.get(f"/api/classes/{cid}/bonus")[0], 404)
+        me = an.get("/api/bonus/me")[1]
+        self.assertEqual((me["points"], me["rank"], me["config"]), (265, 1, {"mcq": 5, "tf": 100, "short": 0}))
+        # ranh giới tháng theo giờ Việt Nam: 17:30 UTC ngày 31/10 là 00:30 ngày 01/11
+        import calendar
+        self.assertEqual(app.month_key(calendar.timegm((2026, 10, 31, 17, 30, 0))), "2026-11")
+        self.assertEqual(app.month_key(calendar.timegm((2026, 10, 31, 16, 59, 0))), "2026-10")
 
     def test_question_images(self):
         """Ảnh cắt từ PDF: giáo viên tải lên, mọi người đã đăng nhập xem được, chỉ chủ ảnh xóa được, ảnh đang dùng không bị xóa."""
@@ -443,6 +499,228 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(app.adaptive_variation(con, sid, 3), 2)                       # 9/10 → nâng cao
         self.assertEqual(app.adaptive_variation(con, sid, 2), 1)                       # chỉ có 2 mức → mức cao nhất hiện có
         con.rollback(); con.close()
+
+    def test_zz_variations_review(self):
+        """Chỉ định mã đề từng học sinh, chia ngẫu nhiên đều, đổi mã đề sau khi giao; học sinh xem lại bài theo chế độ xem đáp án."""
+        lan, binh = self.C(), self.C()
+        lan.post("/api/login", {"username": "lan", "password": LAN_PW})
+        binh.post("/api/login", {"username": "binh", "password": self.__class__.binh_pw})
+        cid = lan.post("/api/classes", {"name": "9A9", "grade": "9"})[1]["id"]
+        accs = lan.post("/api/students/bulk", {"class_id": cid, "rows": ["Học Sinh Một", "Học Sinh Hai", "Học Sinh Ba", "Học Sinh Bốn", "Học Sinh Năm"]})[1]["accounts"]
+        ids = [a["id"] for a in accs]
+        S = []
+        for a in accs:
+            c = self.C()
+            c.post("/api/login", {"username": a["username"], "password": a["password"]})
+            S.append(c)
+        img = lan.post("/api/img", {"data": "data:image/png;base64," + base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 32).decode()})[1]["id"]
+        q1 = {"id": "r1", "t": "mcq", "q": "1+1?", "opts": ["1", "2", "3", "4"], "ans": 1, "sol": "1+1=2", "solImg": img}
+        vs = [{"code": f"Mã {101 + i}", "questions": [q1, mcq(9, i)]} for i in range(3)]
+        base = {"title": "Chỉ định", "class_id": cid, "duration_min": 0, "max_attempts": 2, "exam": {"title": "CD", "variations": vs}}
+        # chỉ định: mã đề / tự chọn / không giao
+        vm = {str(ids[0]): 2, str(ids[1]): 0, str(ids[2]): "free", str(ids[3]): "none", str(ids[4]): "none"}
+        self.assertEqual(lan.post("/api/assignments", {**base, "dist_mode": "manual"})[0], 400)                      # thiếu bảng chỉ định
+        self.assertEqual(lan.post("/api/assignments", {**base, "dist_mode": "manual", "variation_map": {str(ids[0]): 7}})[0], 400)  # mã đề không tồn tại
+        self.assertEqual(lan.post("/api/assignments", {**base, "dist_mode": "manual", "variation_map": {str(i): "none" for i in ids}})[0], 400)
+        bad = {**base, "dist_mode": "manual", "variation_map": vm, "exam": {"title": "x", "variations": [{"code": "x", "questions": [{**q1, "solImg": "../x"}]}]}}
+        self.assertEqual(lan.post("/api/assignments", bad)[0], 400)                                                  # ảnh lời giải không hợp lệ
+        st, r = lan.post("/api/assignments", {**base, "dist_mode": "manual", "variation_map": vm, "show_result": 2, "due_at": 4102444800})
+        self.assertEqual((st, r["students"]), (200, 3))
+        aid = r["id"]
+        self.assertEqual(S[0].post(f"/api/assignments/{aid}/start")[1]["code"], "Mã 103")
+        self.assertEqual(S[1].post(f"/api/assignments/{aid}/start")[1]["code"], "Mã 101")
+        self.assertEqual(S[2].post(f"/api/assignments/{aid}/start")[0], 400)                                       # tự chọn: phải gửi mã đề
+        self.assertEqual(S[3].post(f"/api/assignments/{aid}/start")[0], 404)                                       # không được giao
+        # nộp bài khi chế độ "xem đáp án sau hạn nộp": chưa lộ đáp án, lời giải
+        res = S[0].post(f"/api/assignments/{aid}/submit", {"answers": [0, 2]})[1]
+        self.assertEqual((res["score"], res["max"]), (1, 2))
+        self.assertNotIn("details", res)
+        self.assertIn("reveal_note", res)
+        sub = res["submission_id"]
+        mine = [x for x in S[0].get("/api/assignments")[1]["assignments"] if x["id"] == aid][0]
+        self.assertEqual((mine["reveal"], mine["show_result"], mine["last_sub_id"]), (False, 2, sub))
+        st, rv = S[0].get(f"/api/assignments/{aid}/my/{sub}")
+        self.assertEqual((st, rv["reveal"], rv["score"]), (200, False, 1))
+        self.assertNotIn('"key"', json.dumps(rv["details"]))
+        self.assertNotIn("1+1=2", json.dumps(rv))
+        self.assertEqual(rv["details"][0]["given"], 0)
+        self.assertEqual(S[1].get(f"/api/assignments/{aid}/my/{sub}")[0], 404)                                     # không xem được bài bạn khác
+        # đóng bài → học sinh xem được đáp án, lời giải chữ và ảnh
+        lan.post(f"/api/assignments/{aid}/close", {"closed": True})
+        rv = S[0].get(f"/api/assignments/{aid}/my/{sub}")[1]
+        self.assertTrue(rv["reveal"])
+        self.assertEqual((rv["details"][0]["key"], rv["details"][0]["sol"], rv["details"][0]["solImg"]), (1, "1+1=2", img))
+        self.assertEqual(rv["details"][1]["key"], 2)
+        self.assertNotIn("solImg", json.dumps(rv["questions"]))                                                     # đề gửi học sinh không kèm lời giải
+        lan.post(f"/api/assignments/{aid}/close", {"closed": False})
+        # đổi chế độ: không cho xem
+        self.assertEqual(lan.call("PATCH", f"/api/assignments/{aid}", {"show_result": 0})[0], 200)
+        self.assertFalse(S[0].get(f"/api/assignments/{aid}/my/{sub}")[1]["reveal"])
+        self.assertEqual(lan.call("PATCH", f"/api/assignments/{aid}", {"show_result": 5})[0], 400)
+        # đổi mã đề sau khi giao
+        st, ro = lan.get(f"/api/assignments/{aid}/students")
+        self.assertEqual(st, 200)
+        by = {s["id"]: s for s in ro["students"]}
+        self.assertEqual((by[ids[0]]["started"], by[ids[1]]["doing"], by[ids[3]]["assigned"]), (True, True, False))
+        self.assertEqual(binh.get(f"/api/assignments/{aid}/students")[0], 404)                                      # giáo viên khác
+        self.assertEqual(lan.post(f"/api/assignments/{aid}/students", {"variation_map": {str(ids[0]): "none"}})[0], 400)  # đã làm → không bỏ giao
+        st, r = lan.post(f"/api/assignments/{aid}/students", {"variation_map": {str(ids[3]): 1, str(ids[2]): 2, str(ids[0]): 0}})
+        self.assertEqual((st, r["changed"]), (200, 3))
+        self.assertEqual(S[3].post(f"/api/assignments/{aid}/start")[1]["code"], "Mã 102")                          # giao thêm
+        self.assertEqual(S[2].post(f"/api/assignments/{aid}/start")[1]["code"], "Mã 103")                          # tự chọn → chỉ định
+        self.assertEqual(S[0].post(f"/api/assignments/{aid}/start")[1]["code"], "Mã 101")                          # lượt làm lại dùng mã đề mới
+        self.assertEqual(S[1].post(f"/api/assignments/{aid}/start")[1]["code"], "Mã 101")                          # đang làm dở giữ mã cũ
+        # chia ngẫu nhiên đều: 5 học sinh / 3 mã đề → mỗi mã 1–2 em
+        st, r = lan.post("/api/assignments", {**base, "dist_mode": "random", "show_result": True})
+        con = db.connect()
+        vars_ = [x["variation"] for x in con.execute("SELECT variation FROM assignment_students WHERE assignment_id=?", (r["id"],)).fetchall()]
+        con.close()
+        self.assertEqual(len(vars_), 5)
+        self.assertTrue(all(vars_.count(i) in (1, 2) for i in range(3)))
+        # xem đáp án ngay (show_result=1): kết quả nộp bài có lời giải
+        rid = r["id"]
+        S[4].post(f"/api/assignments/{rid}/start")
+        res = S[4].post(f"/api/assignments/{rid}/submit", {"answers": [1, 0]})[1]
+        self.assertEqual(res["details"][0]["solImg"], img)
+        self.assertEqual(S[4].get(f"/api/assignments/{rid}/my/{res['submission_id']}")[1]["details"][0]["sol"], "1+1=2")
+        # thông tin máy chủ cho mã QR đăng nhập: server test chỉ nghe 127.0.0.1 → không có địa chỉ LAN
+        st, info = lan.get("/api/server-info")
+        self.assertEqual((st, info["lan"], info["urls"], info["port"]), (200, False, [], self.port))
+        self.assertEqual(S[0].get("/api/server-info")[0], 403)
+
+    def test_zz_attendance(self):
+        """Lịch học theo lớp, điểm danh theo ngày, thống kê tháng và học phí (giả lập hôm nay là 31/10/2026)."""
+        import datetime as dt
+        lan, binh = self.C(), self.C()
+        lan.post("/api/login", {"username": "lan", "password": LAN_PW})
+        binh.post("/api/login", {"username": "binh", "password": self.__class__.binh_pw}) if hasattr(self.__class__, "binh_pw") else None
+        cid = lan.post("/api/classes", {"name": "ĐD1", "grade": "9"})[1]["id"]
+        accs = lan.post("/api/students/bulk", {"class_id": cid, "rows": ["Đinh An", "Đinh Bảo"]})[1]["accounts"]
+        A, B = [a["id"] for a in accs]
+        con = db.connect()
+        con.execute("UPDATE users SET created_at=? WHERE id IN (?,?)", (1700000000, A, B))   # học sinh có từ trước tháng 10
+        con.commit()
+        con.close()
+        real_today = app.today_vn
+        app.today_vn = lambda: dt.date(2026, 10, 31)
+        try:
+            # lịch: Thứ 2 + Thứ 4, 100.000đ/buổi từ 01/10; từ 20/10 chỉ còn Thứ 2, 150.000đ/buổi
+            self.assertEqual(lan.post(f"/api/classes/{cid}/schedule", {"days": {"0": "18:00–19:30", "2": ""}, "fee": 100000, "from": "2026-10-01"})[0], 200)
+            self.assertEqual(lan.post(f"/api/classes/{cid}/schedule", {"days": {"9": ""}, "fee": 1})[0], 400)
+            self.assertEqual(lan.post(f"/api/classes/{cid}/schedule", {"days": {}, "fee": 1, "from": "2026-13-01"})[0], 400)
+            st, d = lan.get(f"/api/attendance?date=2026-10-05&class_id={cid}")
+            self.assertEqual((st, d["weekday"]), (200, "Thứ 2"))
+            self.assertEqual([(s["scheduled"], s["status"], s["time"]) for s in d["students"]], [(True, "present", "18:00–19:30")] * 2)
+            d = lan.get(f"/api/attendance?date=2026-10-06&class_id={cid}")[1]                     # Thứ 3: không có lịch
+            self.assertEqual({s["status"] for s in d["students"]}, {"none"})
+            # A nghỉ ốm 05/10; B học bù Thứ 3 06/10; cả lớp không học 07/10
+            self.assertEqual(lan.post("/api/attendance", {"date": "2026-10-05", "items": [{"student_id": A, "status": "absent", "note": "ốm"}]})[0], 200)
+            lan.post("/api/attendance", {"date": "2026-10-06", "items": [{"student_id": B, "status": "present"}]})
+            lan.post("/api/attendance", {"date": "2026-10-07", "items": [{"student_id": A, "status": "none"}, {"student_id": B, "status": "none"}]})
+            d = lan.get(f"/api/attendance?date=2026-10-05&class_id={cid}")[1]
+            a = [s for s in d["students"] if s["id"] == A][0]
+            self.assertEqual((a["status"], a["marked"], a["note"]), ("absent", True, "ốm"))
+            self.assertEqual(lan.post("/api/attendance", {"date": "2026-10-05", "items": [{"student_id": A, "status": "late"}]})[0], 400)
+            self.assertEqual(lan.post("/api/attendance", {"date": "2027-01-05", "items": [{"student_id": A, "status": "absent"}]})[0], 400)
+            # đổi lịch từ 20/10 → các ngày trước vẫn tính theo lịch cũ
+            lan.post(f"/api/classes/{cid}/schedule", {"days": {"0": "18:00"}, "fee": 150000, "from": "2026-10-20"})
+            sc = lan.get(f"/api/classes/{cid}/schedule")[1]
+            self.assertEqual((sc["days"], sc["fee"], len(sc["history"])), ({"0": "18:00"}, 150000, 2))
+            st, t = lan.get(f"/api/attendance/stats?month=2026-10&class_id={cid}")
+            self.assertEqual(st, 200)
+            rows = {s["id"]: s for s in t["students"]}
+            # có lịch: 5, 7, 12, 14, 19 (T2+T4, 100k) và 26 (T2, 150k); 21, 28 (T4) không còn lịch
+            self.assertEqual((rows[A]["planned"], rows[A]["present"], rows[A]["absent"], rows[A]["amount"]), (6, 4, 1, 450000))
+            self.assertEqual((rows[B]["planned"], rows[B]["present"], rows[B]["absent"], rows[B]["amount"]), (6, 6, 0, 650000))
+            self.assertEqual((rows[A]["marks"][4], rows[A]["marks"][5], rows[A]["marks"][6], rows[A]["marks"][11]), ("A", ".", "x", "p"))
+            self.assertEqual(rows[B]["marks"][5], "P")
+            self.assertEqual((rows[A]["notes"], t["total"], len(rows[A]["marks"])), (["05/10: ốm"], 1100000, 31))
+            # tháng 11 (sau "hôm nay") chưa tính buổi nào
+            n = {s["id"]: s for s in lan.get(f"/api/attendance/stats?month=2026-11&class_id={cid}")[1]["students"]}
+            self.assertEqual((n[A]["present"], n[A]["amount"], n[A]["marks"].strip()), (0, 0, ""))
+            # quyền: học sinh không vào được; giáo viên khác không thấy lớp / không điểm danh được học sinh lớp này
+            st_c = self.C()
+            st_c.post("/api/login", {"username": "an.nv", "password": AN_PW})
+            self.assertEqual(st_c.get("/api/attendance")[0], 403)
+            if hasattr(self.__class__, "binh_pw"):
+                self.assertEqual(binh.get(f"/api/attendance/stats?class_id={cid}")[0], 404)
+                self.assertNotIn(A, [s["id"] for s in binh.get("/api/attendance")[1]["students"]])
+                self.assertEqual(binh.post("/api/attendance", {"date": "2026-10-05", "items": [{"student_id": A, "status": "present"}]})[0], 404)
+                self.assertEqual(binh.post(f"/api/classes/{cid}/schedule", {"days": {}, "fee": 0})[0], 404)
+            # bỏ đánh dấu → trả về theo lịch
+            lan.post("/api/attendance", {"date": "2026-10-05", "items": [{"student_id": A, "status": "auto"}]})
+            a = [s for s in lan.get(f"/api/attendance?date=2026-10-05&class_id={cid}")[1]["students"] if s["id"] == A][0]
+            self.assertEqual((a["status"], a["marked"]), ("present", False))
+        finally:
+            app.today_vn = real_today
+
+    def test_zz_attendance_rules(self):
+        """Học sinh mới tạo vẫn có lịch; phút đi muộn; chốt điểm danh; phạt muộn và thưởng điểm theo quy tắc từng tháng."""
+        import datetime as dt
+        lan = self.C()
+        lan.post("/api/login", {"username": "lan", "password": LAN_PW})
+        cid = lan.post("/api/classes", {"name": "ĐD2", "grade": "9"})[1]["id"]
+        accs = lan.post("/api/students/bulk", {"class_id": cid, "rows": ["Phạm Muộn", "Lê Giỏi"]})[1]["accounts"]
+        A, B = accs[0]["id"], accs[1]["id"]            # tạo MỚI (không lùi created_at): trước đây bị báo “không có lịch” ở ngày cũ
+        real_today = app.today_vn
+        app.today_vn = lambda: dt.date(2026, 10, 31)
+        try:
+            lan.post(f"/api/classes/{cid}/schedule", {"days": {"0": "19:00–21:00"}, "fee": 100000, "from": "2026-10-01"})
+            d = lan.get(f"/api/attendance?date=2026-10-05&class_id={cid}")[1]
+            self.assertEqual([(x["scheduled"], x["status"]) for x in d["students"]], [(True, "present")] * 2)
+            self.assertEqual(d["classes"][0]["closed"], False)
+            # phút đi muộn chỉ lưu cho học sinh đi học
+            self.assertEqual(lan.post("/api/attendance", {"date": "2026-10-05", "items": [{"student_id": A, "status": "present", "late_min": 15},
+                                                                                       {"student_id": B, "status": "absent", "late_min": 10}]})[0], 200)
+            self.assertEqual(lan.post("/api/attendance", {"date": "2026-10-05", "items": [{"student_id": A, "status": "present", "late_min": 999}]})[0], 400)
+            d = {x["id"]: x for x in lan.get(f"/api/attendance?date=2026-10-05&class_id={cid}")[1]["students"]}
+            self.assertEqual((d[A]["late_min"], d[B]["late_min"], d[B]["status"]), (15, 0, "absent"))
+            # chỉ đổi phút muộn thì giữ nguyên ghi chú / trạng thái
+            lan.post("/api/attendance", {"date": "2026-10-05", "items": [{"student_id": A, "status": "present", "late_min": 20}]})
+            t = {x["id"]: x for x in lan.get(f"/api/attendance/stats?month=2026-10&class_id={cid}")[1]["students"]}
+            self.assertEqual((t[A]["late_min"], t[A]["late_fine"]), (20, 20000))           # mặc định 1.000đ/phút
+            # quy tắc đổi theo tháng: đặt từ 10/2026 → 2.000đ/phút; tháng 11 đặt lại 500đ nhưng tháng 10 giữ nguyên
+            self.assertEqual(lan.post("/api/att-rules", {"month": "2026-10", "late_fee": 2000})[0], 200)
+            self.assertEqual(lan.get("/api/att-rules?month=2026-12")[1]["rules"]["late_fee"], 2000)   # thừa hưởng từ tháng gần nhất
+            lan.post("/api/att-rules", {"month": "2026-11", "late_fee": 500})
+            t = {x["id"]: x for x in lan.get(f"/api/attendance/stats?month=2026-10&class_id={cid}")[1]["students"]}
+            self.assertEqual(t[A]["late_fine"], 40000)
+            self.assertEqual(lan.post("/api/att-rules", {"month": "2026-10", "reward_min": 11})[0], 400)
+            # chốt điểm danh: ghi cố định học sinh có lịch chưa đánh dấu, rồi khóa sửa
+            self.assertEqual(lan.post("/api/attendance/close", {"date": "2026-11-30", "class_id": cid})[0], 400)   # chưa tới ngày
+            st, r = lan.post("/api/attendance/close", {"date": "2026-10-12", "class_id": cid})
+            self.assertEqual((st, r["filled"]), (200, 2))
+            self.assertEqual(lan.post("/api/attendance", {"date": "2026-10-12", "items": [{"student_id": A, "status": "absent"}]})[0], 409)
+            self.assertTrue(lan.get(f"/api/attendance?date=2026-10-12&class_id={cid}")[1]["classes"][0]["closed"])
+            self.assertEqual(lan.post("/api/attendance/close", {"date": "2026-10-12", "class_id": cid, "closed": False})[0], 200)
+            self.assertEqual(lan.post("/api/attendance", {"date": "2026-10-12", "items": [{"student_id": A, "status": "absent"}]})[0], 200)
+        finally:
+            app.today_vn = real_today
+        # thưởng bài kiểm tra: ≥ mức thưởng (mặc định 8) được +5.000; mỗi học sinh có mức riêng; cộng dồn qua các bài
+        v = {"code": "M1", "questions": [mcq(1, 0), mcq(2, 0)]}
+        for title in ("KT 1", "KT 2"):
+            lan.post("/api/assignments", {"title": title, "class_id": cid, "dist_mode": "alt", "duration_min": 0, "max_attempts": 1, "show_result": True,
+                                          "exam": {"title": title, "variations": [v]}})
+        lan.post("/api/att-rules", {"month": app.month_key(), "late_fee": 1000})                       # đặt lại mặc định cho tháng hiện tại
+        sa, sb = self.C(), self.C()
+        sa.post("/api/login", {"username": accs[0]["username"], "password": accs[0]["password"]})
+        sb.post("/api/login", {"username": accs[1]["username"], "password": accs[1]["password"]})
+        for stu, ans in ((sa, [0, 0]), (sb, [0, 1])):                                                  # A đúng hết (10đ); B đúng 1/2 (5đ)
+            for a in stu.get("/api/assignments")[1]["assignments"]:
+                stu.post(f"/api/assignments/{a['id']}/start")
+                stu.post(f"/api/assignments/{a['id']}/submit", {"answers": ans})
+        t = {x["id"]: x for x in lan.get(f"/api/attendance/stats?month={app.month_key()}&class_id={cid}")[1]["students"]}
+        self.assertEqual((t[A]["test_reward"], len(t[A]["tests"])), (10000, 2))                       # 2 bài × 5.000 cộng dồn
+        self.assertEqual(t[B]["test_reward"], 0)
+        self.assertEqual(lan.post("/api/att-rules/student", {"student_id": B, "month": app.month_key(), "reward_min": 5})[0], 200)
+        t = {x["id"]: x for x in lan.get(f"/api/attendance/stats?month={app.month_key()}&class_id={cid}")[1]["students"]}
+        self.assertEqual(t[B]["test_reward"], 10000)                                                  # mức riêng của B là 5 điểm
+        self.assertEqual(t[B]["net_points"], 10000 - t[B]["late_fine"])
+        rl = {x["id"]: x for x in lan.get(f"/api/att-rules?month={app.month_key()}")[1]["students"]}
+        self.assertEqual((rl[B]["reward_min"], rl[B]["custom"], rl[A]["custom"]), (5, True, False))
+        lan.post("/api/att-rules/student", {"student_id": B, "month": app.month_key(), "reward_min": None})   # đặt lại về mặc định
+        self.assertEqual(lan.get(f"/api/att-rules?month={app.month_key()}")[1]["students"][1]["custom"] or
+                         lan.get(f"/api/att-rules?month={app.month_key()}")[1]["students"][0]["custom"], False)
 
 if __name__ == "__main__":
     unittest.main()

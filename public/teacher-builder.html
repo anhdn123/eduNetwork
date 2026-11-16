@@ -9,13 +9,6 @@
     <label class="muted" style="font-size:10px">Môn học</label>
     <select id="cfg-subject" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:12px;background:#fff">
       <option value="Toán" selected>Toán học</option>
-      <option value="Ngữ văn">Ngữ văn</option>
-      <option value="Tiếng Anh">Tiếng Anh</option>
-      <option value="Vật lý">Vật lý (KHTN)</option>
-      <option value="Hóa học">Hóa học (KHTN)</option>
-      <option value="Sinh học">Sinh học (KHTN)</option>
-      <option value="Lịch sử & Địa lý">Lịch sử & Địa lý</option>
-      <option value="Tin học">Tin học</option>
     </select>
   </div>
   <div>
@@ -32,8 +25,8 @@
   </div>
   <div>
     <label class="muted" style="font-size:10px">Chuyên đề bài học</label>
-    <select id="cfg-topic" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:12px;background:#fff"></select>
-    <input id="cfg-topic-custom" type="text" placeholder="Nhập chuyên đề riêng của bạn..." style="display:none;width:100%;margin-top:6px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:11px">
+    <input id="cfg-topic" list="cfg-topic-list" placeholder="Chọn hoặc nhập chuyên đề" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:12px;background:#fff">
+    <datalist id="cfg-topic-list"></datalist>
   </div>
 </div>
 

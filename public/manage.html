@@ -11,9 +11,12 @@
 <main class="page-wrap">
   <h1 style="margin:0 0 4px">Lớp học & học sinh</h1>
   <p class="section-sub" style="margin:0">Tạo lớp, cấp tài khoản cho học sinh, xem bài đã giao và kết quả.</p>
+  <div id="qr-card" style="margin-top:14px"></div>
   <div class="tabs" id="tabs">
     <button data-tab="classes" class="on">Lớp & học sinh</button>
+    <button data-tab="attend">📋 Điểm danh</button>
     <button data-tab="practice">🎯 Mở luyện tập tự do</button>
+    <button data-tab="bonus">⭐ Điểm cộng</button>
     <button data-tab="assign">Bài đã giao</button>
     <button data-tab="parents">Phụ huynh</button>
     <button data-tab="teachers" id="tab-teachers" hidden>Giáo viên (quản trị)</button>
@@ -22,6 +25,7 @@
 </main>
 <script src="api.js"></script>
 <script src="app.js"></script>
+<script src="qr.js"></script>
 <script src="manage.js"></script>
 </body>
 </html>

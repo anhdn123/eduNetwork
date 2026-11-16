@@ -40,8 +40,16 @@ Mật khẩu được băm bằng scrypt, không lưu dạng chữ thường.
     (mỗi giáo viên một kho riêng, lưu trên máy chủ).
     Câu hỏi được tách theo dạng: trắc nghiệm, đúng/sai (4 ý a-d), trả lời ngắn, tự luận; kèm ảnh cắt từ PDF.
  2) Gắn nhãn Môn · Khối · Chuyên đề; tick chọn NHIỀU chuyên đề; nhập số mã đề (1–30) và số câu mỗi dạng → Generate.
+    LỜI GIẢI CHI TIẾT từng câu được đọc kèm khi import: viết ngay sau câu ("Lời giải: ..."), ở phần
+    "HƯỚNG DẪN GIẢI" cuối đề, hoặc trong file lời giải riêng tải lên cùng lúc. Với PDF/ảnh, lời giải được cắt
+    thành ảnh (giữ nguyên công thức, hình vẽ). Xem/sửa/gõ thêm lời giải trong "Quản lý & sửa đáp án" → 📘 Lời giải.
  3) Giao cho lớp (hạn nộp, thời gian làm, số lần làm) → học sinh làm online, MÁY CHỦ chấm điểm
     (học sinh không bao giờ nhận được đáp án trước khi nộp). Giáo viên xem kết quả tại "Lớp & học sinh".
+    Cách phân mã đề: xen kẽ · ngẫu nhiên (chia đều số học sinh cho các mã) · học sinh tự chọn ·
+    CHỈ ĐỊNH (chọn mã đề hoặc "không giao" cho từng học sinh). Sau khi giao vẫn đổi được ở
+    "Bài đã giao → 🔀 Mã đề" (giao thêm, bỏ giao em chưa làm; em đang làm dở giữ mã đề của lượt đang làm).
+    Học sinh xem đáp án & lời giải: ngay sau khi nộp · sau khi hết hạn nộp/đóng bài · không cho xem.
+    Học sinh vào "Bài của tôi → 📖 Xem lại bài": từng câu đúng/sai, mình chọn gì, đáp án đúng, lời giải chi tiết.
  4) Hoặc IN nhiều mã đề cùng lúc, cuối mỗi đề có PHIẾU TRẢ LỜI; chụp ảnh phiếu học sinh đã tô →
     "Chấm bài bằng ảnh phiếu" tự nhận mã đề, đọc đáp án và chấm điểm (xuất CSV).
     Chụp đủ 4 ô vuông đen ở góc phiếu, đủ sáng; dùng bút đen tô kín ô.
@@ -51,8 +59,25 @@ Mật khẩu được băm bằng scrypt, không lưu dạng chữ thường.
     chọn chuyên đề, số câu từng dạng, thời gian → hệ thống bốc câu ngẫu nhiên tạo đề; nộp bài là có điểm, đáp án và lời giải ngay.
     Kết quả lưu ở máy chủ: học sinh xem lại lịch sử; giáo viên xem số lần/điểm TB trong bảng học sinh và mở từng bài;
     phụ huynh thấy thống kê tự luyện tập của con.
+ 7) ĐIỂM CỘNG TỰ LUYỆN TẬP: "Lớp & học sinh" → tab "⭐ Điểm cộng" → chọn lớp, đặt số điểm cộng cho mỗi câu làm đúng
+    theo dạng câu (mặc định: trắc nghiệm 10, đúng/sai 40, trả lời ngắn 50; đặt 0 để không cộng). Học sinh được cộng dồn
+    khi nộp bài tự luyện tập. Câu đúng/sai phải đúng cả 4 ý; mỗi câu hỏi chỉ được cộng lần đầu làm đúng trong tháng.
+    Điểm tính theo tháng (giờ Việt Nam), ngày 1 hằng tháng tự về 0; các tháng trước vẫn chọn xem lại được.
+    Bảng điểm cộng xếp hạng cả lớp, xem chi tiết từng học sinh, tải CSV. Học sinh thấy điểm cộng tháng này và hạng trong lớp
+    ở tab "🎯 Tự luyện tập". Đổi mức điểm chỉ áp dụng cho các lần nộp bài sau.
+ 8) ĐIỂM DANH & HỌC PHÍ: "Lớp & học sinh" → tab "📋 Điểm danh".
+    - "🗓 Lịch học các lớp": tick các thứ lớp có buổi học, ghi giờ học, học phí mỗi buổi và ngày bắt đầu áp dụng.
+      Đổi lịch/học phí chỉ tính từ ngày áp dụng, các ngày trước giữ theo lịch cũ.
+    - "✅ Điểm danh": hiện mọi học sinh của các lớp mình phụ trách theo ngày (mặc định hôm nay). Em có lịch hôm nay được
+      tự tick "Đi học"; em nào nghỉ thì tick "Nghỉ" và ghi lý do. Em không có lịch đến học bù thì tick "Đi học".
+      Lọc theo lớp để dùng nút "Lớp không học hôm nay" (nghỉ lễ, cô bận) hoặc "Trả về theo lịch". Thay đổi lưu ngay.
+    - "📊 Thống kê tháng · học phí": lưới từng ngày trong tháng, số buổi có lịch / đi học / nghỉ và thành tiền
+      (số buổi đi học × học phí mỗi buổi). Chỉ tính tới hôm nay. Tải CSV hoặc in bảng học phí có cột ký nhận.
 
 MẠNG NỘI BỘ (WIFI/LAN, không cần Internet): chạy run-lan.bat trên máy chủ, máy khác mở địa chỉ IP được in ra.
+MÃ QR ĐĂNG NHẬP: khi chạy run-lan.bat, trang "Lớp & học sinh" của quản trị viên hiện mã QR chứa địa chỉ đăng nhập
+(mã tạo ngay trên máy, không cần Internet). Mọi người cùng mạng wifi mở camera quét là vào trang đăng nhập;
+có nút phóng to để chiếu và nút in. Phiếu tài khoản in cho học sinh cũng kèm mã QR này.
 Mọi kết quả (bài được giao, bài tự luyện tập) đều gửi về máy chủ nên giáo viên thấy ngay trên trang quản lý.
 Nếu mất kết nối đúng lúc nộp bài, bài làm vẫn được giữ trên máy học sinh và có thể bấm nộp lại.
 

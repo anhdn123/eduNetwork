@@ -58,11 +58,38 @@ def grade(questions: list, answers: list, reveal: bool):
         if sc is not None:
             total += sc
             mx += 1
-        if reveal:
-            d["key"] = q.get("ans")
-            d["sol"] = q.get("sol", "")
         details.append(d)
+    if reveal:
+        details = reveal_details(questions, details)
     return round(total, 2), mx, details
+
+
+def reveal_details(questions: list, details: list, manual: dict | None = None) -> list:
+    """Gắn đáp án đúng, lời giải (chữ và ảnh cắt từ đề) và điểm giáo viên chấm tay vào chi tiết từng câu."""
+    out = []
+    for i, q in enumerate(questions):
+        d = dict(details[i]) if i < len(details) and isinstance(details[i], dict) else {"i": i, "t": q.get("t"), "score": None, "given": None}
+        d["key"] = q.get("ans")
+        d["sol"] = q.get("sol", "")
+        if q.get("solImg"):
+            d["solImg"] = q["solImg"]
+        if q.get("solBad"):
+            d["solBad"] = True   # lời giải dạng chữ bị vỡ công thức khi đọc PDF → giao diện không hiện
+        if manual and i in manual:
+            d["manual"] = manual[i]
+        out.append(d)
+    return out
+
+
+def hide_details(details: list, manual: dict | None = None) -> list:
+    """Chi tiết từng câu khi chưa được xem đáp án: chỉ còn bài làm và đúng/sai."""
+    out = []
+    for i, d in enumerate(details):
+        d = {k: v for k, v in d.items() if k not in ("key", "sol", "solImg", "solBad")}
+        if manual and i in manual:
+            d["manual"] = manual[i]
+        out.append(d)
+    return out
 
 
 def sanitize_question(q: dict) -> dict:

@@ -175,6 +175,76 @@ CREATE TABLE IF NOT EXISTS practice(
   submitted_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_practice_st ON practice(student_id, submitted_at);
+CREATE TABLE IF NOT EXISTS bonus_config(
+  class_id INTEGER PRIMARY KEY,
+  mcq INTEGER NOT NULL DEFAULT 10,
+  tf INTEGER NOT NULL DEFAULT 40,
+  short INTEGER NOT NULL DEFAULT 50,
+  updated_by INTEGER,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS bonus_log(
+  practice_id INTEGER PRIMARY KEY,
+  student_id INTEGER NOT NULL,
+  class_id INTEGER,
+  month TEXT NOT NULL,
+  points INTEGER NOT NULL DEFAULT 0,
+  n_mcq INTEGER NOT NULL DEFAULT 0,
+  n_tf INTEGER NOT NULL DEFAULT 0,
+  n_short INTEGER NOT NULL DEFAULT 0,
+  n_repeat INTEGER NOT NULL DEFAULT 0,
+  at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_bonus_month ON bonus_log(month, student_id);
+CREATE TABLE IF NOT EXISTS bonus_q(
+  student_id INTEGER NOT NULL,
+  month TEXT NOT NULL,
+  qid TEXT NOT NULL,
+  PRIMARY KEY(student_id, month, qid)
+);
+CREATE TABLE IF NOT EXISTS class_schedule(
+  class_id INTEGER NOT NULL,
+  from_date TEXT NOT NULL,
+  days TEXT NOT NULL DEFAULT '{}',
+  fee INTEGER NOT NULL DEFAULT 0,
+  updated_by INTEGER,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY(class_id, from_date)
+);
+CREATE TABLE IF NOT EXISTS attendance(
+  student_id INTEGER NOT NULL,
+  date TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('present','absent','none')),
+  class_id INTEGER,
+  note TEXT NOT NULL DEFAULT '',
+  marked_by INTEGER,
+  marked_at INTEGER NOT NULL,
+  late_min INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(student_id, date)
+);
+CREATE INDEX IF NOT EXISTS idx_att_date ON attendance(date);
+CREATE TABLE IF NOT EXISTS att_close(           -- chốt điểm danh theo ngày + lớp
+  date TEXT NOT NULL,
+  class_id INTEGER NOT NULL,
+  closed_by INTEGER,
+  closed_at INTEGER NOT NULL,
+  PRIMARY KEY(date, class_id)
+);
+CREATE TABLE IF NOT EXISTS att_rules(           -- quy tắc phạt muộn / thưởng điểm của từng giáo viên, đổi được theo tháng (áp dụng từ tháng đặt trở đi)
+  owner_id INTEGER NOT NULL,
+  month TEXT NOT NULL,
+  late_fee INTEGER NOT NULL DEFAULT 1000,       -- đồng / phút đi muộn
+  reward_min REAL NOT NULL DEFAULT 8,           -- điểm bài kiểm tra tối thiểu (thang 10) để được thưởng
+  reward_amount INTEGER NOT NULL DEFAULT 5000,  -- điểm thưởng mỗi bài kiểm tra đạt
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY(owner_id, month)
+);
+CREATE TABLE IF NOT EXISTS student_reward(      -- mức điểm được thưởng riêng của từng học sinh (reward_min < 0 = dùng mức mặc định)
+  student_id INTEGER NOT NULL,
+  month TEXT NOT NULL,
+  reward_min REAL NOT NULL,
+  PRIMARY KEY(student_id, month)
+);
 CREATE TABLE IF NOT EXISTS audit(
   id INTEGER PRIMARY KEY,
   user_id INTEGER,
@@ -189,6 +259,9 @@ def init():
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     con = connect()
     con.executescript(SCHEMA)
+    # nâng cấp CSDL cũ: thêm cột số phút đi muộn cho bảng điểm danh
+    if "late_min" not in [r[1] for r in con.execute("PRAGMA table_info(attendance)").fetchall()]:
+        con.execute("ALTER TABLE attendance ADD COLUMN late_min INTEGER NOT NULL DEFAULT 0")
     con.execute("PRAGMA journal_mode=WAL")
     con.commit()
     con.close()

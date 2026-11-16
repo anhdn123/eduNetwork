@@ -470,67 +470,7 @@ const TOPICS_CATALOG = {
     '11': ['Hàm số & phương trình lượng giác', 'Dãy số, cấp số cộng & cấp số nhân', 'Giới hạn & đạo hàm', 'Hình học không gian: Quan hệ song song', 'Quan hệ vuông góc trong không gian'],
     '12': ['Đề giữa kì 1 Toán 12', 'Ứng dụng đạo hàm khảo sát & vẽ đồ thị hàm số', 'Nguyên hàm, tích phân & ứng dụng', 'Phương pháp tọa độ trong không gian Oxyz', 'Xác suất có điều kiện & công thức Bayes', 'Phương trình mũ & logarit']
   },
-  'Tiếng Anh': {
-    '6': ['Unit 1: My New School (Present Simple)', 'Unit 2: My Home (Prepositions of place)', 'Unit 3: My Friends (Present Continuous)', 'Comparatives of short adjectives'],
-    '7': ['Hobbies & Pastimes', 'Healthy living (Imperatives)', 'Community service (Past Simple)', 'Music and arts (comparisons)', 'Traffic rules (should/shouldn\'t)'],
-    '8': ['Life in the countryside (Comparative of adverbs)', 'Our traditions & customs', 'Natural disasters (Past continuous)', 'Science & Technology (Reported speech)'],
-    '9': ['Conditional Sentences (Type 1 & 2)', 'Reported Speech (Questions & Statements)', 'Passive Voice with Modals', 'Relative Clauses (Who, Which, That)', 'Life in the past (Used to + V)'],
-    '10': ['Present simple vs Present continuous', 'Compound sentences with coordinate conjunctions', 'Passive Voice with Modal verbs', 'For a better community (Past simple vs past continuous)'],
-    '11': ['Past simple vs Present perfect', 'Modal verbs: must, have to, should', 'Stative verbs in continuous forms', 'Global warming & Participle clauses'],
-    '12': ['Life stories & narrative tenses', 'Articles: a, an, the', 'Green living & Gerunds / Infinitives', 'Relative Clauses & Phrasal verbs', 'Reading comprehension & Inversions']
-  },
-  'Ngữ văn': {
-    '6': ['Truyện cổ tích & truyền thuyết Việt Nam', 'Thơ lục bát & tình cảm gia đình, quê hương', 'Ký & tản văn', 'Biện pháp tu từ: So sánh, nhân hóa, ẩn dụ'],
-    '7': ['Tục ngữ & ca dao Việt Nam', 'Thơ bốn chữ, năm chữ', 'Nghị luận xã hội cơ bản (Ý kiến - lí lẽ - dẫn chứng)', 'Nói giảm nói tránh & câu rút gọn'],
-    '8': ['Truyện ngắn hiện thực (Lão Hạc, Tắt đèn)', 'Thơ trào phúng & thơ Đường luật', 'Văn bản nghị luận về tư tưởng, đạo lí', 'Trợ từ, thán từ & từ tượng thanh, tượng hình'],
-    '9': ['Truyện Kiều (Nguyễn Du) & nghệ thuật miêu tả', 'Thơ kháng chiến: Đồng chí & Tiểu đội xe không kính', 'Ánh trăng, Mùa xuân nho nhỏ, Viếng lăng Bác', 'Nghị luận về một sự việc, hiện tượng đời sống', 'Nghị luận về tác phẩm truyện hoặc đoạn trích'],
-    '10': ['Thần thoại & Sử thi (Đăm Săn)', 'Thơ Đường luật trung đại', 'Văn bản thông tin & lập luận logic', 'Kỹ năng viết đoạn văn nghị luận 200 chữ'],
-    '11': ['Truyện ngắn hiện thực 1930-1945 (Chí Phèo, Chữ người tử tù)', 'Thơ Mới 1932-1945 (Vội vàng, Tràng giang)', 'Văn tế nghĩa sĩ Cần Giuộc', 'Nghị luận so sánh, đánh giá hai tác phẩm'],
-    '12': ['Tuyên ngôn Độc lập (Hồ Chí Minh)', 'Tây Tiến (Quang Dũng) & Việt Bắc (Tố Hữu)', 'Đất Nước (Nguyễn Khoa Điềm)', 'Vợ chồng A Phủ (Tô Hoài) & Vợ nhặt (Kim Lân)', 'Người lái đò Sông Đà (Nguyễn Tuân)']
-  },
-  'Vật lý': {
-    '6': ['Đo chiều dài, khối lượng, thể tích', 'Lực và tác dụng của lực', 'Năng lượng và sự truyền nhiệt'],
-    '7': ['Tốc độ chuyển động', 'Âm thanh: Độ cao, độ to & phản xạ âm', 'Ánh sáng: Định luật phản xạ ánh sáng'],
-    '8': ['Khối lượng riêng & trọng lượng riêng', 'Áp suất chất lỏng & bình thông nhau', 'Lực đẩy Ác-si-mét & sự nổi', 'Công và công suất cơ học'],
-    '9': ['Định luật Ôm cho đoạn mạch nối tiếp & song song', 'Điện trở của dây dẫn & Biến trở', 'Công suất điện & Điện năng tiêu thụ', 'Hiện tượng cảm ứng điện từ & Máy biến áp', 'Hiện tượng khúc xạ ánh sáng & Thấu kính hội tụ'],
-    '10': ['Chuyển động thẳng biến đổi đều (Gia tốc, vận tốc, quãng đường)', 'Ba định luật Newton & Các lực cơ học', 'Cân bằng của vật rắn & Mômen lực', 'Công cơ học & Công suất', 'Định luật bảo toàn cơ năng & Động lượng'],
-    '11': ['Dao động điều hòa (Phương trình, vận tốc, gia tốc)', 'Con lắc lò xo & Con lắc đơn', 'Sóng cơ và sự truyền sóng', 'Giao thoa sóng & Sóng dừng', 'Điện trường & Định luật Coulomb', 'Định luật Ôm cho toàn mạch'],
-    '12': ['Mô hình động học phân tử & Nội năng', 'Nhiệt dung riêng & Nhiệt nóng chảy riêng', 'Khí lí tưởng & Định luật Boyle, Charles', 'Từ trường, cảm ứng từ & Lực Lorentz', 'Vật lý hạt nhân: Phóng xạ & Năng lượng liên kết']
-  },
-  'Hóa học': {
-    '8': ['Chất, nguyên tử, phân tử & đơn chất, hợp chất', 'Phản ứng hóa học & Định luật bảo toàn khối lượng', 'Mol, khối lượng mol & thể tích mol chất khí', 'Dung dịch & Nồng độ dung dịch (C%, CM)'],
-    '9': ['Tính chất hóa học của Axit (HCl, H2SO4)', 'Tính chất hóa học của Bazơ & Muối', 'Dãy hoạt động hóa học của kim loại', 'Phi kim: Clo, Cacbon và hợp chất', 'Hydrocarbon: Metan, Etilen, Axetilen'],
-    '10': ['Thành phần nguyên tử & Đồng vị', 'Bảng tuần hoàn các nguyên tố hóa học', 'Liên kết ion & Liên kết cộng hóa trị', 'Phản ứng oxi hóa - khử & Cân bằng electron', 'Tốc độ phản ứng hóa học & Các yếu tố ảnh hưởng'],
-    '11': ['Cân bằng hóa học & Hằng số cân bằng Kc', 'Sự điện li và pH của dung dịch', 'Alkane: Tính chất hóa học & phản ứng thế', 'Hydrocarbon không no: Alkene & Alkyne', 'Carboxylic acid & Hợp chất carbonyl'],
-    '12': ['Ester & Lipid: Phản ứng xà phòng hóa', 'Carbohydrate: Glucose, Fructose, Tinh bột', 'Amine, Amino acid & Peptide - Protein', 'Polymer & Vật liệu polymer', 'Pin điện hóa & Sự điện phân']
-  },
-  'Sinh học': {
-    '6': ['Tế bào - Đơn vị cơ sở của sự sống', 'Đa dạng thế giới sống: Vi khuẩn, Virus, Nấm', 'Thực vật và vai trò trong tự nhiên'],
-    '7': ['Đa dạng thế giới động vật', 'Cảm ứng và tập tính ở động vật', 'Sinh sản ở sinh vật'],
-    '8': ['Hệ tuần hoàn và hệ hô hấp ở người', 'Hệ tiêu hóa và dinh dưỡng', 'Hệ thần kinh và các giác quan'],
-    '9': ['Di truyền học Men-đen và lai một, hai cặp tính trạng', 'Nhiễm sắc thể, Nguyên phân và Giảm phân', 'Cấu trúc ADN, ARN và Protein', 'Đột biến gen và đột biến NST', 'Hệ sinh thái và chuỗi thức ăn'],
-    '10': ['Sinh học tế bào: Thành phần hóa học và cấu trúc tế bào', 'Chuyển hóa vật chất và năng lượng trong tế bào', 'Chu kỳ tế bào và phân bào'],
-    '11': ['Trao đổi nước và khoáng ở thực vật', 'Quang hợp và hô hấp ở thực vật', 'Cảm ứng và sinh trưởng ở sinh vật'],
-    '12': ['Di truyền học phân tử & Di truyền học Men-đen', 'Tương tác gen & Tác động đa hiệu của gen', 'Di truyền liên kết với giới tính & Di truyền quần thể', 'Tiến hóa & Sinh thái học môi trường']
-  },
-  'Lịch sử & Địa lý': {
-    '6': ['Nguồn gốc loài người & Xã hội nguyên thủy', 'Các quốc gia cổ đại phương Đông và phương Tây', 'Trái Đất trong hệ Mặt Trời & Bản đồ địa lý'],
-    '7': ['Thời kỳ Bắc thuộc và các cuộc khởi nghĩa giành độc lập', 'Đại Cồ Việt và Đại Việt thời Lý - Trần', 'Đặc điểm tự nhiên và kinh tế các châu lục'],
-    '8': ['Cách mạng tư sản & Phong trào công nhân quốc tế', 'Chiến tranh thế giới thứ nhất và thứ hai', 'Địa hình và khoáng sản Việt Nam'],
-    '9': ['Việt Nam sau Chiến tranh thế giới thứ nhất (1919 - 1930)', 'Cách mạng Tháng Tám năm 1945', 'Cuộc kháng chiến chống Pháp (1945 - 1954)', 'Cuộc kháng chiến chống Mỹ cứu nước (1954 - 1975)', 'Địa lý dân cư và các vùng kinh tế Việt Nam'],
-    '10': ['Văn minh thế giới cổ - trung đại', 'Cách mạng công nghiệp trong lịch sử', 'Địa lý tự nhiên đại cương: Khí quyển, Thủy quyển'],
-    '11': ['Chủ nghĩa tư bản hiện đại & Chủ nghĩa xã hội', 'Chiến tranh bảo vệ Tổ quốc trong lịch sử Việt Nam', 'Địa lý kinh tế - xã hội thế giới'],
-    '12': ['Trật tự thế giới mới sau Chiến tranh lạnh & ASEAN', 'Phong trào giải phóng dân tộc và cách mạng Việt Nam (1930 - 1975)', 'Việt Nam trên con đường Đổi mới và hội nhập quốc tế (1986 - nay)', 'Địa lý các ngành kinh tế & Vùng kinh tế trọng điểm']
-  },
-  'Tin học': {
-    '6': ['Thông tin và dữ liệu', 'Mạng máy tính và Internet', 'Soạn thảo văn bản cơ bản'],
-    '7': ['Bảng tính điện tử (Excel/Sheets)', 'Phần mềm trình chiếu', 'Đạo đức và pháp luật trong môi trường số'],
-    '8': ['Lập trình trực quan (Scratch)', 'Thuật toán sắp xếp và tìm kiếm', 'Cơ sở dữ liệu và bảo mật'],
-    '9': ['Lập trình cơ bản với Python', 'Biến, kiểu dữ liệu và cấu trúc rẽ nhánh', 'Vòng lặp for, while và hàm trong Python', 'Thiết kế trang web HTML/CSS đơn giản'],
-    '10': ['Hệ nhị phân và biểu diễn dữ liệu', 'Lập trình Python nâng cao: Chuỗi, Mảng, Danh sách', 'Thuật toán đệ quy và tối ưu hóa'],
-    '11': ['Cơ sở dữ liệu quan hệ và ngôn ngữ SQL', 'Thiết kế hệ thống và bảo mật thông tin', 'Lập trình hướng đối tượng (OOP)'],
-    '12': ['Trí tuệ nhân tạo (AI) và Khoa học dữ liệu', 'Học máy (Machine Learning) cơ bản', 'Mạng máy tính nâng cao và An ninh mạng']
-  }
+
 };
 
 /* ---------- NGÂN HÀNG CÂU HỎI MẪU THEO MÔN & LỚP (OFFLINE) ---------- */

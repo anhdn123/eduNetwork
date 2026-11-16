@@ -130,7 +130,7 @@ function examHTML(qs, ans, edit) {
   return qs.map((q, i) => `<div class="lb-q"><div class="qh">Câu ${i + 1}. ${qBody(q)}<span class="lv">${LV[q.lv]}</span>${edit ? `<button class="redo" data-i="${i}">↻ Đổi câu</button>` : ''}</div>` +
     (isTfg(q) ? tfgHTML(q, ans) : imgq(q) && q.t === 'mcq' ? '' : q.opts ? `<div class="opts">${q.opts.map((o, j) => `<span class="${ans && j === q.ans ? 'ok' : ''}">${'ABCD'[j]}. ${optText(q, o)}</span>`).join('')}</div>`
       : q.t === 'short' ? '<div style="margin-left:14px">Đáp số: ………………</div>' : '<div style="margin-left:14px;color:#98a2b3">Bài làm: ……………………………………………</div>') +
-    (ans ? `<div class="sol"><b>Đáp án${ansText(q) ? ': ' + esc(ansText(q)) : ''}.</b> ${q.sol}</div>` : '') + '</div>').join('');
+    (ans ? `<div class="sol"><b>Đáp án${ansText(q) ? ': ' + esc(ansText(q)) : ''}.</b> ${solBody(q)}</div>` : '') + '</div>').join('');
 }
 function examPrintHTML(title, qs, ans) {
   const headerHTML = `
@@ -168,7 +168,7 @@ function examPrintHTML(title, qs, ans) {
       optsHTML = `<div style="margin:6px 0 14px 18px;color:#888;font-style:italic">Bài làm: ....................................................................................................................................................<br>....................................................................................................................................................................</div>`;
     }
 
-    const solHTML = ans ? `<div class="print-sol"><b>Đáp án đúng:</b> ${esc(ansText(q))} &nbsp;|&nbsp; <b>Lời giải:</b> ${q.sol || ''}</div>` : '';
+    const solHTML = ans ? `<div class="print-sol"><b>Đáp án đúng:</b> ${esc(ansText(q))} &nbsp;|&nbsp; <b>Lời giải:</b> ${solBody(q)}</div>` : '';
 
     return `
       <div class="print-q">
@@ -246,7 +246,7 @@ async function downloadExam(title, qs, ans) {
       opts = '<div style="margin: 6px 0 12px 18px; color: #888; font-style: italic;">Bài làm: ....................................................................................................................................................<br>....................................................................................................................................................................</div>';
     }
 
-    const sol = ans ? `<div class="sol-box"><b>Đáp án đúng:</b> ${esc(ansText(q))} &nbsp;|&nbsp; <b>Lời giải:</b> ${q.sol || ''}</div>` : '';
+    const sol = ans ? `<div class="sol-box"><b>Đáp án đúng:</b> ${esc(ansText(q))} &nbsp;|&nbsp; <b>Lời giải:</b> ${solBody(q)}</div>` : '';
 
     return `<div class="q-block">
       <div><b>Câu ${i + 1}:</b> ${qBody(q)} <span style="font-size:9pt;color:#666">[Mức: ${LV[q.lv] || 'Tiêu chuẩn'}]</span></div>
@@ -300,7 +300,7 @@ function runQuiz(qs, o) {
     const done = (good, chosen) => {
       const sc = typeof good === 'number' ? good : (good ? 1 : 0), partial = sc > 0 && sc < 1;
       ok += sc; good = sc === 1 || partial;
-      fb.innerHTML = `<div class="lb-q"><div class="sol" style="${good ? '' : 'border-color:#e85b4a;background:#fdecea'}"><b>${partial ? 'Đúng một phần (' + sc + ' điểm).' : good ? 'Chính xác!' : 'Chưa đúng.'}</b> ${q.sol}</div></div><button class="btn btn-blue" id="nx">${i + 1 < G.length ? 'Câu tiếp →' : 'Xem kết quả'}</button>`;
+      fb.innerHTML = `<div class="lb-q"><div class="sol" style="${good ? '' : 'border-color:#e85b4a;background:#fdecea'}"><b>${partial ? 'Đúng một phần (' + sc + ' điểm).' : good ? 'Chính xác!' : 'Chưa đúng.'}</b> ${solBody(q)}</div></div><button class="btn btn-blue" id="nx">${i + 1 < G.length ? 'Câu tiếp →' : 'Xem kết quả'}</button>`;
       $('#nx', b).onclick = next;
     };
     if (isTfg(q)) tfgQuiz(q, qa, done);
@@ -335,67 +335,7 @@ const TOPICS_CATALOG = {
     '11': ['Hàm số & phương trình lượng giác', 'Dãy số, cấp số cộng & cấp số nhân', 'Giới hạn & đạo hàm', 'Hình học không gian: Quan hệ song song', 'Quan hệ vuông góc trong không gian'],
     '12': ['Đề giữa kì 1 Toán 12', 'Ứng dụng đạo hàm khảo sát & vẽ đồ thị hàm số', 'Nguyên hàm, tích phân & ứng dụng', 'Phương pháp tọa độ trong không gian Oxyz', 'Xác suất có điều kiện & công thức Bayes', 'Phương trình mũ & logarit']
   },
-  'Tiếng Anh': {
-    '6': ['Unit 1: My New School (Present Simple)', 'Unit 2: My Home (Prepositions of place)', 'Unit 3: My Friends (Present Continuous)', 'Comparatives of short adjectives'],
-    '7': ['Hobbies & Pastimes', 'Healthy living (Imperatives)', 'Community service (Past Simple)', 'Music and arts (comparisons)', 'Traffic rules (should/shouldn\'t)'],
-    '8': ['Life in the countryside (Comparative of adverbs)', 'Our traditions & customs', 'Natural disasters (Past continuous)', 'Science & Technology (Reported speech)'],
-    '9': ['Conditional Sentences (Type 1 & 2)', 'Reported Speech (Questions & Statements)', 'Passive Voice with Modals', 'Relative Clauses (Who, Which, That)', 'Life in the past (Used to + V)'],
-    '10': ['Present simple vs Present continuous', 'Compound sentences with coordinate conjunctions', 'Passive Voice with Modal verbs', 'For a better community (Past simple vs past continuous)'],
-    '11': ['Past simple vs Present perfect', 'Modal verbs: must, have to, should', 'Stative verbs in continuous forms', 'Global warming & Participle clauses'],
-    '12': ['Life stories & narrative tenses', 'Articles: a, an, the', 'Green living & Gerunds / Infinitives', 'Relative Clauses & Phrasal verbs', 'Reading comprehension & Inversions']
-  },
-  'Ngữ văn': {
-    '6': ['Truyện cổ tích & truyền thuyết Việt Nam', 'Thơ lục bát & tình cảm gia đình, quê hương', 'Ký & tản văn', 'Biện pháp tu từ: So sánh, nhân hóa, ẩn dụ'],
-    '7': ['Tục ngữ & ca dao Việt Nam', 'Thơ bốn chữ, năm chữ', 'Nghị luận xã hội cơ bản (Ý kiến - lí lẽ - dẫn chứng)', 'Nói giảm nói tránh & câu rút gọn'],
-    '8': ['Truyện ngắn hiện thực (Lão Hạc, Tắt đèn)', 'Thơ trào phúng & thơ Đường luật', 'Văn bản nghị luận về tư tưởng, đạo lí', 'Trợ từ, thán từ & từ tượng thanh, tượng hình'],
-    '9': ['Truyện Kiều (Nguyễn Du) & nghệ thuật miêu tả', 'Thơ kháng chiến: Đồng chí & Tiểu đội xe không kính', 'Ánh trăng, Mùa xuân nho nhỏ, Viếng lăng Bác', 'Nghị luận về một sự việc, hiện tượng đời sống', 'Nghị luận về tác phẩm truyện hoặc đoạn trích'],
-    '10': ['Thần thoại & Sử thi (Đăm Săn)', 'Thơ Đường luật trung đại', 'Văn bản thông tin & lập luận logic', 'Kỹ năng viết đoạn văn nghị luận 200 chữ'],
-    '11': ['Truyện ngắn hiện thực 1930-1945 (Chí Phèo, Chữ người tử tù)', 'Thơ Mới 1932-1945 (Vội vàng, Tràng giang)', 'Văn tế nghĩa sĩ Cần Giuộc', 'Nghị luận so sánh, đánh giá hai tác phẩm'],
-    '12': ['Tuyên ngôn Độc lập (Hồ Chí Minh)', 'Tây Tiến (Quang Dũng) & Việt Bắc (Tố Hữu)', 'Đất Nước (Nguyễn Khoa Điềm)', 'Vợ chồng A Phủ (Tô Hoài) & Vợ nhặt (Kim Lân)', 'Người lái đò Sông Đà (Nguyễn Tuân)']
-  },
-  'Vật lý': {
-    '6': ['Đo chiều dài, khối lượng, thể tích', 'Lực và tác dụng của lực', 'Năng lượng và sự truyền nhiệt'],
-    '7': ['Tốc độ chuyển động', 'Âm thanh: Độ cao, độ to & phản xạ âm', 'Ánh sáng: Định luật phản xạ ánh sáng'],
-    '8': ['Khối lượng riêng & trọng lượng riêng', 'Áp suất chất lỏng & bình thông nhau', 'Lực đẩy Ác-si-mét & sự nổi', 'Công và công suất cơ học'],
-    '9': ['Định luật Ôm cho đoạn mạch nối tiếp & song song', 'Điện trở của dây dẫn & Biến trở', 'Công suất điện & Điện năng tiêu thụ', 'Hiện tượng cảm ứng điện từ & Máy biến áp', 'Hiện tượng khúc xạ ánh sáng & Thấu kính hội tụ'],
-    '10': ['Chuyển động thẳng biến đổi đều (Gia tốc, vận tốc, quãng đường)', 'Ba định luật Newton & Các lực cơ học', 'Cân bằng của vật rắn & Mômen lực', 'Công cơ học & Công suất', 'Định luật bảo toàn cơ năng & Động lượng'],
-    '11': ['Dao động điều hòa (Phương trình, vận tốc, gia tốc)', 'Con lắc lò xo & Con lắc đơn', 'Sóng cơ và sự truyền sóng', 'Giao thoa sóng & Sóng dừng', 'Điện trường & Định luật Coulomb', 'Định luật Ôm cho toàn mạch'],
-    '12': ['Mô hình động học phân tử & Nội năng', 'Nhiệt dung riêng & Nhiệt nóng chảy riêng', 'Khí lí tưởng & Định luật Boyle, Charles', 'Từ trường, cảm ứng từ & Lực Lorentz', 'Vật lý hạt nhân: Phóng xạ & Năng lượng liên kết']
-  },
-  'Hóa học': {
-    '8': ['Chất, nguyên tử, phân tử & đơn chất, hợp chất', 'Phản ứng hóa học & Định luật bảo toàn khối lượng', 'Mol, khối lượng mol & thể tích mol chất khí', 'Dung dịch & Nồng độ dung dịch (C%, CM)'],
-    '9': ['Tính chất hóa học của Axit (HCl, H2SO4)', 'Tính chất hóa học của Bazơ & Muối', 'Dãy hoạt động hóa học của kim loại', 'Phi kim: Clo, Cacbon và hợp chất', 'Hydrocarbon: Metan, Etilen, Axetilen'],
-    '10': ['Thành phần nguyên tử & Đồng vị', 'Bảng tuần hoàn các nguyên tố hóa học', 'Liên kết ion & Liên kết cộng hóa trị', 'Phản ứng oxi hóa - khử & Cân bằng electron', 'Tốc độ phản ứng hóa học & Các yếu tố ảnh hưởng'],
-    '11': ['Cân bằng hóa học & Hằng số cân bằng Kc', 'Sự điện li và pH của dung dịch', 'Alkane: Tính chất hóa học & phản ứng thế', 'Hydrocarbon không no: Alkene & Alkyne', 'Carboxylic acid & Hợp chất carbonyl'],
-    '12': ['Ester & Lipid: Phản ứng xà phòng hóa', 'Carbohydrate: Glucose, Fructose, Tinh bột', 'Amine, Amino acid & Peptide - Protein', 'Polymer & Vật liệu polymer', 'Pin điện hóa & Sự điện phân']
-  },
-  'Sinh học': {
-    '6': ['Tế bào - Đơn vị cơ sở của sự sống', 'Đa dạng thế giới sống: Vi khuẩn, Virus, Nấm', 'Thực vật và vai trò trong tự nhiên'],
-    '7': ['Đa dạng thế giới động vật', 'Cảm ứng và tập tính ở động vật', 'Sinh sản ở sinh vật'],
-    '8': ['Hệ tuần hoàn và hệ hô hấp ở người', 'Hệ tiêu hóa và dinh dưỡng', 'Hệ thần kinh và các giác quan'],
-    '9': ['Di truyền học Men-đen và lai một, hai cặp tính trạng', 'Nhiễm sắc thể, Nguyên phân và Giảm phân', 'Cấu trúc ADN, ARN và Protein', 'Đột biến gen và đột biến NST', 'Hệ sinh thái và chuỗi thức ăn'],
-    '10': ['Sinh học tế bào: Thành phần hóa học và cấu trúc tế bào', 'Chuyển hóa vật chất và năng lượng trong tế bào', 'Chu kỳ tế bào và phân bào'],
-    '11': ['Trao đổi nước và khoáng ở thực vật', 'Quang hợp và hô hấp ở thực vật', 'Cảm ứng và sinh trưởng ở sinh vật'],
-    '12': ['Di truyền học phân tử & Di truyền học Men-đen', 'Tương tác gen & Tác động đa hiệu của gen', 'Di truyền liên kết với giới tính & Di truyền quần thể', 'Tiến hóa & Sinh thái học môi trường']
-  },
-  'Lịch sử & Địa lý': {
-    '6': ['Nguồn gốc loài người & Xã hội nguyên thủy', 'Các quốc gia cổ đại phương Đông và phương Tây', 'Trái Đất trong hệ Mặt Trời & Bản đồ địa lý'],
-    '7': ['Thời kỳ Bắc thuộc và các cuộc khởi nghĩa giành độc lập', 'Đại Cồ Việt và Đại Việt thời Lý - Trần', 'Đặc điểm tự nhiên và kinh tế các châu lục'],
-    '8': ['Cách mạng tư sản & Phong trào công nhân quốc tế', 'Chiến tranh thế giới thứ nhất và thứ hai', 'Địa hình và khoáng sản Việt Nam'],
-    '9': ['Việt Nam sau Chiến tranh thế giới thứ nhất (1919 - 1930)', 'Cách mạng Tháng Tám năm 1945', 'Cuộc kháng chiến chống Pháp (1945 - 1954)', 'Cuộc kháng chiến chống Mỹ cứu nước (1954 - 1975)', 'Địa lý dân cư và các vùng kinh tế Việt Nam'],
-    '10': ['Văn minh thế giới cổ - trung đại', 'Cách mạng công nghiệp trong lịch sử', 'Địa lý tự nhiên đại cương: Khí quyển, Thủy quyển'],
-    '11': ['Chủ nghĩa tư bản hiện đại & Chủ nghĩa xã hội', 'Chiến tranh bảo vệ Tổ quốc trong lịch sử Việt Nam', 'Địa lý kinh tế - xã hội thế giới'],
-    '12': ['Trật tự thế giới mới sau Chiến tranh lạnh & ASEAN', 'Phong trào giải phóng dân tộc và cách mạng Việt Nam (1930 - 1975)', 'Việt Nam trên con đường Đổi mới và hội nhập quốc tế (1986 - nay)', 'Địa lý các ngành kinh tế & Vùng kinh tế trọng điểm']
-  },
-  'Tin học': {
-    '6': ['Thông tin và dữ liệu', 'Mạng máy tính và Internet', 'Soạn thảo văn bản cơ bản'],
-    '7': ['Bảng tính điện tử (Excel/Sheets)', 'Phần mềm trình chiếu', 'Đạo đức và pháp luật trong môi trường số'],
-    '8': ['Lập trình trực quan (Scratch)', 'Thuật toán sắp xếp và tìm kiếm', 'Cơ sở dữ liệu và bảo mật'],
-    '9': ['Lập trình cơ bản với Python', 'Biến, kiểu dữ liệu và cấu trúc rẽ nhánh', 'Vòng lặp for, while và hàm trong Python', 'Thiết kế trang web HTML/CSS đơn giản'],
-    '10': ['Hệ nhị phân và biểu diễn dữ liệu', 'Lập trình Python nâng cao: Chuỗi, Mảng, Danh sách', 'Thuật toán đệ quy và tối ưu hóa'],
-    '11': ['Cơ sở dữ liệu quan hệ và ngôn ngữ SQL', 'Thiết kế hệ thống và bảo mật thông tin', 'Lập trình hướng đối tượng (OOP)'],
-    '12': ['Trí tuệ nhân tạo (AI) và Khoa học dữ liệu', 'Học máy (Machine Learning) cơ bản', 'Mạng máy tính nâng cao và An ninh mạng']
-  }
+
 };
 
 /* ---------- NGÂN HÀNG CÂU HỎI MẪU THEO MÔN & LỚP (OFFLINE) ---------- */
@@ -463,78 +403,6 @@ const OFFLINE_QUESTION_BANK = {
       { t:'short', lv:2, q:'Tính tích phân I = ∫ từ 0 đến 1 của (3x² + 2x) dx.', ans:2, sol:'I = [x³ + x²] từ 0 đến 1 = (1 + 1) - 0 = 2.' },
       { t:'essay', lv:3, q:'Trong không gian Oxyz, viết phương trình mặt phẳng (P) đi qua M(1; 2; -3) và vuông góc với đường thẳng d có VTPT n = (2; -1; 3).', sol:'Phương trình: 2(x - 1) - 1(y - 2) + 3(z + 3) = 0 <=> 2x - y + 3z + 9 = 0.' }
     ]
-  },
-  'Tiếng Anh': {
-    '6': [
-      { t:'mcq', lv:1, q:'Look! The boys _______ football in the school playground.', opts:['are playing', 'play', 'plays', 'played'], ans:0, sol:'Dấu hiệu "Look!" chỉ hành động đang diễn ra tại thời điểm nói -> Thì hiện tại tiếp diễn (are playing).' },
-      { t:'mcq', lv:1, q:'My house is _______ to the post office.', opts:['next', 'behind', 'near', 'between'], ans:0, sol:'Cấu trúc: next to (bên cạnh).' },
-      { t:'tf', lv:1, q:'"Bigger" is the comparative form of "big".', opts:['Đúng', 'Sai'], ans:0, sol:'Đúng. Tính từ ngắn 1 âm tiết gấp đôi phụ âm cuối rồi thêm -er: big -> bigger.' },
-      { t:'short', lv:2, q:'Fill in the blank with the plural form of "child": There are three _______ in the park.', ans:'children', sol:'Dạng số nhiều bất quy tắc của child là children.' },
-      { t:'essay', lv:2, q:'Viết 3 câu giới thiệu về trường học của em bằng thì hiện tại đơn.', sol:'Gợi ý chấm: 3 câu đúng ngữ pháp thì hiện tại đơn, có mô tả tên trường, vị trí hoặc lớp học.' }
-    ],
-    '9': [
-      { t:'mcq', lv:1, q:'If the weather _______ nice tomorrow, we will go on a picnic.', opts:['is', 'will be', 'was', 'were'], ans:0, sol:'Câu điều kiện loại 1 (First Conditional): Mệnh đề If chia ở hiện tại đơn (is).' },
-      { t:'mcq', lv:2, q:'The teacher _______ taught us English last year has just won an award.', opts:['who', 'which', 'whom', 'whose'], ans:0, sol:'Dùng đại từ quan hệ "who" thay cho danh từ chỉ người làm chủ ngữ (The teacher).' },
-      { t:'mcq', lv:2, q:'Peter asked me: "Where do you live?" -> Peter asked me where I _______.', opts:['lived', 'live', 'am living', 'had lived'], ans:0, sol:'Câu gián tiếp tường thuật: lùi thì hiện tại đơn về quá khứ đơn (live -> lived).' },
-      { t:'tf', lv:1, q:'In reported speech, "now" is usually changed into "then".', opts:['Đúng', 'Sai'], ans:0, sol:'Đúng. Trạng từ chỉ thời gian "now" lùi thành "then" trong câu gián tiếp.' },
-      { t:'short', lv:2, q:'Rewrite in passive voice: "They build many houses here." -> Many houses are _______ here. (Điền dạng phân từ 2 của build)', ans:'built', sol:'Cấu trúc bị động hiện tại đơn: are + V3/ed. Dạng V3 của build là built.' },
-      { t:'essay', lv:3, q:'Viết lại câu sau bằng câu điều kiện loại 2: "I don\'t have enough money, so I can\'t buy that laptop."', sol:'Đáp án: If I had enough money, I could buy that laptop.' }
-    ],
-    '12': [
-      { t:'mcq', lv:2, q:'Had I known about the traffic jam, I _______ a different route.', opts:['would have taken', 'will take', 'would take', 'took'], ans:0, sol:'Đảo ngữ câu điều kiện loại 3: Had + S + V3, S + would have + V3.' },
-      { t:'mcq', lv:1, q:'He is keen _______ playing chess in his free time.', opts:['on', 'in', 'at', 'about'], ans:0, sol:'Cấu trúc: to be keen on + V-ing / noun (thích thú với điều gì).' },
-      { t:'tf', lv:2, q:'A gerund (V-ing) can function as the subject of an English sentence.', opts:['Đúng', 'Sai'], ans:0, sol:'Đúng. Danh động từ hoàn toàn có thể đóng vai trò làm chủ ngữ trong câu.' },
-      { t:'short', lv:2, q:'Fill in the blank with the correct preposition: "She succeeded _______ passing the university entrance exam."', ans:'in', sol:'Cấu trúc: succeed in + V-ing (thành công trong việc gì).' },
-      { t:'essay', lv:3, q:'Write a short paragraph (80-100 words) about the advantages of renewable energy.', sol:'Gợi ý chấm: Nêu được 2-3 ưu điểm (bảo vệ môi trường, không cạn kiệt, giảm khí nhà kính), ngữ pháp chuẩn xác.' }
-    ]
-  },
-  'Vật lý': {
-    '9': [
-      { t:'mcq', lv:1, q:'Theo định luật Ôm, cường độ dòng điện chạy qua dây dẫn tỉ lệ thuận với:', opts:['Hiệu điện thế giữa hai đầu dây dẫn', 'Điện trở của dây dẫn', 'Chiều dài của dây dẫn', 'Tiết diện của dây dẫn'], ans:0, sol:'Hệ thức I = U / R: Cường độ dòng điện tỉ lệ thuận với U và tỉ lệ nghịch với R.' },
-      { t:'mcq', lv:2, q:'Đặt hiệu điện thế U = 12V vào hai đầu điện trở R = 24Ω. Cường độ dòng điện qua R là:', opts:['0.5 A', '2 A', '288 A', '12 A'], ans:0, sol:'I = U / R = 12 / 24 = 0.5 A.' },
-      { t:'tf', lv:1, q:'Đoạn mạch gồm hai điện trở mắc nối tiếp có điện trở tương đương R_tđ = R₁ + R₂.', opts:['Đúng', 'Sai'], ans:0, sol:'Đúng theo công thức tính điện trở tương đương của đoạn mạch nối tiếp.' },
-      { t:'short', lv:2, q:'Một bóng đèn có ghi 220V - 100W hoạt động bình thường trong 5 giờ. Điện năng tiêu thụ là bao nhiêu kWh?', ans:0.5, sol:'A = P × t = 0.1 kW × 5 h = 0.5 kWh.' },
-      { t:'essay', lv:3, q:'Một dây mayso có điện trở R = 80Ω mắc vào nguồn điện U = 220V dùng đun sôi 1.5 lít nước. Hãy tính nhiệt lượng tỏa ra trên dây trong 10 phút.', sol:'Q = (U² / R) × t = (220² / 80) × (10 × 60) = 605 × 600 = 363,000 J = 363 kJ.' }
-    ],
-    '10': [
-      { t:'mcq', lv:1, q:'Công thức tính vận tốc trong chuyển động thẳng biến đổi đều là:', opts:['v = v₀ + at', 'v = v₀ - at²', 'v = at²', 'v = v₀t + 1/2 at²'], ans:0, sol:'Công thức vận tốc tức thời: v = v₀ + at.' },
-      { t:'mcq', lv:2, q:'Một vật có khối lượng 2kg chịu tác dụng của lực F = 10N. Gia tốc của vật là:', opts:['5 m/s²', '20 m/s²', '2 m/s²', '0.2 m/s²'], ans:0, sol:'Theo định luật II Newton: a = F / m = 10 / 2 = 5 m/s².' },
-      { t:'tf', lv:1, q:'Khi vật rơi tự do, gia tốc của vật không đổi và bằng gia tốc trọng trường g.', opts:['Đúng', 'Sai'], ans:0, sol:'Đúng theo định nghĩa chuyển động rơi tự do.' },
-      { t:'short', lv:2, q:'Một vật khối lượng 1kg chuyển động với vận tốc 4 m/s. Động năng của vật là bao nhiêu Joule?', ans:8, sol:'W_đ = 1/2 × m × v² = 1/2 × 1 × 4² = 8 J.' },
-      { t:'essay', lv:3, q:'Một ô tô đang chạy với vận tốc 20 m/s thì hãm phanh chuyển động chậm dần đều với gia tốc a = -2 m/s². Tính quãng đường ô tô đi được đến khi dừng hẳn.', sol:'Khi dừng hẳn v = 0. Áp dụng: v² - v₀² = 2as => 0 - 20² = 2×(-2)×s => s = 100m.' }
-    ]
-  },
-  'Hóa học': {
-    '9': [
-      { t:'mcq', lv:1, q:'Dung dịch axit clohiđric (HCl) làm quỳ tím chuyển sang màu gì?', opts:['Đỏ', 'Xanh', 'Không đổi màu', 'Vàng'], ans:0, sol:'Axit làm quỳ tím chuyển sang màu đỏ đặc trưng.' },
-      { t:'mcq', lv:2, q:'Kim loại nào sau đây phản ứng được với nước ở nhiệt độ thường giải phóng khí H₂?', opts:['Natri (Na)', 'Đồng (Cu)', 'Bạc (Ag)', 'Sắt (Fe)'], ans:0, sol:'Natri là kim loại kiềm tan mạnh trong nước giải phóng khí H₂: 2Na + 2H₂O -> 2NaOH + H₂.' },
-      { t:'tf', lv:1, q:'Khí Cacbon đioxit (CO₂) làm vẩn đục nước vôi trong Ca(OH)₂.', opts:['Đúng', 'Sai'], ans:0, sol:'Đúng do tạo kết tủa trắng Canxi cacbonat: CO₂ + Ca(OH)₂ -> CaCO₃↓ + H₂O.' },
-      { t:'short', lv:2, q:'Khối lượng mol phân tử của Axit Sunfuric (H₂SO₄) là bao nhiêu g/mol?', ans:98, sol:'M = 1×2 + 32 + 16×4 = 98 g/mol.' },
-      { t:'essay', lv:3, q:'Cho 5.6 gam sắt (Fe) phản ứng hoàn toàn với dung dịch axit clohiđric (HCl) dư. Tính thể tích khí H₂ sinh ra ở điều kiện tiêu chuẩn (biết Fe = 56).', sol:'n_Fe = 5.6 / 56 = 0.1 mol. Phương trình: Fe + 2HCl -> FeCl₂ + H₂. Theo pt: n_H₂ = n_Fe = 0.1 mol. Thể tích V = 0.1 × 22.4 = 2.24 lít.' }
-    ],
-    '10': [
-      { t:'mcq', lv:1, q:'Hạt mang điện tích âm trong cấu tạo nguyên tử là:', opts:['Electron', 'Proton', 'Neutron', 'Hạt nhân'], ans:0, sol:'Hạt electron mang điện tích âm (-1), proton mang điện tích dương (+1), neutron không mang điện.' },
-      { t:'mcq', lv:2, q:'Trong bảng tuần hoàn, các nguyên tố trong cùng một nhóm A có đặc điểm chung nào?', opts:['Cùng số electron ở lớp ngoài cùng', 'Cùng số lớp electron', 'Cùng số khối', 'Cùng bán kính nguyên tử'], ans:0, sol:'Các nguyên tố nhóm A có cùng số electron lớp ngoài cùng, do đó tính chất hóa học tương tự nhau.' },
-      { t:'tf', lv:2, q:'Chất khử là chất nhường electron (quá trình oxi hóa).', opts:['Đúng', 'Sai'], ans:0, sol:'Đúng theo định nghĩa quy tắc nhớ: Khử cho - O nhận.' },
-      { t:'short', lv:2, q:'Nguyên tử Natri (Z = 11) có bao nhiêu electron ở lớp ngoài cùng?', ans:1, sol:'Cấu hình electron của Na (Z=11) là 1s² 2s² 2p⁶ 3s¹ => có 1 electron ở lớp ngoài cùng.' },
-      { t:'essay', lv:3, q:'Lập phương trình hóa học của phản ứng oxi hóa - khử sau theo phương pháp thăng bằng electron: Cu + HNO₃ (loãng) -> Cu(NO₃)₂ + NO↑ + H₂O.', sol:'3Cu + 8HNO₃ -> 3Cu(NO₃)₂ + 2NO↑ + 4H₂O. Quá trình: Cu -> Cu²⁺ + 2e (nhân 3); N⁺⁵ + 3e -> N⁺² (nhân 2).' }
-    ]
-  },
-  'Ngữ văn': {
-    '9': [
-      { t:'mcq', lv:1, q:'Tác giả của tác phẩm "Truyện Kiều" là ai?', opts:['Nguyễn Du', 'Nguyễn Trãi', 'Hồ Xuân Hương', 'Nguyễn Đình Chiểu'], ans:0, sol:'Đại thi hào dân tộc Nguyễn Du là tác giả của kiệt tác Đoạn trường tân thanh (Truyện Kiều).' },
-      { t:'mcq', lv:2, q:'Hình ảnh "đầu súng trăng treo" trong bài thơ "Đồng chí" của Chính Hữu mang ý nghĩa biểu tượng gì?', opts:['Biểu tượng đẹp về tình đồng chí gắn kết giữa hiện thực chiến sĩ và lãng mạn thi sĩ', 'Sự tĩnh lặng của đêm tối nơi chiến trường', 'Súng bắn lên mặt trăng', 'Niềm vui chiến thắng'], ans:0, sol:'Câu thơ là điểm sáng lãng mạn, kết hợp hài hòa giữa chất hiện thực khốc liệt (súng) và tâm hồn bay bổng (trăng).' },
-      { t:'tf', lv:1, q:'Bài thơ "Viếng lăng Bác" do nhà thơ Viễn Phương sáng tác năm 1976 sau khi lăng Chủ tịch Hồ Chí Minh khánh thành.', opts:['Đúng', 'Sai'], ans:0, sol:'Đúng theo hoàn cảnh ra đời của bài thơ.' },
-      { t:'short', lv:2, q:'Điền từ còn thiếu vào câu thơ trong bài "Mùa xuân nho nhỏ": "Một mùa xuân nho nhỏ / Lặng lẽ dâng cho _______".', ans:'đời', sol:'Câu thơ đầy đủ: "Một mùa xuân nho nhỏ / Lặng lẽ dâng cho đời / Dù là tuổi hai mươi / Dù là khi tóc bạc."' },
-      { t:'essay', lv:3, q:'Viết một đoạn văn ngắn (khoảng 150 chữ) nêu cảm nhận của em về tình đồng chí của những người lính trong bài thơ "Đồng chí" của Chính Hữu.', sol:'Gợi ý chấm: Nêu được cơ sở hình thành tình đồng chí (cùng cảnh ngộ, cùng mục tiêu), sự chia sẻ gian lao và hình ảnh gắn kết cao đẹp.' }
-    ],
-    '12': [
-      { t:'mcq', lv:1, q:'Tác phẩm "Tuyên ngôn Độc lập" được Chủ tịch Hồ Chí Minh đọc tại Quảng trường Ba Đình vào ngày tháng năm nào?', opts:['02/09/1945', '19/08/1945', '30/04/1975', '07/05/1954'], ans:0, sol:'Bản Tuyên ngôn Độc lập được đọc vào ngày 2/9/1945, khai sinh ra nước Việt Nam Dân chủ Cộng hòa.' },
-      { t:'mcq', lv:2, q:'Trong bài thơ "Tây Tiến", nhà thơ Quang Dũng đã khắc họa bức chân dung người lính với vẻ đẹp:', opts:['Hào hoa, lãng mạn nhưng bi tráng và kiên cường', 'Nông dân chất phác và mộc mạc', 'Lạnh lùng và nghiêm khắc', 'Yếu đuối và hoang mang'], ans:0, sol:'Cảm hứng lãng mạn và tinh thần bi tráng tạo nên tượng đài bất tử về người lính Tây Tiến.' },
-      { t:'tf', lv:1, q:'Truyện ngắn "Vợ nhặt" của Kim Lân có tiền thân từ tiểu thuyết "Xóm ngụ cư".', opts:['Đúng', 'Sai'], ans:0, sol:'Đúng theo hoàn cảnh sáng tác truyện ngắn Vợ nhặt.' },
-      { t:'short', lv:2, q:'Tác giả của tập ký "Sông Đà" (trong đó có bài Người lái đò Sông Đà) là nhà văn nào?', ans:'Nguyễn Tuân', sol:'Nhà văn Nguyễn Tuân nổi tiếng với phong cách tài hoa và uyên bác.' },
-      { t:'essay', lv:3, q:'Viết đoạn văn nghị luận 200 chữ bàn về ý nghĩa của tinh thần trách nhiệm đối với thế hệ trẻ trong xã hội hiện đại.', sol:'Gợi ý chấm: Giải thích tinh thần trách nhiệm, phân tích vai trò với bản thân và cộng đồng, phản đề và bài học hành động.' }
-    ]
   }
 };
 
@@ -580,9 +448,18 @@ function splitKeySection(text) {
 }
 
 // Đọc đáp án từ một đoạn: {l:'A'} | {tfg:{a:true,..}} | {tf:true} | {val:'3,5'}  (+ sol)
+const SOL_MAX = 5000;
+const cleanSol = s => s.replace(/^\s*(?:Lời\s*giải(?:\s*chi\s*tiết)?|Hướng\s*dẫn(?:\s*giải)?|Giải\s*thích|Giải)\s*[:.]?/i, '').replace(/\s+/g, ' ').trim().slice(0, SOL_MAX);
 function extractAns(seg) {
   if (!seg) return null;
-  const sol = seg.replace(/^\s*(?:Chọn|Đáp\s*án)[^\n.]*[.\n]?/, '').replace(/^\s*(?:Lời\s*giải|Hướng\s*dẫn\s*giải)\s*[:.]?/i, '').replace(/\s+/g, ' ').trim().slice(0, 1500);
+  const r = extractAns0(seg);
+  if (r && r.sol && seg.split(MATHMARK).length > 3) r.solBad = true;   // lời giải có công thức → chữ đọc từ PDF bị vỡ
+  return r;
+}
+function extractAns0(seg) {
+  seg = seg.split(MATHMARK).join('');
+  const sol = cleanSol(seg.replace(/^\s*(?:Chọn|Đáp\s*án)[^\n.]*[.\n]?/, ''));
+  const after = m => cleanSol(seg.slice(m.index + m[0].length).replace(/^\s*[.;,]/, ''));   // phần lời giải viết sau dòng đáp án
   // "Đáp án: Đ - S - Đ - S" (4 ý a–d của câu đúng/sai, viết liền theo thứ tự)
   const seq = /(?:Đáp\s*án|ĐA)\s*[:.]?\s*(Đúng|Sai|[ĐÐD]|S)\s*[-–,;/ ]\s*(Đúng|Sai|[ĐÐD]|S)\s*[-–,;/ ]\s*(Đúng|Sai|[ĐÐD]|S)\s*[-–,;/ ]\s*(Đúng|Sai|[ĐÐD]|S)(?![A-Za-zÀ-ỹ])/.exec(seg);
   // OCR hay làm mất dấu gạch ("S - S-ĐĐ-S"): lấy đúng 4 chữ Đ/S đứng ngay sau "Đáp án:"
@@ -590,9 +467,9 @@ function extractAns(seg) {
   if (sq2) {
     const tk = sq2[1].trim().split(/[\s\-–,;\/]+/).filter(Boolean), lt = sq2[1].replace(/[^ĐÐDS]/g, '');
     const L = tk.length === 4 && tk.every(t => /^([ĐÐDS])\1*$/.test(t)) ? tk.map(t => t[0]) : (lt.length === 4 ? lt.split('') : null);   // "ĐĐ" do OCR đọc lặp → coi là một ý
-    if (L) return {tfg: {a: L[0] !== 'S', b: L[1] !== 'S', c: L[2] !== 'S', d: L[3] !== 'S'}, sol: ''};
+    if (L) return {tfg: {a: L[0] !== 'S', b: L[1] !== 'S', c: L[2] !== 'S', d: L[3] !== 'S'}, sol: after(sq2)};
   }
-  if (seq) return {tfg: {a: /^[ĐÐD]/.test(seq[1]), b: /^[ĐÐD]/.test(seq[2]), c: /^[ĐÐD]/.test(seq[3]), d: /^[ĐÐD]/.test(seq[4])}, sol: ''};
+  if (seq) return {tfg: {a: /^[ĐÐD]/.test(seq[1]), b: /^[ĐÐD]/.test(seq[2]), c: /^[ĐÐD]/.test(seq[3]), d: /^[ĐÐD]/.test(seq[4])}, sol: after(seq)};
   const tfm = [...seg.matchAll(new RegExp('(?:^|[^' + NOLET + '])([a-d])\\s*[)\\-:.]?\\s*(Đúng|Sai|Đ|S)(?![' + NOLET + '])', 'g'))];
   if (tfm.length >= 2) { const o = {}; tfm.forEach(x => { o[x[1]] = /^Đ/.test(x[2]); }); return {tfg: o, sol}; }
   const l = new RegExp('(?:Chọn|chọn|Đáp\\s*án|ĐÁP\\s*ÁN|đáp\\s*án|ĐA)\\s*(?:đúng\\s*)?(?:là\\s*)?[:.]?\\s*\\(?([A-D])(?![' + NOLET + '])').exec(seg)
@@ -677,7 +554,7 @@ function parseBlock(raw, sec, ke, infer) {
   const info = extractAns(tail) || (ke && ke.a) || null;
   const sm = /(?:Lời\s*giải|LỜI\s*GIẢI|Hướng\s*dẫn(?:\s*giải)?|Giải\s*thích)\s*[:.]?\s*([\s\S]*)/.exec(tail);
   const solRaw = sm ? sm[1] : ((info && info.sol) || (ke && ke.a && ke.a.sol) || '');
-  const sol = esc(solRaw.replace(/\s+/g, ' ').trim().slice(0, 1500));
+  const sol = esc(solRaw.replace(/\s+/g, ' ').trim().slice(0, SOL_MAX));
   const mk = o => ({lv: 2, sol, ...o});
 
   // chữ C hay bị OCR đọc thành e / € / c nên chấp nhận khi đủ cả 4 phương án theo đúng thứ tự
@@ -743,6 +620,23 @@ function parseQuestionBank(raw, src, hasLines) {
   const kRuns = keyEntries.length ? keyEntries[keyEntries.length - 1].run + 1 : 0;
   let r0 = -1, p0 = Infinity; marks.forEach(m => { const n = +m[1]; if (n <= p0) r0++; p0 = n; });
   const useRun = kRuns === r0 + 1;
+  // Khoảng dòng của lời giải chi tiết (để cắt ảnh lời giải, giữ nguyên công thức / hình vẽ)
+  const endLine = (a, b) => b > a ? lineOf(b - 1) + 1 : lineOf(a) + 1;   // dòng kết thúc (không gồm) của đoạn [a,b)
+  const solRun = new Map(), solNum = new Map(); let sRuns = 0;
+  if (hasLines && key) {   // mục "Câu N." trong phần đáp án / hướng dẫn giải cuối đề (hoặc file đáp án riêng)
+    const keyOff = text.length - key.length, km = [...key.matchAll(/(?:^|\n)[ \t]*(?:Câu|Bài|Question)\s*(\d{1,3})\s*[:.)]/gi)];
+    let kr = -1, kp = Infinity;
+    km.forEach((m, i) => {
+      const n = +m[1]; if (n <= kp) kr++; kp = n;
+      const st = m.index + (key[m.index] === '\n' ? 1 : 0);
+      let en = i + 1 < km.length ? km[i + 1].index : key.length;
+      const ph = key.slice(st, en).search(/\n[ \t]*PH[ẦÀẪẲẢẤA]N\s+/); if (ph >= 0) en = st + ph;
+      const rg = [lineOf(keyOff + st), endLine(keyOff + st, keyOff + en)];
+      solRun.set(kr + ':' + n, rg); if (!solNum.has(n)) solNum.set(n, rg);
+    });
+    sRuns = kr + 1;
+  }
+  const useSolRun = sRuns === r0 + 1;
 
   const out = [], seen = new Set(); let prev = Infinity, run = -1, seenStruct = false;
   marks.forEach((mk, bi) => {
@@ -755,14 +649,20 @@ function parseQuestionBank(raw, src, hasLines) {
     let sec = ''; for (const s of secs) { if (s.i < mk.index) sec = s.t; else break; }
     const ke = useRun ? byRun.get(run + ':' + n) : byNum.get(n);
     // khoảng dòng [a,b) của câu hỏi (không gồm phần "Đáp án/Lời giải" ghi ngay sau câu)
-    let ra = 0, rb = 0;
+    let ra = 0, rb = 0, ss = null;
     if (hasLines) {
       const startOff = mk.index + (body[mk.index] === '\n' ? 1 : 0), tt = TAIL_RE.exec(blk);
       ra = lineOf(startOff);
-      if (tt) rb = lineOf(mk.index + tt.index + (blk[tt.index] === '\n' ? 1 : 0));
-      else { const eo = mk.index + blk.length; rb = eo >= text.length ? nl.length + 1 : (body[eo] === '\n' ? lineOf(eo) + 1 : lineOf(eo)); }
+      if (tt) {
+        rb = lineOf(mk.index + tt.index + (blk[tt.index] === '\n' ? 1 : 0));
+        const se = endLine(startOff, mk.index + blk.length);   // lời giải viết ngay sau câu hỏi
+        if (se > rb) ss = [[rb, se]];
+      } else { const eo = mk.index + blk.length; rb = eo >= text.length ? nl.length + 1 : (body[eo] === '\n' ? lineOf(eo) + 1 : lineOf(eo)); }
+      if (!ss) { const kg = useSolRun ? solRun.get(run + ':' + n) : solNum.get(n); if (kg) ss = [kg]; }
     }
-    const mathy = blk.includes(MATHMARK); blk = blk.split(MATHMARK).join('');
+    const mathy = blk.includes(MATHMARK), tt0 = TAIL_RE.exec(blk);
+    const solMathy = !!tt0 && blk.slice(tt0.index).split(MATHMARK).length > 3;   // lời giải ngay sau câu chứa công thức (font ký hiệu)
+    blk = blk.split(MATHMARK).join('');
     // không có tiêu đề chữ: "Bài N." → tự luận; "Câu N." không phương án đứng sau câu trắc nghiệm/đúng-sai → trả lời ngắn
     const infer = /^\s*Bài/i.test(mk[0]) ? 'essay' : (seenStruct ? 'short' : '');
     const parsed = parseBlock(blk, sec, ke, infer);
@@ -781,6 +681,8 @@ function parseQuestionBank(raw, src, hasLines) {
       if (!q.q) return;
       if (mathy) q.warn = true;
       if (hasLines) q._rs = aLines ? [[ra, aLines[0]], [aLines[q.grp], q.grp < 3 ? aLines[q.grp + 1] : rb]] : [[ra, rb]];
+      if (ss && String(q.sol || '').replace(/<[^>]*>|&nbsp;|\s/g, '').length) q._ss = ss;   // chỉ cắt khi đoạn đó thực sự có lời giải
+      if (q.sol && (solMathy || (ke && ke.a && ke.a.solBad) || solGarbled(q))) q.solBad = true;
       delete q.grp;
       const k = bankKey(q); if (seen.has(k)) return; seen.add(k);
       out.push({id: 'b' + Date.now().toString(36) + (BID++), src, ...q});
@@ -792,10 +694,22 @@ function parseQuestionBank(raw, src, hasLines) {
 }
 function parseExamTextFromWeb(raw) { return parseQuestionBank(raw, 'web').questions; }
 
+// Thêm câu mới vào ngân hàng; câu trùng câu đã có thì bỏ qua, nhưng nếu lần import này đọc được lời giải tốt hơn
+// (có ảnh lời giải, hoặc chữ không bị vỡ) thì bổ sung lời giải vào câu cũ → import lại file cũ để lấy ảnh lời giải.
+let SOL_MERGED = 0;
 function addToBank(list) {
   S.bank = S.bank || [];
-  const seen = new Set(S.bank.map(bankKey)); let n = 0;
-  list.forEach(q => { const k = bankKey(q); if (seen.has(k)) return; seen.add(k); S.bank.push(q); n++; });
+  const idx = new Map(S.bank.map(q => [bankKey(q), q])); let n = 0; SOL_MERGED = 0;
+  list.forEach(q => {
+    const k = bankKey(q), old = idx.get(k);
+    if (!old) { idx.set(k, q); S.bank.push(q); n++; return; }
+    let got = false;
+    if (q.solImg && !old.solImg) { old.solImg = q.solImg; delete q.solImg; got = true; }   // chuyển ảnh sang câu cũ (ảnh câu trùng bị xóa sau đó)
+    if (q.sol && (!old.sol || (solGarbled(old) && !solGarbled(q)) || got)) {
+      old.sol = q.sol; if (q.solBad) old.solBad = true; else delete old.solBad; got = true;
+    }
+    if (got) SOL_MERGED++;
+  });
   save(); return n;
 }
 
@@ -861,10 +775,29 @@ const imgq = q => !!(q && q.img);
 const imgSrc = id => (EMBED && EMBED.get(id)) || '/api/img/' + id;
 const qBody = q => imgq(q) ? `<br><img class="q-img" src="${imgSrc(q.img)}" alt="Nội dung câu hỏi" style="max-width:100%;height:auto;margin:4px 0">` : q.q;
 const optText = (q, o) => imgq(q) && q.t === 'mcq' ? '' : esc(o);
-function dropImgs(list) { list.filter(q => q.img).forEach(q => LB.api.del('/api/img/' + q.img).catch(() => {})); }
+// Lời giải dạng chữ lấy từ lớp chữ của PDF: công thức (phân số, tích phân, π...) bị tách thành chuỗi ký hiệu rời
+// ("2 2 33 3 020 0 1 ... π π π = = − =") → không đọc được. Nhận biết bằng dấu hiệu lúc import (solBad) hoặc
+// các dấu vết chỉ có ở công thức bị tách (đã thử: không bắt nhầm lời giải viết tay có công thức).
+function solGarbled(q) {
+  if (!q || !q.sol) return false;
+  if (q.solBad) return true;
+  const s = String(q.sol);
+  if (s.includes(MATHMARK)) return true;   // ký tự đánh dấu công thức còn sót trong chữ
+  const txt = ' ' + s.replace(/<[^>]*>/g, ' ').replace(/&[a-z]+;/g, ' ').replace(/\s+/g, ' ') + ' ';
+  // dấu hiệu chắc chắn (chữ viết tay không bao giờ có): ký hiệu lặp liền "= =", "π π"; dãy ≥ 6 con số rời; dãy ≥ 5 chữ cái rời
+  if (/ ([=−π∫∑]) \1 /.test(txt) || / (?:\d+ ){5,}\d+ /.test(txt) || / (?:[A-Za-z] ){4,}[A-Za-z] /.test(txt)) return true;
+  // dấu vết công thức bị tách: "( )" rỗng, biến dính dấu "=" rồi cách ("t= ", "dx= "), ∫ đứng trơ không có biểu thức, ký tự ký hiệu lạ
+  const cnt = rx => (txt.match(rx) || []).length;
+  return cnt(/\(\s+\)/g) + cnt(/[A-Za-z′][=<>≤≥] /g) + cnt(/∫ /g) + cnt(/[υρ]/g) >= 2;
+}
+// Lời giải: ưu tiên ảnh cắt từ file đề (giữ nguyên công thức, hình vẽ); không có ảnh thì dùng lời giải dạng chữ (trừ khi chữ bị vỡ công thức)
+const solBody = q => q && q.solImg ? `<img class="q-img sol-img" src="${imgSrc(q.solImg)}" alt="Lời giải chi tiết" style="max-width:100%;height:auto;margin:4px 0;display:block">`
+  : (q && q.sol && !solGarbled(q) ? q.sol : '');
+const hasSol = q => !!(q && (q.solImg || (q.sol && !solGarbled(q))));
+function dropImgs(list) { list.forEach(q => ['img', 'solImg'].forEach(k => { if (q[k]) LB.api.del('/api/img/' + q[k]).catch(() => {}); })); }
 async function embedImages(qs) {
   const m = new Map();
-  await Promise.all([...new Set(qs.filter(imgq).map(q => q.img))].map(async id => {
+  await Promise.all([...new Set(qs.flatMap(q => [q.img, q.solImg]).filter(Boolean))].map(async id => {
     try {
       const b = await (await fetch('/api/img/' + id, {credentials: 'same-origin'})).blob();
       m.set(id, await new Promise(ok => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(b); }));
@@ -974,45 +907,70 @@ function snapRow(g, x0, x1, y, lim) {
   return best;
 }
 
-// Render từng trang PDF, cắt ảnh cho mỗi câu hỏi (kèm công thức/hình vẽ), lưu vào IndexedDB
-async function attachImages(ext, qs, onProg) {
-  const SC = 2, byPage = new Map(), parts = new Map();
+// Bỏ khoảng trắng thừa ở đáy ảnh cắt (câu / lời giải cuối cùng của file không có dòng kế tiếp nên vùng cắt kéo tới cuối trang);
+// hình vẽ nằm dưới dòng chữ cuối vẫn được giữ vì có nét mực
+function trimBottom(c) {
+  const w = c.width, h = c.height; if (w < 4 || h < 24) return c;
+  const d = c.getContext('2d').getImageData(0, 0, w, h).data;
+  let last = -1;
+  for (let y = h - 1; y >= 0 && last < 0; y--) for (let x = 0, o = y * w * 4; x < w; x += 2, o += 8) if (d[o] < 225 || d[o + 1] < 225 || d[o + 2] < 225) { last = y; break; }
+  const nh = Math.min(h, last + 10);
+  if (last < 0 || nh >= h - 4) return c;
+  const t = document.createElement('canvas'); t.width = w; t.height = nh;
+  t.getContext('2d').drawImage(c, 0, 0); return t;
+}
+// Render từng trang PDF, cắt ảnh cho mỗi câu hỏi (q._rs → q.img) và lời giải chi tiết (q._ss → q.solImg), lưu lên máy chủ.
+// Lời giải nằm trong file đáp án riêng (dòng ≥ kOff của văn bản đã ghép) được cắt từ kExt.
+async function attachImages(ext, qs, onProg, kExt, kOff) {
+  const SC = 2, jobs = [], parts = new Map();
   qs.forEach(q => {
-    q._segs = q._rs ? regionSegs(q._rs, ext) : [];
-    q._segs.forEach((sg, k) => { if (!byPage.has(sg.p)) byPage.set(sg.p, []); byPage.get(sg.p).push({q, k}); });
+    if (q._rs && ext) jobs.push({q, f: 'img', x: ext, segs: regionSegs(q._rs, ext)});
+    if (q._ss) {
+      const inK = kOff != null && q._ss[0][0] >= kOff, x = inK ? kExt : ext;   // file đáp án riêng là TXT → không có ảnh để cắt
+      if (x) jobs.push({q, f: 'solImg', x, segs: regionSegs(inK ? q._ss.map(([a, b]) => [a - kOff, b - kOff]) : q._ss, x)});
+    }
+    delete q._rs; delete q._ss;
   });
-  const order = [...byPage.keys()].sort((a, b) => a - b);
-  for (let pi = 0; pi < order.length; pi++) {
-    const p = order[pi], page = await ext.pdf.getPage(p), vp = page.getViewport({scale: SC}), pg = ext.pages[p];
-    const cv = document.createElement('canvas'); cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
-    const g0 = cv.getContext('2d'); g0.fillStyle = '#fff'; g0.fillRect(0, 0, cv.width, cv.height);
-    await page.render({canvasContext: g0, viewport: vp}).promise;
-    byPage.get(p).forEach(({q, k}) => {
-      const sg = q._segs[k];
-      const x0 = Math.max(0, Math.floor((pg.l - 6) * SC)), x1 = Math.min(cv.width, Math.ceil((pg.r + 6) * SC));
-      let y0 = Math.max(0, Math.floor((pg.h - sg.t) * SC)), y1 = Math.min(cv.height, Math.ceil((pg.h - sg.b) * SC));
-      if (x1 - x0 > 8) { y0 = Math.round(snapRow(g0, x0, x1, y0, cv.height)); y1 = Math.round(snapRow(g0, x0, x1, y1, cv.height)); }
-      if (y1 - y0 < 8 || x1 - x0 < 8) return;
-      const c2 = document.createElement('canvas'); c2.width = x1 - x0; c2.height = y1 - y0;
-      const g = c2.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c2.width, c2.height);
-      g.drawImage(cv, x0, y0, x1 - x0, y1 - y0, 0, 0, c2.width, c2.height);
-      if (sg.mask) { g.fillStyle = '#fff'; g.fillRect(0, (pg.h - sg.mask.t) * SC - y0 - 2, sg.mask.x1 * SC - x0, (sg.mask.t - sg.mask.b) * SC + 4); }
-      parts.set(q.id + ':' + k, c2);
-    });
-    cv.width = cv.height = 0;
-    onProg && onProg(pi + 1, order.length);
+  const srcs = [ext, kExt].filter((x, i, a) => x && a.indexOf(x) === i);
+  const plan = srcs.map(x => {
+    const byPage = new Map();
+    jobs.forEach((j, ji) => { if (j.x === x) j.segs.forEach((sg, k) => { if (!byPage.has(sg.p)) byPage.set(sg.p, []); byPage.get(sg.p).push({ji, k}); }); });
+    return {x, byPage};
+  });
+  const totalPages = plan.reduce((s, p) => s + p.byPage.size, 0); let donePages = 0;
+  for (const {x, byPage} of plan) {
+    for (const p of [...byPage.keys()].sort((a, b) => a - b)) {
+      const page = await x.pdf.getPage(p), vp = page.getViewport({scale: SC}), pg = x.pages[p];
+      const cv = document.createElement('canvas'); cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
+      const g0 = cv.getContext('2d'); g0.fillStyle = '#fff'; g0.fillRect(0, 0, cv.width, cv.height);
+      await page.render({canvasContext: g0, viewport: vp}).promise;
+      byPage.get(p).forEach(({ji, k}) => {
+        const sg = jobs[ji].segs[k];
+        const x0 = Math.max(0, Math.floor((pg.l - 6) * SC)), x1 = Math.min(cv.width, Math.ceil((pg.r + 6) * SC));
+        let y0 = Math.max(0, Math.floor((pg.h - sg.t) * SC)), y1 = Math.min(cv.height, Math.ceil((pg.h - sg.b) * SC));
+        if (x1 - x0 > 8) { y0 = Math.round(snapRow(g0, x0, x1, y0, cv.height)); y1 = Math.round(snapRow(g0, x0, x1, y1, cv.height)); }
+        if (y1 - y0 < 8 || x1 - x0 < 8) return;
+        const c2 = document.createElement('canvas'); c2.width = x1 - x0; c2.height = y1 - y0;
+        const g = c2.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c2.width, c2.height);
+        g.drawImage(cv, x0, y0, x1 - x0, y1 - y0, 0, 0, c2.width, c2.height);
+        if (sg.mask) { g.fillStyle = '#fff'; g.fillRect(0, (pg.h - sg.mask.t) * SC - y0 - 2, sg.mask.x1 * SC - x0, (sg.mask.t - sg.mask.b) * SC + 4); }
+        parts.set(ji + ':' + k, trimBottom(c2));
+      });
+      cv.width = cv.height = 0;
+      onProg && onProg(++donePages, totalPages);
+    }
   }
   let n = 0;
-  for (const q of qs) {
-    const cs = q._segs.map((_, k) => parts.get(q.id + ':' + k)).filter(Boolean);
-    delete q._segs; delete q._rs;
+  for (let ji = 0; ji < jobs.length; ji++) {
+    const j = jobs[ji], cs = j.segs.map((_, k) => parts.get(ji + ':' + k)).filter(Boolean);
     if (!cs.length) continue;
     const W = Math.max(...cs.map(c => c.width)), Ht = cs.reduce((s, c) => s + c.height, 0) + 4 * (cs.length - 1);
     const out = document.createElement('canvas'); out.width = W; out.height = Ht;
     const g = out.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, Ht);
     let y = 0; cs.forEach(c => { g.drawImage(c, 0, y); y += c.height + 4; });
     const url = out.toDataURL('image/jpeg', 0.78);
-    q.img = (await LB.api.post('/api/img', {data: url})).id; delete q.warn; n++;
+    j.q[j.f] = (await LB.api.post('/api/img', {data: url})).id;
+    if (j.f === 'img') { delete j.q.warn; n++; }
   }
   return n;
 }
@@ -1078,31 +1036,39 @@ async function importSmart(files, labels, withImg, onChange) {
   const log = (t, c = '') => { const d = document.createElement('div'); if (c) d.className = c; d.textContent = t; logBox.append(d); logBox.scrollTop = logBox.scrollHeight; };
   OCR_LOG = ev => { if (ev && /loading/.test(ev.status || '') && ev.progress != null && ev.progress < 1) bar.title = ev.status; };
   const keys = files.filter(f => KEY_NAME.test(f.name)), exams = keys.length === files.length ? files.slice() : files.filter(f => !keys.includes(f));
-  let added = 0, noAns = 0, imgs = 0, ocrN = 0;
+  let added = 0, noAns = 0, imgs = 0, ocrN = 0, sols = 0, merged = 0;
   const batchId = 'i' + Date.now().toString(36), batchAt = Math.floor(Date.now() / 1000);   // mã lần import: để chỉ xử lý riêng các câu của lần này
   for (let fi = 0; fi < exams.length; fi++) {
     const f = exams[fi], seg = v => { bar.style.width = ((fi + v * 0.6) / exams.length * 100) + '%'; };
     try {
       log(`[${fi + 1}/${exams.length}] Đang đọc đề ${f.name}...`);
-      const rd = await smartRead(f, log, seg); let text = rd.text, ext = rd.ext;
+      const rd = await smartRead(f, log, seg); let text = rd.text, ext = rd.ext, kExt = null, kOff;
       if (rd.ext && rd.ext.ocrPages) ocrN += rd.ext.ocrPages;
       const kf = keys.length === exams.length && keys.length ? keys[fi] : (keys.length === 1 && exams.length === 1 ? keys[0] : null);
-      if (kf && kf !== f) { log(`   Đang đọc file đáp án ${kf.name}...`); const kr = await smartRead(kf, log, () => {}); text += '\nĐÁP ÁN\n' + kr.text; if (kr.ext && kr.ext.ocrPages) ocrN += kr.ext.ocrPages; }
+      if (kf && kf !== f) {
+        log(`   Đang đọc file đáp án ${kf.name}...`); const kr = await smartRead(kf, log, () => {});
+        kOff = text.split('\n').length + 1;   // dòng đầu của file đáp án trong văn bản ghép (sau dòng "ĐÁP ÁN")
+        text += '\nĐÁP ÁN\n' + kr.text; kExt = kr.ext || null; if (kr.ext && kr.ext.ocrPages) ocrN += kr.ext.ocrPages;
+      }
       else if (keys.length && !kf) log('⚠ Có nhiều file đề nhưng số file đáp án không khớp — bỏ qua file đáp án riêng, chỉ đọc đáp án nằm trong file đề.', 'warn');
       if (text.replace(/\s/g, '').length < 40) { log('✗ Không đọc được chữ trong file này (ảnh quá mờ hoặc file rỗng).', 'err'); continue; }
       PARSE_DEFAULT = labels.subject === 'Ngữ văn' ? 'essay' : 'short';
-      const res = parseQuestionBank(text, f.name, !!(ext && withImg));
+      const res = parseQuestionBank(text, f.name, !!((ext || kExt) && withImg));
       if (!res.questions.length) { log('✗ Không nhận diện được câu hỏi nào (cần dạng "Câu 1. ... A. ... B. ..." hoặc có nhãn Câu/Bài).', 'err'); continue; }
       res.questions.forEach(q => { Object.assign(q, labels); q.batch = batchId; q.at = batchAt; if (!q.topic) q.topic = guessTopic(labels.subject, labels.grade, q); });
       let nImg = 0;
-      if (ext && withImg) {
-        log(`Đang cắt ảnh ${res.questions.length} câu hỏi để giữ nguyên định dạng...`);
-        try { nImg = await attachImages(ext, res.questions, (i, n) => { bar.style.width = ((fi + 0.6 + 0.4 * i / n) / exams.length * 100) + '%'; }); }
-        catch (e) { log('⚠ Không cắt được ảnh (' + (e && e.message || e) + ') — dùng văn bản thuần.', 'warn'); res.questions.forEach(q => { delete q._rs; delete q._segs; }); }
+      if ((ext || kExt) && withImg) {
+        log(`Đang cắt ảnh ${res.questions.length} câu hỏi và lời giải để giữ nguyên định dạng...`);
+        try { nImg = await attachImages(ext, res.questions, (i, n) => { bar.style.width = ((fi + 0.6 + 0.4 * i / n) / exams.length * 100) + '%'; }, kExt, kOff); }
+        catch (e) { log('⚠ Không cắt được ảnh (' + (e && e.message || e) + ') — dùng văn bản thuần.', 'warn'); res.questions.forEach(q => { delete q._rs; delete q._ss; }); }
       }
+      const nSol = res.questions.filter(hasSol).length, nBad = res.questions.filter(q => !q.solImg && solGarbled(q)).length;
+      if (nSol) log(`   📘 Đọc được lời giải chi tiết của ${nSol}/${res.questions.length} câu.`, 'ok');
+      if (nBad) log(`   ⚠ ${nBad} câu có lời giải chứa công thức nhưng không cắt được ảnh — chữ đọc từ PDF bị vỡ nên sẽ không hiện cho học sinh.`, 'warn');
       const n = addToBank(res.questions), d = res.questions.length - n, kept = new Set((S.bank || []).map(x => x.id));
+      if (SOL_MERGED) log(`   📘 Bổ sung lời giải cho ${SOL_MERGED} câu đã có sẵn trong ngân hàng.`, 'ok');
       dropImgs(res.questions.filter(q => !kept.has(q.id)));
-      added += n; noAns += res.questions.filter(q => !hasAns(q)).length; imgs += nImg;
+      added += n; noAns += res.questions.filter(q => !hasAns(q)).length; imgs += nImg; sols += res.questions.filter(q => kept.has(q.id) && hasSol(q)).length; merged += SOL_MERGED;
       await flushBank();   // lưu ngay file này vào cơ sở dữ liệu, không chờ các file sau
       log(`💾 Đã lưu ${n} câu của file ${f.name} vào cơ sở dữ liệu.`, 'ok');
       log(`✓ ${f.name}: ${res.stats.total} câu — ${res.stats.mcq} trắc nghiệm · ${res.stats.tf} đúng/sai · ${res.stats.short} trả lời ngắn · ${res.stats.essay} tự luận; thêm mới ${n}${d ? `, bỏ ${d} câu trùng` : ''}${nImg ? `, đã cắt ảnh ${nImg} câu` : ''}`, 'ok');
@@ -1110,6 +1076,8 @@ async function importSmart(files, labels, withImg, onChange) {
   }
   bar.style.width = '100%'; onChange && onChange();
   $('#idone', b).innerHTML = `<p style="margin:10px 0 6px"><b>Đã thêm ${added} câu vào ngân hàng</b> (Khối ${esc(labels.grade)} · ${esc(labels.subject)}; tổng ${(S.bank || []).length} câu${imgs ? `, ${imgs} câu có ảnh cắt từ file` : ''}).</p>`
+    + (merged ? `<div class="lb-note">📘 Đã <b>bổ sung lời giải chi tiết cho ${merged} câu đã có sẵn</b> trong ngân hàng (các câu này không bị thêm trùng).</div>` : '')
+    + (added ? `<div class="lb-note">📘 <b>${sols}/${added}</b> câu có lời giải chi tiết đi kèm. ${sols < added ? 'Câu chưa có lời giải: thêm file lời giải (tên có chữ “lời giải” / “đáp án”) khi import, hoặc gõ lời giải trong “Xử lý câu vừa import” → 📘 Lời giải.' : 'Học sinh sẽ xem được lời giải này khi xem lại bài.'}</div>` : '')
     + (ocrN ? `<div class="lb-note">🔎 ${ocrN} trang là ảnh scan nên được nhận dạng bằng OCR — chữ có thể sai chút, nhưng ảnh câu hỏi vẫn giữ nguyên đề gốc. Hãy mở “Xem & sửa” kiểm tra nhanh đáp án.</div>` : '')
     + (noAns ? `<div class="lb-note" style="background:#fff7ed;border-color:#fed7aa;color:#9a3412">⚠ ${noAns} câu chưa đọc được đáp án (file không có phần đáp án hoặc định dạng lạ). Dùng “✎ Nhập nhanh đáp án” hoặc chọn đáp án trong màn xem & sửa.</div>` : '')
     + `<div class="lb-row"><button class="btn btn-blue" id="ib-mg">🗂 Xử lý ${added} câu vừa import</button><a class="btn btn-outline" href="manage.html#practice">🎯 Mở cho học sinh luyện tập</a><button class="btn btn-outline" id="ib-cl">Đóng</button></div>`;
@@ -1123,10 +1091,11 @@ function openSmartImport(onChange) {
     <p style="font-size:12px;color:#475467;margin:0 0 10px">Chọn khối rồi tải file lên. Hệ thống <b>tự cắt từng câu, tự phân dạng</b> (trắc nghiệm · đúng/sai · trả lời ngắn · tự luận), <b>tự đọc đáp án và lời giải</b> trong file. Đọc được cả PDF scan (ảnh).</p>
     <div class="lb-row" style="gap:10px"><label style="flex:1;font-size:11px;color:#475467">KHỐI LỚP<select id="si-g" style="${sel}">${GRADES.map(g => `<option value="${g}" ${g === gr ? 'selected' : ''}>Khối ${g}</option>`).join('')}</select></label>
       <label style="flex:1;font-size:11px;color:#475467">MÔN<select id="si-s" style="${sel}">${SUBJECTS.map(s => `<option ${s === sub ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label></div>
+    <label style="display:block;margin-top:10px;font-size:11px;color:#475467">CHUYÊN ĐỀ<input id="si-tp" list="si-tpl" placeholder="Chọn gợi ý hoặc tự nhập — để trống thì hệ thống tự đoán theo nội dung câu" style="${sel}"><datalist id="si-tpl"></datalist></label>
     <div id="si-drop" style="margin-top:12px;border:2px dashed #93c5fd;border-radius:12px;padding:22px;text-align:center;background:#f8fbff;cursor:pointer"><div style="font-size:30px">📄</div><b style="font-size:13px">Bấm để chọn file hoặc kéo thả vào đây</b><div style="font-size:11px;color:#667085;margin-top:4px">PDF, ảnh (PNG/JPG) hoặc TXT · chọn được nhiều file</div><div id="si-names" style="font-size:12px;color:#1e40af;margin-top:8px"></div></div>
     <input type="file" id="si-f" accept=".pdf,.txt,.png,.jpg,.jpeg,application/pdf,text/plain,image/png,image/jpeg" multiple hidden>
-    <p style="font-size:11px;color:#667085;margin:8px 0">Đáp án có thể nằm <b>cuối cùng file đề</b>, hoặc tải thêm <b>file đáp án riêng</b> (đặt tên có chữ “đáp án” hoặc “lời giải”).</p>
-    <label style="display:flex;gap:8px;font-size:12px;margin:6px 0"><input type="checkbox" id="si-img" checked> Giữ nguyên định dạng: lưu ảnh cắt từng câu (công thức, hình vẽ hiện đúng như đề gốc)</label>
+    <p style="font-size:11px;color:#667085;margin:8px 0">Đáp án và <b>lời giải chi tiết từng câu</b> có thể nằm ngay sau mỗi câu (“Lời giải: …”), ở <b>cuối file đề</b> (“HƯỚNG DẪN GIẢI · Câu 1. Chọn A. …”), hoặc trong <b>file lời giải riêng</b> tải lên cùng lúc (đặt tên có chữ “đáp án” hoặc “lời giải”).</p>
+    <label style="display:flex;gap:8px;font-size:12px;margin:6px 0"><input type="checkbox" id="si-img" checked> Giữ nguyên định dạng: lưu ảnh cắt từng câu và lời giải (công thức, hình vẽ hiện đúng như đề gốc)</label>
     <button class="btn btn-blue" id="si-go" disabled>Bắt đầu import</button>`);
   let files = [];
   const set = fl => { files = [...fl].filter(f => /\.(pdf|txt|png|jpe?g)$/i.test(f.name) || /^(application\/pdf|text\/plain|image\/)/.test(f.type)); $('#si-names', m.b).innerHTML = files.map(f => '• ' + esc(f.name)).join('<br>'); $('#si-go', m.b).disabled = !files.length; };
@@ -1134,7 +1103,9 @@ function openSmartImport(onChange) {
   drop.onclick = () => inp.click(); inp.onchange = () => set(inp.files);
   drop.ondragover = e => { e.preventDefault(); drop.style.background = '#e0f2fe'; }; drop.ondragleave = () => { drop.style.background = '#f8fbff'; };
   drop.ondrop = e => { e.preventDefault(); drop.style.background = '#f8fbff'; set(e.dataTransfer.files); };
-  $('#si-go', m.b).onclick = () => { const labels = {subject: $('#si-s', m.b).value, grade: $('#si-g', m.b).value, topic: ''}, wi = $('#si-img', m.b).checked; m.close(); importSmart(files, labels, wi, onChange); };
+  const fillTp = () => { $('#si-tpl', m.b).innerHTML = topicsFor($('#si-s', m.b).value, $('#si-g', m.b).value).map(t => `<option value="${esc(t)}">`).join(''); };
+  $('#si-s', m.b).onchange = fillTp; $('#si-g', m.b).onchange = fillTp; fillTp();
+  $('#si-go', m.b).onclick = () => { const labels = {subject: $('#si-s', m.b).value, grade: $('#si-g', m.b).value, topic: $('#si-tp', m.b).value.trim()}, wi = $('#si-img', m.b).checked; m.close(); importSmart(files, labels, wi, onChange); };
 }
 
 /* ---- Cắt câu hỏi thủ công từ PDF / ảnh (dùng được cả với PDF scan không có lớp chữ) ----
@@ -1245,7 +1216,7 @@ async function openCropTool(file, defaults, onChange) {
 }
 
 /* ---- Nhãn Môn · Khối · Chuyên đề cho câu hỏi trong ngân hàng ---- */
-const SUBJECTS = ['Toán', 'Ngữ văn', 'Tiếng Anh', 'Vật lý', 'Hóa học', 'Sinh học', 'Lịch sử & Địa lý', 'Tin học'];
+const SUBJECTS = ['Toán'];
 const GRADES = ['6', '7', '8', '9', '10', '11', '12'];
 const topicsFor = (s, g) => (TOPICS_CATALOG[s] && TOPICS_CATALOG[s][g]) || [];
 // Câu khớp môn/khối đang chọn (câu chưa gắn nhãn cũ vẫn được dùng); nếu chọn chuyên đề thì chỉ lấy các chuyên đề đó (chọn được nhiều)
@@ -1257,24 +1228,22 @@ function labelForm(v, id, compact) {
   return `<div class="lbl-form" id="${id}" style="${compact ? 'display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end' : 'display:grid;grid-template-columns:1fr 1fr;gap:8px'}">
     <label style="font-size:10px;color:#475467;${compact ? 'flex:1;min-width:110px' : ''}">Môn<select data-l="subject" style="${sel}">${SUBJECTS.map(s => `<option ${s === v.subject ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label>
     <label style="font-size:10px;color:#475467;${compact ? 'width:90px' : ''}">Khối<select data-l="grade" style="${sel}">${GRADES.map(g => `<option value="${g}" ${g === v.grade ? 'selected' : ''}>Khối ${g}</option>`).join('')}</select></label>
-    <label style="font-size:10px;color:#475467;${compact ? 'flex:2;min-width:160px' : 'grid-column:1/3'}">Chuyên đề<select data-l="topicsel" style="${sel}">${list.map(t => `<option value="${esc(t)}" ${t === v.topic ? 'selected' : ''}>${esc(t)}</option>`).join('')}<option value="">${TOPIC_NONE}</option><option value="__custom__">${TOPIC_CUSTOM}</option></select>
-      <input data-l="topiccustom" placeholder="Nhập tên chuyên đề" style="display:none;${sel}"></label></div>`;
+    <label style="font-size:10px;color:#475467;${compact ? 'flex:2;min-width:160px' : 'grid-column:1/3'}">Chuyên đề<input data-l="topicinput" list="${id}-tpl" value="${esc(v.topic || '')}" placeholder="Chọn hoặc nhập chuyên đề" style="${sel}">
+      <datalist id="${id}-tpl">${list.map(t => `<option value="${esc(t)}">`).join('')}</datalist></label></div>`;
 }
 const lblEl = (root, k) => root.querySelector(`[data-l="${k}"]`);
 function readLabelForm(root) {
-  let topic = lblEl(root, 'topicsel').value;
-  if (topic === '__custom__') topic = lblEl(root, 'topiccustom').value.trim();
+  let topic = lblEl(root, 'topicinput').value.trim();
   return {subject: lblEl(root, 'subject').value, grade: lblEl(root, 'grade').value, topic};
 }
 function bindLabelForm(root) {
   if (!root) return;
   const refill = () => {
     const tps = topicsFor(lblEl(root, 'subject').value, lblEl(root, 'grade').value);
-    lblEl(root, 'topicsel').innerHTML = tps.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('') + `<option value="">${TOPIC_NONE}</option><option value="__custom__">${TOPIC_CUSTOM}</option>`;
-    lblEl(root, 'topiccustom').style.display = 'none';
+    const dl = root.querySelector('datalist');
+    if (dl) dl.innerHTML = tps.map(t => `<option value="${esc(t)}">`).join('');
   };
   lblEl(root, 'subject').onchange = refill; lblEl(root, 'grade').onchange = refill;
-  lblEl(root, 'topicsel').onchange = () => { const c = lblEl(root, 'topiccustom'); c.style.display = lblEl(root, 'topicsel').value === '__custom__' ? 'block' : 'none'; if (c.style.display === 'block') c.focus(); };
 }
 const labelTxt = q => [q.subject, q.grade ? 'Khối ' + q.grade : '', q.topic].filter(Boolean).join(' · ') || 'Chưa gắn nhãn';
 function askLabels(files, defaults, onChange) {
@@ -1309,7 +1278,7 @@ async function importBankFiles(files, labels, onChange) {
       if (ext && withImg) {
         log(`Đang cắt ảnh ${res.questions.length} câu hỏi từ PDF...`);
         try { nImg = await attachImages(ext, res.questions, (i, n) => seg(0.5 + i / n * 0.5)); }
-        catch (e) { log('⚠ Không cắt được ảnh (' + (e && e.message || e) + ') — dùng văn bản thuần.', 'warn'); res.questions.forEach(q => { delete q._rs; delete q._segs; }); }
+        catch (e) { log('⚠ Không cắt được ảnh (' + (e && e.message || e) + ') — dùng văn bản thuần.', 'warn'); res.questions.forEach(q => { delete q._rs; delete q._ss; }); }
       }
       const before = new Set((S.bank || []).map(x => x.id)), n = addToBank(res.questions), d = res.questions.length - n;
       const kept = new Set((S.bank || []).map(x => x.id));
@@ -1378,7 +1347,7 @@ function openBankManager(onChange, opts) {
   opts = opts || {};
   const TYL = {mcq: 'Trắc nghiệm', tf: 'Đúng/Sai', short: 'Trả lời ngắn', essay: 'Tự luận'}, LVL = [[1, 'Nhận biết'], [2, 'Thông hiểu'], [3, 'Vận dụng']];
   const st = {f: 'all', q: '', p: 0, s: 'all', g: 'all', tp: 'all', b: opts.batch || 'all'}, PER = 15;
-  const sel = new Set(), pinned = new Set(), bar = {t: '', lv: '', subject: '', grade: '', topic: ''};
+  const sel = new Set(), pinned = new Set(), solOpen = new Set(), bar = {t: '', lv: '', subject: '', grade: '', topic: ''};
   let lastSel = null;
   const m = modal('', 1, true), b = m.b;   // khóa: chỉ đóng bằng nút “Đóng” để không mất thay đổi chưa lưu
   HOLD_SYNC = true; PENDING_DROP = [];     // chế độ lưu thủ công: mọi chỉnh sửa chỉ ghi lên máy chủ khi bấm “Lưu thay đổi”
@@ -1392,7 +1361,7 @@ function openBankManager(onChange, opts) {
   const dirtyN = () => { const cur = bankJson(); let n = 0; cur.forEach((js, id) => { if (bankSnap.get(id) !== js) n++; }); bankSnap.forEach((_, id) => { if (!cur.has(id)) n++; }); return n; };
   const warnUnload = e => { if (dirtyN()) { e.preventDefault(); e.returnValue = ''; } };
   window.addEventListener('beforeunload', warnUnload);
-  const dropLater = qs => { const w = qs.filter(q => q.img); if (HOLD_SYNC) PENDING_DROP.push(...w); else dropImgs(w); };
+  const dropLater = qs => { const w = qs.filter(q => q.img || q.solImg); if (HOLD_SYNC) PENDING_DROP.push(...w); else dropImgs(w); };
   const finish = () => { HOLD_SYNC = false; window.removeEventListener('beforeunload', warnUnload); m.close(); onChange && onChange(); };
   const revert = () => { S.bank = [...bankSnap.values()].map(js => JSON.parse(js)); PENDING_DROP = []; sel.clear(); pinned.clear(); save(); onChange && onChange(); };
   const doSave = async () => {
@@ -1442,7 +1411,12 @@ function openBankManager(onChange, opts) {
           <button class="btn btn-outline" data-bk="del" style="font-size:9px;padding:3px 8px">✕ Xóa</button>
           ${q.warn ? '<span style="color:#b45309;font-weight:700" title="Có thể thiếu/sai phương án hoặc công thức — hãy đối chiếu đề gốc và sửa lại.">⚠ Kiểm tra lại</span>' : ''}
           <span style="color:#98a2b3">${esc(q.src || '')}</span>
-        </div></div>`;
+        </div>
+        <details data-solbox="${esc(q.id)}" ${solOpen.has(q.id) ? 'open' : ''} style="margin-top:5px;font-size:10px"><summary style="cursor:pointer;font-weight:700;color:${!q.solImg && solGarbled(q) ? '#b45309' : hasSol(q) ? '#166534' : '#98a2b3'}">📘 Lời giải chi tiết${q.solImg ? ' · có ảnh' : solGarbled(q) ? ' · ⚠ chữ bị vỡ công thức, học sinh không thấy' : q.sol ? '' : ' · chưa có (bấm để thêm)'}</summary>
+          ${!q.solImg && solGarbled(q) ? `<div style="margin-top:4px;padding:6px 8px;border-radius:6px;background:#fff7ed;color:#9a3412;font-size:11px">⚠ Lời giải này có công thức; khi đọc chữ từ PDF, phân số, tích phân, π… bị tách thành ký hiệu rời nên không đọc được và <b>không hiện cho học sinh</b>. Cách sửa: <b>import lại file ${esc(q.src || 'gốc')}</b> (để tick “Giữ nguyên định dạng”) — hệ thống tự bổ sung <b>ảnh lời giải</b> vào câu này, không tạo câu trùng; hoặc gõ lại lời giải ở ô dưới.</div>` : ''}
+          ${q.solImg ? `<img src="${imgSrc(q.solImg)}" alt="Ảnh lời giải" style="max-width:100%;display:block;border:1px solid #bbf7d0;border-radius:4px;margin-top:4px"><button class="btn btn-outline" data-bk="del-solimg" style="font-size:9px;padding:2px 8px;margin-top:3px">✕ Bỏ ảnh lời giải</button>` : ''}
+          <div data-f="sol" contenteditable="true" data-ph="Gõ lời giải chi tiết cho câu này (học sinh xem khi xem lại bài)..." title="Bấm vào để sửa lời giải" style="min-height:22px;border:1px dashed #cbd5e1;border-radius:6px;padding:4px 6px;margin-top:4px;font-size:11px;line-height:1.5;outline:none">${q.sol || ''}</div>
+        </details></div>`;
     }).join('');
     const KEEP = '<option value="">— giữ nguyên —</option>';
     // nguồn = từng lần import (mới nhất lên đầu); câu cũ chưa có mã lần import gom vào “Câu cũ”
@@ -1516,8 +1490,19 @@ function openBankManager(onChange, opts) {
     else return;
     touched(q); draw();
   });
+  // giữ trạng thái mở/đóng khung lời giải khi vẽ lại danh sách (sự kiện toggle không nổi bọt → bắt ở pha capture)
+  b.addEventListener('toggle', e => { const d = e.target; if (d.dataset && d.dataset.solbox) { if (d.open) solOpen.add(d.dataset.solbox); else solOpen.delete(d.dataset.solbox); } }, true);
+  b.addEventListener('focusin', e => { const t = e.target; if (t.dataset && t.dataset.f === 'sol') t.dataset.orig = t.innerText; });
   b.addEventListener('focusout', e => {
-    const t = e.target, f = t.dataset && t.dataset.f; if (f !== 'stem' && f !== 'opt' && f !== 'st') return;
+    const t = e.target, f = t.dataset && t.dataset.f;
+    if (f === 'sol') {
+      const row = t.closest('.bk-row'), q = row && (S.bank || []).find(x => x.id === row.dataset.id); if (!q || t.innerText === t.dataset.orig) return;
+      const sol = esc(t.innerText.replace(/\r/g, '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()).replace(/\n/g, '<br>');
+      if (sol) q.sol = sol; else delete q.sol;
+      delete q.solBad;   // giáo viên đã gõ lại → kiểm tra lại bằng nội dung mới
+      touched(q); drawHead(); return;
+    }
+    if (f !== 'stem' && f !== 'opt' && f !== 'st') return;
     const row = t.closest('.bk-row'), q = row && (S.bank || []).find(x => x.id === row.dataset.id); if (!q) return;
     const txt = t.innerText.replace(/\s+/g, ' ').trim();
     if (f === 'stem') { if (esc(txt) === q.q.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()) return; q.q = esc(txt); }
@@ -1554,6 +1539,11 @@ function openBankManager(onChange, opts) {
     else if (a === 'sel-page') list().slice(st.p * PER, st.p * PER + PER).forEach(q => sel.add(q.id));
     else if (a === 'sel-none') sel.clear();
     else if (a === 'del') { const id = btn.closest('.bk-row').dataset.id; dropLater(S.bank.filter(x => x.id === id)); S.bank = S.bank.filter(x => x.id !== id); sel.delete(id); save(); onChange && onChange(); }
+    else if (a === 'del-solimg') {
+      const q = (S.bank || []).find(x => x.id === btn.closest('.bk-row').dataset.id); if (!q || !q.solImg) return;
+      if (!confirm('Bỏ ảnh lời giải của câu này? (lời giải dạng chữ vẫn giữ nguyên)')) return;
+      dropLater([{solImg: q.solImg}]); delete q.solImg; touched(q);
+    }
     else if (a === 'bulk-del') {
       const qs = (S.bank || []).filter(q => sel.has(q.id));
       if (!qs.length) return toast('Chưa chọn câu nào — hãy tick ô vuông ở đầu mỗi câu');
@@ -1914,24 +1904,16 @@ function initBuilder() {
 
   // Tự động cập nhật danh mục chuyên đề khi đổi Môn hoặc Lớp
   function updateTopicDropdown() {
-    const sEl = $('#cfg-subject'), gEl = $('#cfg-grade'), tEl = $('#cfg-topic'), cEl = $('#cfg-topic-custom');
-    if (!sEl || !gEl || !tEl) return;
+    const sEl = $('#cfg-subject'), gEl = $('#cfg-grade'), tEl = $('#cfg-topic'), dlEl = $('#cfg-topic-list');
+    if (!sEl || !gEl || !tEl || !dlEl) return;
     const s = sEl.value, g = gEl.value;
     const list = (TOPICS_CATALOG[s] && TOPICS_CATALOG[s][g]) || ['Tổng hợp kiến thức theo chuẩn SGK', 'Luyện tập các dạng bài trọng tâm', 'Đề kiểm tra định kỳ'];
-    tEl.innerHTML = list.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('') +
-      `<option value="__custom__">➕ Khác (Tự nhập tay chuyên đề...)</option>`;
-    if (cEl) { cEl.style.display = 'none'; cEl.value = ''; }
+    dlEl.innerHTML = list.map(t => `<option value="${esc(t)}">`).join('');
+    if (!tEl.value || !list.includes(tEl.value)) tEl.value = list[0] || '';
   }
 
   if ($('#cfg-subject')) $('#cfg-subject').onchange = updateTopicDropdown;
   if ($('#cfg-grade')) $('#cfg-grade').onchange = updateTopicDropdown;
-  if ($('#cfg-topic')) {
-    $('#cfg-topic').onchange = () => {
-      const isCustom = $('#cfg-topic').value === '__custom__';
-      const cEl = $('#cfg-topic-custom');
-      if (cEl) { cEl.style.display = isCustom ? 'block' : 'none'; if (isCustom) cEl.focus(); }
-    };
-  }
   updateTopicDropdown();
 
   const updateBadges = () => {
@@ -1967,9 +1949,8 @@ function initBuilder() {
   };
 
   const getActiveTopic = () => {
-    const t = $('#cfg-topic'), c = $('#cfg-topic-custom');
-    if (t && t.value === '__custom__' && c && c.value.trim()) return c.value.trim();
-    return t ? t.value : 'Tổng hợp';
+    const t = $('#cfg-topic');
+    return t && t.value.trim() ? t.value.trim() : 'Tổng hợp';
   };
 
   const getCounts = () => { const o = {mcq: 0, tf: 0, short: 0, essay: 0}; $$('[data-count]').forEach(i => { o[i.dataset.count] = Math.max(0, Math.min(100, Math.floor(+i.value || 0))); }); return o; };
@@ -2001,7 +1982,7 @@ function initBuilder() {
   if ($('#bank-file')) $('#bank-file').onchange = e => { const f = [...e.target.files]; e.target.value = ''; if (f.length) askLabels(f, {subject: $('#cfg-subject').value, grade: $('#cfg-grade').value, topic: getActiveTopic()}, renderBank); };
   if ($('#crop-file')) $('#crop-file').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) openCropTool(f, {subject: $('#cfg-subject').value, grade: $('#cfg-grade').value, topic: getActiveTopic()}, renderBank); };
   ['#cfg-subject', '#cfg-grade', '#cfg-topic'].forEach(sel => { if ($(sel)) $(sel).addEventListener('change', renderBank); });
-  if ($('#cfg-topic-custom')) $('#cfg-topic-custom').addEventListener('input', renderBank);
+  if ($('#cfg-topic')) $('#cfg-topic').addEventListener('input', renderBank);
 
   const cfg = () => ({
     kind: $('.option.active b').textContent.replace(/^\S+\s*/, ''),
@@ -2082,7 +2063,7 @@ function initBuilder() {
         </div>
 
         <!-- Nội dung đề đang chọn -->
-        <div class="lb-exam" style="margin-top:6px">${examHTML(curExam.questions, ans, true)}</div>
+        <div class="lb-exam" style="margin-top:6px;max-height:42vh">${examHTML(curExam.questions, ans, true)}</div>
 
         <div class="lb-row" style="margin-top:8px">
           <button class="btn btn-outline" id="pr">🖨 In mã đề này (${esc(curExam.code)})</button>
@@ -2093,7 +2074,7 @@ function initBuilder() {
           <button class="btn btn-outline" id="on">💻 Làm thử online (${esc(curExam.code)})</button>
         </div>
 
-        <div class="dist-matrix-box" style="text-align:center">
+        <div class="dist-matrix-box lb-sticky-foot" style="text-align:center;background:#f8fbff">
           <b style="font-size:12px;color:#1e3a8a">${c.kindKey === 'personal' ? '🎯 Giao bài cá nhân hóa cho lớp' : '🎯 Giao đề này cho lớp học'}</b>
           <p style="font-size:11px;color:#64748b;margin:4px 0 10px">${c.kindKey === 'personal' ? 'Mỗi học sinh sẽ nhận đúng một trong ' + variations.length + ' mức, hệ thống tự xếp theo điểm trung bình của em. Bạn xem lại câu hỏi từng mức ở các thẻ phía trên trước khi giao.' : 'Học sinh đăng nhập bằng tài khoản được cấp để làm online (có đồng hồ, tự chấm điểm). Bạn vẫn có thể in đề cho học sinh làm trên giấy.'}</p>
           <button class="btn btn-blue" id="btn-confirm-distribute">📤 Giao bài cho lớp…</button>
@@ -2179,10 +2160,7 @@ function initBuilder() {
         <p style="font-size:11px;color:#64748b;margin:6px 0 8px">Nhập link web hoặc dán đề thô từ VietJack, Tuyensinh247, VnDoc... Hệ thống sử dụng <b>Bộ phân tích cú pháp Regex thuần</b> để tự động nhận diện câu hỏi, tách đáp án A/B/C/D và chuẩn hóa mà <b>không cần AI</b>:</p>
         
         <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
-          <button class="btn btn-outline" style="font-size:9px;padding:4px 8px" id="preset-math">🔗 Mẫu: VietJack Toán 9</button>
-          <button class="btn btn-outline" style="font-size:9px;padding:4px 8px" id="preset-eng">🔗 Mẫu: Tuyensinh247 Tiếng Anh 9</button>
-          <button class="btn btn-outline" style="font-size:9px;padding:4px 8px" id="preset-phys">🔗 Mẫu: VnDoc Vật lý 9</button>
-        </div>
+          <button class="btn btn-outline" style="font-size:9px;padding:4px 8px" id="preset-math">🔗 Mẫu: VietJack Toán 9</button>        </div>
 
         <textarea id="crawler-urls" rows="4" placeholder="Dán các đường link trang web tại đây (mỗi link 1 dòng)...&#10;https://vietjack.com/de-kiem-tra-toan-9/...&#10;https://tuyensinh247.com/de-thi-vao-10-mon-tieng-anh-tq.html" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:11px"></textarea>
         
@@ -2211,9 +2189,6 @@ function initBuilder() {
       const statusLabel = $('#parsed-status-label', m.b);
 
       $('#preset-math', m.b).onclick = () => { urlInput.value = DEMO_PRESET_LINKS.vietjack.url; };
-      $('#preset-eng', m.b).onclick = () => { urlInput.value = DEMO_PRESET_LINKS.tuyensinh.url; };
-      $('#preset-phys', m.b).onclick = () => { urlInput.value = DEMO_PRESET_LINKS.vndoc.url; };
-
       const log = (msg, cls = '') => {
         const line = document.createElement('div');
         if (cls) line.className = cls;
@@ -2330,47 +2305,136 @@ async function openAssign(title, variations, c) {
     <label class="lb-field"><span>LỚP NHẬN BÀI</span><select id="as-c">${classes.map(k => `<option value="${k.id}">${esc(k.name)} · ${k.students} học sinh</option>`).join('')}</select></label>
     <label class="lb-field"><span>CÁCH PHÂN MÃ ĐỀ (${variations.length} mã đề)</span><select id="as-d">
       ${c.kindKey === 'personal' ? '<option value="adaptive">Cá nhân hóa — tự xếp mức theo điểm trung bình của từng học sinh</option>' : ''}
-      <option value="alt">Xen kẽ — học sinh liền kề làm mã đề khác nhau (chống nhìn bài)</option>
-      <option value="random">Ngẫu nhiên</option><option value="free">Học sinh tự chọn mã đề</option></select></label>
+      ${variations.length > 1 ? `<option value="alt">Xen kẽ — học sinh liền kề làm mã đề khác nhau (chống nhìn bài)</option>
+      <option value="random">Ngẫu nhiên — chia đều số học sinh cho các mã đề</option><option value="free">Học sinh tự chọn mã đề</option>` : '<option value="alt">Giao cho cả lớp</option>'}
+      <option value="manual">Chỉ định — chọn mã đề (hoặc không giao) cho từng học sinh</option></select></label>
+    <div id="as-man" hidden></div>
     <div class="lb-row" style="align-items:flex-end">
       <label class="lb-field" style="flex:1;min-width:190px"><span>HẠN NỘP (TUỲ CHỌN)</span><input id="as-due" type="datetime-local"></label>
       <label class="lb-field" style="width:150px"><span>PHÚT LÀM BÀI (0 = TỰ DO)</span><input id="as-min" type="number" min="0" max="300" value="45"></label>
       <label class="lb-field" style="width:110px"><span>SỐ LẦN LÀM</span><input id="as-try" type="number" min="1" max="10" value="1"></label></div>
-    <label style="display:flex;gap:8px;font-size:12px;margin:8px 0"><input type="checkbox" id="as-show" checked> Cho học sinh xem đáp án và lời giải sau khi nộp bài</label>
-    <div class="lb-note">Học sinh chỉ nhận được đề (không có đáp án). Hệ thống tự chấm câu trắc nghiệm, đúng/sai, trả lời ngắn; câu tự luận giáo viên chấm riêng.</div>
+    <label class="lb-field"><span>HỌC SINH XEM ĐÁP ÁN & LỜI GIẢI CHI TIẾT</span><select id="as-show">
+      <option value="1">Ngay sau khi nộp bài</option>
+      <option value="2">Sau khi hết hạn nộp (hoặc khi giáo viên đóng bài) — tránh lộ đáp án cho bạn chưa làm</option>
+      <option value="0">Không cho xem (chỉ xem điểm và câu đúng/sai)</option></select></label>
+    <div class="lb-note">Học sinh chỉ nhận được đề (không có đáp án). Hệ thống tự chấm câu trắc nghiệm, đúng/sai, trả lời ngắn; câu tự luận giáo viên chấm riêng. Sau khi nộp, học sinh vào <b>Bài của tôi → 📖 Xem lại bài</b> để xem lại bài làm.</div>
     <button class="btn btn-blue" id="as-go">✓ Giao bài</button>`);
-  if (variations.length < 2) $('#as-d', m.b).parentElement.style.display = 'none';
+  if (variations.length < 2 && c.kindKey !== 'personal') $('#as-d', m.b).value = 'alt';
+  const man = $('#as-man', m.b);
+  let roster = [], pick = {};   // pick[student_id] = số thứ tự mã đề | 'free' | 'none'
+  const drawMan = () => {
+    const cnt = variations.map((_, i) => roster.filter(s => pick[s.id] === i).length), none = roster.filter(s => pick[s.id] === 'none').length;
+    man.innerHTML = roster.length ? `<div class="dist-matrix-box" style="margin:0 0 10px">
+      ${varPickerHTML(variations, roster, pick, 'mp')}
+      <div style="font-size:11px;color:#475467;margin-top:6px">${variations.map((v, i) => `<b>${esc(v.code)}</b>: ${cnt[i]} HS`).join(' · ')}${none ? ` · <b>Không giao</b>: ${none} HS` : ''}</div></div>`
+      : '<div class="lb-note" style="margin:0 0 10px">Lớp này chưa có học sinh đang hoạt động.</div>';
+    bindVarPicker(man, variations, roster, pick, 'mp', drawMan);
+  };
+  const loadRoster = async () => {
+    if ($('#as-d', m.b).value !== 'manual') { man.hidden = true; return; }
+    man.hidden = false; man.innerHTML = '<div class="lb-note" style="margin:0 0 10px">Đang tải danh sách học sinh...</div>';
+    try { roster = (await LB.api.get('/api/students?class_id=' + $('#as-c', m.b).value)).students.filter(s => s.active); }
+    catch (e) { man.innerHTML = ''; return toast(e.message); }
+    pick = {}; balancedPick(variations.length, roster, pick); drawMan();
+  };
+  $('#as-d', m.b).onchange = loadRoster; $('#as-c', m.b).onchange = loadRoster;
   $('#as-go', m.b).onclick = async () => {
     const t = $('#as-t', m.b).value.trim(); if (!t) return toast('Hãy nhập tên bài');
-    const dv = $('#as-due', m.b).value, btn = $('#as-go', m.b);
+    const mode = $('#as-d', m.b).value;
+    if (mode === 'manual' && !roster.some(s => pick[s.id] !== 'none')) return toast('Hãy chọn mã đề cho ít nhất một học sinh');
+    const dv = $('#as-due', m.b).value, btn = $('#as-go', m.b), show = +$('#as-show', m.b).value;
+    if (show === 2 && !dv && !confirm('Chưa đặt hạn nộp: học sinh chỉ xem được đáp án khi bạn bấm “Đóng” bài ở trang quản lý. Tiếp tục?')) return;
     btn.disabled = true;
     try {
       const r = await LB.api.post('/api/assignments', {
-        title: t, class_id: +$('#as-c', m.b).value, dist_mode: $('#as-d', m.b).value,
+        title: t, class_id: +$('#as-c', m.b).value, dist_mode: mode,
+        ...(mode === 'manual' ? {variation_map: Object.fromEntries(roster.map(s => [s.id, pick[s.id]]))} : {}),
         due_at: dv ? Math.floor(new Date(dv).getTime() / 1000) : null, duration_min: +$('#as-min', m.b).value || 0,
-        max_attempts: +$('#as-try', m.b).value || 1, show_result: $('#as-show', m.b).checked,
+        max_attempts: +$('#as-try', m.b).value || 1, show_result: show,
         exam: {title: t, subject: c.subject, grade: c.grade, topic: c.topic, variations: variations.map(v => ({code: v.code, name: v.name, desc: v.desc, questions: v.questions}))}
       });
       const tiers = r.tiers ? `<p style="font-size:12px;color:#475467">Phân mức: ${r.tiers.map((n, i) => `<b>${esc(variations[i] ? variations[i].code : 'Mức ' + (i + 1))}</b> ${n} HS`).join(' · ')}</p>` : '';
-      modal(`<h2>✓ Đã giao bài</h2><p style="font-size:13px">“${esc(t)}” đã được giao cho <b>${r.students}</b> học sinh. Học sinh đăng nhập sẽ thấy bài ở mục <b>Bài của tôi</b>.</p>${tiers}<div class="lb-row"><a class="btn btn-blue" href="manage.html">Xem kết quả & quản lý</a></div>`);
+      modal(`<h2>✓ Đã giao bài</h2><p style="font-size:13px">“${esc(t)}” đã được giao cho <b>${r.students}</b> học sinh. Học sinh đăng nhập sẽ thấy bài ở mục <b>Bài của tôi</b>.</p>${tiers}<p style="font-size:12px;color:#475467">Muốn đổi mã đề cho học sinh nào: vào <b>Lớp & học sinh → Bài đã giao → 🔀 Mã đề</b>.</p><div class="lb-row"><a class="btn btn-blue" href="manage.html">Xem kết quả & quản lý</a></div>`);
     } catch (e) { btn.disabled = false; toast(e.message); }
   };
 }
 
+/* ---------- Chỉ định mã đề cho từng học sinh (dùng khi giao bài và khi đổi mã đề của bài đã giao) ---------- */
+// Chia ngẫu nhiên nhưng đều: số học sinh mỗi mã đề chênh nhau tối đa 1. only = các học sinh được chia lại (mặc định: tất cả)
+function balancedPick(n, roster, pick, only) {
+  const ids = (only || roster).map(s => s.id), seq = shuffleArr(ids.map((_, i) => i % n), Math.random);
+  ids.forEach((id, i) => { pick[id] = seq[i]; });
+}
+function varPickerHTML(vs, roster, pick, ns, lock) {
+  const opt = (v, cur, label) => `<option value="${v}" ${String(cur) === String(v) ? 'selected' : ''}>${label}</option>`;
+  return `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;font-size:11px"><b style="color:#1e3a8a">Chia nhanh:</b>
+      <button type="button" class="btn btn-outline sm" data-${ns}="rand">🎲 Ngẫu nhiên đều</button>
+      <button type="button" class="btn btn-outline sm" data-${ns}="alt">↹ Xen kẽ theo danh sách</button>
+      ${vs.map((v, i) => `<button type="button" class="btn btn-outline sm" data-${ns}="all" data-v="${i}">Cả lớp ${esc(v.code)}</button>`).join('')}
+      <button type="button" class="btn btn-outline sm" data-${ns}="none">Bỏ chọn hết</button></div>
+    <div class="vp-list" style="max-height:34vh;overflow:auto;border:1px solid #e2e8f0;border-radius:8px;background:#fff"><table class="tbl" style="margin:0"><tr><th>Học sinh</th><th style="width:230px">Mã đề</th></tr>
+    ${roster.map(s => `<tr><td><b>${esc(s.name)}</b> <small style="color:#667085">${esc(s.username || '')}</small>${lock && lock(s) ? ` <span class="pill warn" title="${esc(lock(s))}">${s.doing ? 'đang làm' : 'đã làm'}</span>` : ''}</td>
+      <td><select data-${ns}-s="${s.id}" style="padding:5px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px;width:100%">${vs.map((v, i) => opt(i, pick[s.id], '📄 ' + esc(v.code) + (v.name ? ' · ' + esc(v.name) : ''))).join('')}${opt('free', pick[s.id], '✋ Học sinh tự chọn')}${opt('none', pick[s.id], '— Không giao —')}</select></td></tr>`).join('')}</table></div>`;
+}
+// canChange(s): học sinh nào được các nút “chia nhanh” đổi (vd. bỏ qua em đã làm bài); chọn tay từng em thì luôn được
+function bindVarPicker(root, vs, roster, pick, ns, redraw, canChange) {
+  const keep = () => { const el = root.querySelector('.vp-list'), top = el ? el.scrollTop : 0; redraw(); const n = root.querySelector('.vp-list'); if (n) n.scrollTop = top; };
+  const pool = () => roster.filter(s => !canChange || canChange(s));
+  $$(`[data-${ns}-s]`, root).forEach(sel => sel.onchange = () => { const v = sel.value; pick[sel.getAttribute(`data-${ns}-s`)] = /^\d+$/.test(v) ? +v : v; keep(); });
+  $$(`[data-${ns}]`, root).forEach(b => b.onclick = () => {
+    const a = b.getAttribute(`data-${ns}`), P = pool();
+    if (a === 'rand') balancedPick(vs.length, roster, pick, P);
+    else if (a === 'alt') P.forEach((s, i) => { pick[s.id] = i % vs.length; });
+    else if (a === 'all') P.forEach(s => { pick[s.id] = +b.dataset.v; });
+    else P.forEach(s => { pick[s.id] = 'none'; });
+    keep();
+  });
+}
+
 /* Xem lại từng câu: đáp án đã chọn, đáp án đúng, lời giải. who = “Bạn chọn” (học sinh) hoặc “Học sinh chọn” (giáo viên). */
 function reviewHTML(qs, details, who) {
-  return qs.map((q, i) => {
-    const d = details[i] || {}, sc = d.score, g = d.given, key = d.key;
-    const show = isTfg(q) ? (Array.isArray(g) ? g.map((v, k) => 'abcd'[k] + ':' + (v === 0 ? 'Đ' : v === 1 ? 'S' : '?')).join(' ') : '—')
-      : q.opts ? (Number.isInteger(g) ? (q.opts.length === 2 ? q.opts[g] : 'ABCD'[g]) : '—') : (g == null || g === '' ? '—' : esc(g));
-    const ks = sc == null ? '' : isTfg(q) ? esc(ansText({...q, ans: key})) : q.opts ? (q.opts.length === 2 ? q.opts[key] : 'ABCD'[key]) : esc(key);
-    return `<div class="q-item"><div class="qn">Câu ${i + 1}. ${qBody(q)}
-      ${sc == null ? '<span class="pill">Tự luận</span>' : sc === 1 ? '<span class="pill ok">Đúng</span>' : sc > 0 ? `<span class="pill warn">${sc} điểm</span>` : '<span class="pill bad">Sai</span>'}</div>
-      <div style="font-size:12px">${who || 'Bạn chọn'}: <b>${show}</b>${sc == null ? '' : ` · Đáp án: <b>${ks}</b>`}</div>${d.sol ? `<div class="sol" style="margin-top:6px"><b>Lời giải:</b> ${d.sol}</div>` : ''}</div>`;
+  who = who || 'Bạn chọn';
+  const has = v => v !== undefined;
+  const nOk = details.filter(d => d && d.score === 1).length, nBad = details.filter(d => d && d.score === 0).length;
+  const head = `<div class="rv-sum"><span class="pill ok">✓ ${nOk} câu đúng</span> <span class="pill bad">✗ ${nBad} câu sai</span>${details.some(d => d && d.score > 0 && d.score < 1) ? ' <span class="pill warn">½ đúng một phần</span>' : ''}${details.some(d => d && d.score == null) ? ' <span class="pill">✎ tự luận</span>' : ''}</div>`;
+  return head + qs.map((q, i) => {
+    const d = details[i] || {}, sc = d.score, g = d.given, key = d.key, reveal = has(key) || has(d.sol);
+    const blank = g == null || g === '' || (Array.isArray(g) && g.every(v => v == null));
+    const pill = sc == null ? (d.manual != null ? `<span class="pill ok">GV chấm ${String(d.manual).replace('.', ',')} điểm</span>` : '<span class="pill">Tự luận · chờ giáo viên chấm</span>')
+      : sc === 1 ? '<span class="pill ok">✓ Đúng</span>' : sc > 0 ? `<span class="pill warn">Đúng một phần · ${String(sc).replace('.', ',')} điểm</span>` : `<span class="pill bad">✗ ${blank ? 'Bỏ trống' : 'Sai'}</span>`;
+    let body;
+    if (isTfg(q)) {   // đúng/sai 4 ý: từng ý bạn chọn gì, đáp án là gì
+      body = `<table class="rv-tf">${q.sts.map((st, k) => {
+        const gv = Array.isArray(g) ? g[k] : null, kv = Array.isArray(key) ? key[k] : undefined, ok = kv !== undefined && gv === kv;
+        return `<tr class="${kv === undefined ? '' : ok ? 'rv-ok' : 'rv-bad'}"><td><b>${'abcd'[k]})</b> ${imgq(q) ? '' : esc(st)}</td><td>${who}: <b>${gv === 0 ? 'Đúng' : gv === 1 ? 'Sai' : '—'}</b></td>${kv === undefined ? '' : `<td>Đáp án: <b>${kv === 0 ? 'Đúng' : 'Sai'}</b> ${ok ? '✓' : '✗'}</td>`}</tr>`;
+      }).join('')}</table>`;
+    } else if (q.opts && !(imgq(q) && q.t === 'mcq')) {   // phương án dạng chữ: tô xanh đáp án đúng, tô đỏ lựa chọn sai
+      body = `<div class="rv-opts">${q.opts.map((o, j) => {
+        const mine = g === j, right = Number.isInteger(key) && key === j;
+        return `<div class="rv-opt ${right ? 'rv-ok' : mine ? 'rv-bad' : ''}"><b>${q.opts.length === 2 ? '' : 'ABCD'[j] + '.'}</b> ${esc(o)}${mine ? ` <span class="rv-tag">${who}</span>` : ''}${right ? ' <span class="rv-tag ok">Đáp án đúng</span>' : ''}</div>`;
+      }).join('')}</div>`;
+    } else {
+      const show = q.opts ? (Number.isInteger(g) ? 'ABCD'[g] : '—') : (blank ? '—' : esc(g));
+      const ks = !has(key) || sc == null ? '' : q.opts ? (Number.isInteger(key) ? 'ABCD'[key] : '') : esc(key);
+      body = `<div class="rv-line"><span class="${sc == null ? '' : sc === 1 ? 'rv-ok' : 'rv-bad'}" style="${q.t === 'essay' ? 'white-space:pre-wrap' : ''}">${who}: <b>${show}</b></span>${ks !== '' ? ` · Đáp án đúng: <b class="rv-key">${ks}</b>` : ''}</div>`;
+    }
+    const sq = {sol: d.sol, solImg: d.solImg, solBad: d.solBad};
+    const sol = hasSol(sq) ? `<div class="sol rv-sol"><b>📘 Lời giải chi tiết:</b> ${solBody(sq)}</div>` : (reveal ? '<div class="rv-nosol">Câu này chưa có lời giải chi tiết.</div>' : '');
+    return `<div class="q-item rv-item ${sc == null ? '' : sc === 1 ? 'is-ok' : 'is-bad'}"><div class="qn">Câu ${i + 1}. ${pill}<div style="margin-top:4px">${qBody(q)}</div></div>${body}${sol}</div>`;
   }).join('');
 }
 
 /* ---------- Học sinh làm bài (chấm điểm phía máy chủ) ---------- */
+// Khung điểm cộng sau khi nộp bài tự luyện tập
+function bonusHTML(bo) {
+  const n = bo.counts || {}, vi = x => Number(x || 0).toLocaleString('vi-VN'), m = String(bo.month || '');
+  const parts = [['mcq', 'trắc nghiệm'], ['tf', 'đúng/sai'], ['short', 'trả lời ngắn']].filter(([t]) => n[t]).map(([t, l]) => `${n[t]} câu ${l} × ${vi(bo.config[t])}`);
+  return `<div style="border:1px solid #fcd34d;background:#fffbeb;border-radius:12px;padding:10px 14px;margin:0 0 12px;font-size:13px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+    <div style="font-size:26px;font-weight:800;color:#b45309">⭐ +${vi(bo.points)}</div>
+    <div style="flex:1;min-width:200px">${bo.points ? `Điểm cộng: ${parts.join(' + ')}.` : 'Bài này chưa có câu mới làm đúng để được cộng điểm.'}
+      ${bo.repeat ? `<br><small style="color:#667085">${bo.repeat} câu đã làm đúng trước đó trong tháng nên không cộng thêm.</small>` : ''}
+      <br>Tổng tháng ${m.slice(5)}/${m.slice(0, 4)}: <b style="color:#b45309">${vi(bo.month_total)}</b> điểm</div></div>`;
+}
 function runExam(data, o) {
   o = o || {};
   const qs = data.questions, KEYS = 'exam_' + (data.submission_id || 'p' + data.id);
@@ -2419,10 +2483,11 @@ function runExam(data, o) {
     showResult(res, auto);
   };
   const showResult = (res, auto) => {
-    const rv = res.details ? reviewHTML(res.questions, res.details) : '<div class="lb-note">Giáo viên chưa cho xem đáp án chi tiết. Kết quả sẽ được thông báo sau.</div>';
+    const rv = res.details ? reviewHTML(res.questions, res.details) : `<div class="lb-note">${esc(res.reveal_note || 'Giáo viên chưa cho xem đáp án chi tiết. Kết quả sẽ được thông báo sau.')} Bạn có thể xem lại bài làm bất cứ lúc nào ở mục <b>Bài của tôi → 📖 Xem lại bài</b>.</div>`;
     b.innerHTML = `<h2>Kết quả · ${esc(data.title)}</h2>${auto ? '<div class="lb-note">⏰ Hết giờ — bài của bạn đã được nộp tự động.</div>' : ''}
       <div style="text-align:center;margin:8px 0 14px"><div class="res-big">${res.score10 == null ? '—' : String(res.score10).replace('.', ',')}<small style="font-size:16px;color:#667085"> / 10</small></div>
       <div style="font-size:13px;color:#475467">Đúng ${String(res.score).replace('.', ',')}/${res.max} câu chấm tự động${res.essay ? ` · ${res.essay} câu tự luận chờ giáo viên chấm` : ''}${res.late ? ' · <b style="color:#b91c1c">nộp trễ</b>' : ''}</div></div>
+      ${res.bonus ? bonusHTML(res.bonus) : ''}
       <div style="max-height:50vh;overflow:auto">${rv}</div><div class="lb-row" style="margin-top:12px"><button class="btn btn-blue" id="cl">Đóng</button></div>`;
     $('#cl', b).onclick = () => { m.close(); o.after && o.after(); };
   };
@@ -2502,7 +2567,8 @@ function openScan(vars, title) {
 }
 
 /* ---------- Xuất cho các trang khác (manage.js, student.js) ---------- */
-window.LBX = {printExam, printExams, openScan, downloadExam, examHTML, qBody, ansText, esc, isTfg, imgq, runExam, reviewHTML};
+window.LBX = {printExam, printExams, openScan, downloadExam, examHTML, qBody, ansText, esc, isTfg, imgq, runExam, reviewHTML, solBody,
+  varPickerHTML, bindVarPicker, balancedPick};
 
 /* ---------- Khởi động ---------- */
 LB.ready.then(async () => {
