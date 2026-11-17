@@ -586,15 +586,15 @@ function parseBlock(raw, sec, ke, infer) {
       return [mk({t: 'tf', q: esc(flat.slice(0, up2[0].i).trim()), opts: ['Đúng', 'Sai'], ans})];
     }
   }
-  const numKey = !!(info && info.val != null && info.tf === undefined && /^[\-−+]?\d[\d.,\/ %]*$/.test(String(info.val).trim()));   // đáp án là một con số → không thể là câu đúng/sai
-  const t = sec === 'short' || (sec === 'tf' && numKey) ? 'short' : sec === 'tf' ? 'tf' : sec === 'essay' ? 'essay'
+  // Đúng/sai CHỈ khi có đủ 4 ý a) b) c) d) (đã xử lý ở trên); mục “đúng/sai” mà không tách được 4 ý thì không tạo câu Đúng/Sai giả → trả lời ngắn
+  const t = sec === 'short' || sec === 'tf' ? 'short' : sec === 'essay' ? 'essay'
     : (info && info.val != null ? 'short' : infer === 'essay' ? 'essay' : PARSE_DEFAULT);   // không có A–D, không có a–d: chỉ có câu hỏi → trả lời ngắn (Ngữ văn: tự luận)
   if (t === 'tf') {
     let ans = null;
     if (info && info.tf !== undefined) ans = info.tf ? 0 : 1;
     return [mk({t, q: esc(flat), opts: ['Đúng', 'Sai'], ans})];
   }
-  if (t === 'short') return [mk({t, q: esc(flat), ans: info && info.val != null ? info.val : null})];
+  if (t === 'short') return [mk({t, q: esc(flat), ans: info && info.val != null ? info.val : null, ...(sec === 'tf' ? {warn: true} : {})})];
   return [mk({t: 'essay', lv: 3, q: esc(flat)})];
 }
 
@@ -808,11 +808,11 @@ async function embedImages(qs) {
 
 /* ---- Đọc PDF: văn bản + toạ độ từng dòng (để cắt ảnh câu hỏi) ---- */
 const LAB_RE = /^\s*(?:Câu|Bài|Question)\s*\d+\s*[:.)]/i;
-const PAGENUM_RE = /^\s*(?:Trang\s*)?\d{1,3}(?:\s*[\/\-–]\s*\d{1,3})?\s*$/i;
+const PAGENUM_RE = /^\s*(?:Trang|Page)?\s*\d{1,3}(?:\s*[\/\-–]\s*\d{1,3})?\s*[-–—]?\s*$/i;
 async function extractPdfText(file, onProgress, ocr, pdfOverride) {
   const lib = await getPdfLib();
   const pdf = pdfOverride || await lib.getDocument({data: new Uint8Array(await file.arrayBuffer())}).promise;
-  const lines = [], pages = {}; let ocrPages = 0;
+  const lines = [], pages = {}, pdata = []; let ocrPages = 0;
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p), vp1 = page.getViewport({scale: 1}), H = vp1.height;
     const tc = await page.getTextContent();
@@ -845,18 +845,31 @@ async function extractPdfText(file, onProgress, ocr, pdfOverride) {
     flush();
     // trang không có lớp chữ (ảnh scan): đọc bằng OCR rồi xử lý như trang có chữ
     if (ocr && pl.reduce((n, l) => n + l.text.replace(/\s/g, '').length, 0) < 30) { const o = await ocr(p, page, H); if (o && o.length) { pl.length = 0; pl.push(...o); ocrPages++; } }
-    // loại số trang / tiêu đề lề khỏi văn bản
+    pdata.push({p, pl, H, W: vp1.width});
+    onProgress && onProgress(p, pdf.numPages);
+  }
+  // Đầu / chân trang = dòng lặp lại trên nhiều trang (tên website, số điện thoại, tên trường, SỐ TRANG…). Số trang chỉ được coi là số trang khi
+  // lặp lại ở cùng vị trí trên nhiều trang — một chữ số lẻ (mẫu số phân số, chỉ số) nằm gần đáy trang KHÔNG phải số trang.
+  const zone = (l, H) => l.top > H * 0.88 || l.bot < H * 0.12;
+  const keyOf = (l, H) => { const t = l.text.replace(/\d+/g, '#').replace(/\s+/g, ' ').trim().toLowerCase(), up = l.top > H / 2; return t + '|' + (up ? 'T' : 'B') + (PAGENUM_RE.test(l.text.trim()) ? Math.round((up ? H - l.top : l.bot) / 6) : ''); };
+  // Dòng chữ đầu/chân trang: đủ dài (≥ 10 chữ cái), không phải nhãn "Câu N." hay dòng phương án A./B. — tránh loại nhầm nội dung đề ở cuối trang
+  const hfText = l => { const t = l.text.trim(); return t.length >= 4 && !PAGENUM_RE.test(t) && !LAB_RE.test(t) && !/^[A-Da-d][.)]/.test(t) && (t.match(/\p{L}/gu) || []).length >= 10; };
+  const rep = new Map();
+  pdata.forEach(({pl, H}) => new Set(pl.filter(l => zone(l, H) && (hfText(l) || PAGENUM_RE.test(l.text.trim()))).map(l => keyOf(l, H))).forEach(k => rep.set(k, (rep.get(k) || 0) + 1)));
+  const many = pdata.length >= 4, minTxt = Math.max(3, Math.ceil(pdata.length * 0.04)), minNum = Math.max(3, Math.ceil(pdata.length * 0.1));
+  pdata.forEach(({p, pl, H, W}) => {
     pl.forEach(l => {
-      const t = l.text.trim();
-      l.skip = (PAGENUM_RE.test(t) && (l.top > H * 0.9 || l.bot < H * 0.1)) || (t.length <= 40 && (l.top > H * 0.96 || l.bot < H * 0.04));
+      const t = l.text.trim(), n = zone(l, H) ? (rep.get(keyOf(l, H)) || 0) : 0;
+      l.skip = PAGENUM_RE.test(t) ? (many ? n >= (/^(?:Trang|Page)/i.test(t) ? minTxt : minNum) : (l.top > H * 0.94 || l.bot < H * 0.06))
+        : many ? (hfText(l) && n >= minTxt)   // nhiều trang: chỉ coi là đầu/chân trang khi lặp lại (nội dung đề có thể bắt đầu sát mép trang)
+        : t.length <= 40 && (l.top > H * 0.96 || l.bot < H * 0.04);
     });
     const real = pl.filter(l => !l.skip), hdr = pl.filter(l => l.skip && l.top > H / 2), ftr = pl.filter(l => l.skip && l.bot <= H / 2);
-    pages[p] = {h: H, l: real.length ? Math.min(...real.map(l => l.l)) : 0, r: real.length ? Math.max(...real.map(l => l.r)) : vp1.width,
+    pages[p] = {h: H, l: real.length ? Math.min(...real.map(l => l.l)) : 0, r: real.length ? Math.max(...real.map(l => l.r)) : W,
       ct: hdr.length ? Math.min(...hdr.map(l => l.bot)) : H * 0.97, cb: ftr.length ? Math.max(...ftr.map(l => l.top)) : H * 0.03};
     pl.forEach(l => lines.push({p: l.p, top: l.top, bot: l.bot, l: l.l, r: l.r, lab: l.lab, skip: l.skip, text: l.skip ? '' : l.text}));
     lines.push(null);   // ngắt trang
-    onProgress && onProgress(p, pdf.numPages);
-  }
+  });
   return {text: lines.map(l => l ? l.text : '').join('\n'), lines, pages, pdf, ocrPages};
 }
 
@@ -864,20 +877,36 @@ async function extractPdfText(file, onProgress, ocr, pdfOverride) {
 function regionSegs(rs, ext) {
   const L = ext.lines, out = [];
   rs.forEach(([a, b], ri) => {
-    while (a < b && (!L[a] || L[a].skip)) a++;
-    let la = Math.min(b, L.length) - 1; while (la > a && (!L[la] || L[la].skip)) la--;
+    const has = i => L[i] && !L[i].skip && L[i].text.trim();   // dòng có chữ thật (bỏ dòng trống, đầu/chân trang)
+    while (a < b && !has(a)) a++;
+    let la = Math.min(b, L.length) - 1; while (la > a && !has(la)) la--;
     if (a >= b || !L[a] || !L[la]) return;
     let e = b; while (e < L.length && (!L[e] || L[e].skip)) e++;
     const end = e < L.length ? L[e] : null, first = L[a];
+    // Đỉnh thật của cụm đầu câu tại dòng mốc i: các mảnh công thức (tử số phân số, dấu ngoặc nhọn của hệ) đứng ngay sau dòng nhãn trong văn bản
+    // nhưng nằm cao hơn nó trên trang → nâng điểm mốc lên tới đỉnh các mảnh đó (dừng khi gặp phương án A./a) hoặc nhãn câu kế tiếp).
+    const aTop = i => {
+      const m = L[i]; let top = m.top;
+      for (let k = i + 1; k < Math.min(L.length, i + 16); k++) {
+        const o = L[k]; if (!o || o.p !== m.p) break;
+        if (o.skip) continue;
+        if (LAB_RE.test(o.text) || /^\s*[A-Da-d][.)]/.test(o.text)) break;
+        if (o.top > top && o.top - m.top < 30) top = o.top;
+      }
+      return top;
+    };
     for (let p = first.p; p <= L[la].p; p++) {
       const pg = ext.pages[p];
-      const t = p === first.p ? first.top + 2.5 : pg.ct;
-      // đáy = đỉnh cao nhất của cụm dòng đầu câu kế tiếp (tử số phân số, chỉ số trên nằm cao hơn dòng nhãn)
-      let nt = end ? end.top : 0;
-      if (end) for (let k = e + 1; k < Math.min(L.length, e + 3); k++) { const o = L[k]; if (o && o.p === end.p && !o.skip && o.top - end.top < 9 && o.bot < end.top) nt = Math.max(nt, o.top); }
-      const bt = (p === L[la].p && end && end.p === p) ? nt + 0.5 : pg.cb;
+      const ft = p === first.p ? aTop(a) : 0, et = end && p === L[la].p && end.p === p ? aTop(e) : 0;
+      const t = p === first.p ? ft + 2.5 : pg.ct;
+      const bt = et ? et + 0.5 : pg.cb;
       if (t - bt < 6) continue;
       const sg = {p, t, b: bt};
+      if (p === first.p) sg.tA = ft;   // dòng mốc đầu đoạn (nhãn "Câu N." hoặc dòng a) b)): cắt ảnh sẽ đi lên từ đây tới dải trắng
+      // đáy thấp nhất / đỉnh cao nhất của các dòng thuộc câu trên trang này: đường cắt không được cắt vào các dòng đó
+      let lo = 1e9, hi = -1e9; for (let i = a; i <= la; i++) if (has(i) && L[i].p === p) { lo = Math.min(lo, L[i].bot); hi = Math.max(hi, L[i].top); }
+      if (lo < 1e9) { sg.minBot = lo; sg.maxTop = hi; }
+      if (et) sg.bA = et;   // dòng mốc kết thúc đoạn (đầu câu kế tiếp) — cùng giá trị với tA của câu đó nên hai ảnh chung một đường cắt
       if (ri === 0 && p === first.p && first.lab) sg.mask = {x1: first.lab + 1, t: first.top, b: first.bot};
       out.push(sg);
     }
@@ -905,6 +934,34 @@ function snapRow(g, x0, x1, y, lim) {
     if (dist < bd) { bd = dist; best = c; }
   });
   return best;
+}
+
+// Đường cắt giữa hai câu liền nhau: đi LÊN từ dòng mốc (nhãn "Câu N.") qua mọi nét mực nối liền — dấu ngoặc nhọn của hệ phương trình,
+// tử số phân số, chỉ số trên đều cao hơn dòng nhãn — tới dải trắng đầu tiên. Câu trước (đáy) và câu sau (đỉnh) dùng chung đường này
+// nên không câu nào bị mất đỉnh công thức và không lẫn công thức của câu kia. Không thấy dải trắng thì trả về y gần nguyên.
+function edgeUp(g, x0, x1, y, lim) {
+  const w = x1 - x0, CAP = 100, top = Math.max(0, Math.floor(y) - CAP), h = Math.min(lim, Math.ceil(y) + 2) - top;
+  if (h < 6 || w < 8) return y;
+  const d = g.getImageData(x0, top, w, h).data;
+  const ink = r => { for (let c = 0, o = r * w * 4; c < w; c++, o += 4) if (d[o] < 235 || d[o + 1] < 235 || d[o + 2] < 235) return true; return false; };
+  let r = Math.min(h - 1, Math.floor(y) - top - 1);
+  while (r >= 1 && (ink(r) || ink(r - 1))) r--;   // đi lên khi còn mực (cần ≥ 2 hàng trắng liên tiếp mới coi là dải trắng)
+  if (r < 1) return y - 2;
+  let u = r; while (u > 0 && !ink(u - 1)) u--;   // mép trên của dải trắng
+  return top + Math.max(u, r - 3);
+}
+// Vùng điểm ảnh cần cắt cho một đoạn (đoạn có dòng mốc thì dùng edgeUp, còn lại — đầu/cuối trang — dùng snapRow)
+function segPixels(g0, pg, sg, SC, W, H) {
+  const x0 = Math.max(0, Math.floor((pg.l - 6) * SC)), x1 = Math.min(W, Math.ceil((pg.r + 6) * SC));
+  let y0 = Math.max(0, Math.floor((pg.h - sg.t) * SC)), y1 = Math.min(H, Math.ceil((pg.h - sg.b) * SC));
+  if (x1 - x0 > 8) {
+    y0 = Math.round(sg.tA != null ? edgeUp(g0, x0, x1, (pg.h - sg.tA) * SC, H) : snapRow(g0, x0, x1, y0, H));
+    y1 = Math.round(sg.bA != null ? edgeUp(g0, x0, x1, (pg.h - sg.bA) * SC, H) : snapRow(g0, x0, x1, y1, H));
+    // không cắt vào chính các dòng của câu: đáy ảnh phải thấp hơn đáy dòng cuối, đỉnh ảnh phải cao hơn đỉnh dòng đầu
+    if (sg.minBot != null) y1 = Math.min(H, Math.max(y1, Math.ceil((pg.h - sg.minBot) * SC) + 1));
+    if (sg.maxTop != null) y0 = Math.max(0, Math.min(y0, Math.floor((pg.h - sg.maxTop) * SC) - 1));
+  }
+  return {x0, x1, y0, y1};
 }
 
 // Bỏ khoảng trắng thừa ở đáy ảnh cắt (câu / lời giải cuối cùng của file không có dòng kế tiếp nên vùng cắt kéo tới cuối trang);
@@ -946,9 +1003,7 @@ async function attachImages(ext, qs, onProg, kExt, kOff) {
       await page.render({canvasContext: g0, viewport: vp}).promise;
       byPage.get(p).forEach(({ji, k}) => {
         const sg = jobs[ji].segs[k];
-        const x0 = Math.max(0, Math.floor((pg.l - 6) * SC)), x1 = Math.min(cv.width, Math.ceil((pg.r + 6) * SC));
-        let y0 = Math.max(0, Math.floor((pg.h - sg.t) * SC)), y1 = Math.min(cv.height, Math.ceil((pg.h - sg.b) * SC));
-        if (x1 - x0 > 8) { y0 = Math.round(snapRow(g0, x0, x1, y0, cv.height)); y1 = Math.round(snapRow(g0, x0, x1, y1, cv.height)); }
+        const {x0, x1, y0, y1} = segPixels(g0, pg, sg, SC, cv.width, cv.height);
         if (y1 - y0 < 8 || x1 - x0 < 8) return;
         const c2 = document.createElement('canvas'); c2.width = x1 - x0; c2.height = y1 - y0;
         const g = c2.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c2.width, c2.height);
