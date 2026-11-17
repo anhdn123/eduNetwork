@@ -1,7 +1,8 @@
 # Render Blueprint — chạy THỬ Learning by AI trên Render (New + → Blueprint → chọn repo này).
-# LƯU Ý: gói free có đĩa tạm thời → mỗi lần khởi động lại/triển khai lại, dữ liệu (tài khoản, ngân hàng câu hỏi, kết quả) bị xóa,
-# và dịch vụ "ngủ" sau 15 phút không có người dùng. Chỉ dùng dữ liệu giả khi chạy thử.
-# Muốn giữ dữ liệu: đổi plan sang trả phí, thêm khối `disk` (mountPath /var/data) và đặt LBAI_DATA=/var/data.
+# LƯU Ý: gói free có đĩa tạm thời → mỗi lần khởi động lại/triển khai lại/"ngủ" (sau 15 phút không có người dùng), thư mục dữ liệu bị xóa.
+# Để KHÔNG mất dữ liệu: bật sao lưu tự động ra kho ngoài (Supabase Storage) bằng 2 biến LBAI_BACKUP_URL và LBAI_BACKUP_KEY bên dưới —
+# ứng dụng tự đẩy bản sao vài phút một lần và tự khôi phục khi khởi động lại. Có thể mất vài phút dữ liệu gần nhất nếu bị tắt đột ngột.
+# Muốn chắc chắn hơn: đổi plan sang trả phí, thêm khối `disk` (mountPath /var/data) và đặt LBAI_DATA=/var/data (xem render.production.yaml).
 services:
   - type: web
     name: learning-by-ai
@@ -24,3 +25,11 @@ services:
         value: "1"
       - key: LBAI_SETUP_CODE      # mã bí mật để tạo tài khoản quản trị lần đầu — bạn tự nhập trong bảng điều khiển Render, KHÔNG ghi vào file này
         sync: false
+      - key: LBAI_BACKUP_URL      # địa chỉ dự án Supabase, dạng https://xxxx.supabase.co — tự nhập trong bảng điều khiển Render
+        sync: false
+      - key: LBAI_BACKUP_KEY      # service key của dự án Supabase (BÍ MẬT) — tự nhập trong bảng điều khiển Render, KHÔNG ghi vào file này
+        sync: false
+      - key: LBAI_BACKUP_BUCKET
+        value: lbai-backup
+      - key: LBAI_BACKUP_INTERVAL # số giây giữa hai lần kiểm tra để sao lưu (chỉ đẩy khi có thay đổi)
+        value: "300"

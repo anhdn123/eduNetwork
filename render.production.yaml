@@ -29,3 +29,7 @@ services:
         value: "1"
       - key: LBAI_SETUP_CODE     # mã bí mật tạo quản trị viên lần đầu — tự nhập trong bảng điều khiển Render, KHÔNG ghi vào file này
         sync: false
+      - key: LBAI_BACKUP_URL      # (không bắt buộc) sao lưu thêm ra Supabase Storage để có bản dự phòng ngoài Render
+        sync: false
+      - key: LBAI_BACKUP_KEY
+        sync: false

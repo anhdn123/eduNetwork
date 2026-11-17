@@ -19,13 +19,14 @@ import os
 import random
 import re
 import secrets
+import signal
 import sys
 import threading
 import time
 import urllib.parse
 import webbrowser
 
-from . import db, grading, security
+from . import backup, db, grading, security
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PUBLIC = os.path.join(ROOT, "public")
@@ -298,6 +299,20 @@ def r_teacher_new(c):
                     c.body.get("password") or None, subject=need_str(c.body, "subject", 60, False))
     audit(c.con, c.user["id"], "create_teacher", u["username"])
     return {"account": u}
+
+
+@route("GET", "/api/backup/status", ("admin",))
+def r_backup_status(c):
+    return backup.status()
+
+
+@route("POST", "/api/backup/run", ("admin",))
+def r_backup_run(c):
+    r = backup.run_backup(force=True)
+    audit(c.con, c.user["id"], "backup", "ok" if r.get("ok") else "lỗi")
+    if not r.get("ok"):
+        raise ApiError(502, r.get("error") or "Sao lưu không thành công")
+    return r
 
 
 @route("POST", r"/api/users/(\d+)/reset-password", ("admin", "teacher"))
@@ -2126,7 +2141,10 @@ def lan_addresses():
 
 
 def serve(host=None, port=None, open_browser=True, page="index.html"):
+    backup.restore_if_needed()   # container mới (chưa có CSDL) → tải bản sao lưu về trước khi mở CSDL
     db.init()
+    backup.mark_clean()
+    backup.start_loop()
     # Nền tảng đám mây (Render, Railway, Heroku...) cấp cổng qua biến PORT và yêu cầu nghe ở 0.0.0.0 — chỉ dùng đúng cổng đó
     cloud_port = os.environ.get("PORT") if not os.environ.get("LBAI_PORT") else None
     host = host or os.environ.get("LBAI_HOST") or ("0.0.0.0" if cloud_port else "127.0.0.1")
@@ -2149,10 +2167,19 @@ def serve(host=None, port=None, open_browser=True, page="index.html"):
         print("Nhấn Ctrl+C để dừng.")
         if open_browser and os.environ.get("LBAI_NO_BROWSER") != "1":
             threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+        def _term(*_):   # SIGTERM (nền tảng tắt/“ngủ” dịch vụ) → thoát vòng lặp êm để còn kịp sao lưu lần cuối
+            raise KeyboardInterrupt
+        try:
+            signal.signal(signal.SIGTERM, _term)
+        except (ValueError, OSError):
+            pass
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
             pass
+        r = backup.run_backup()
+        if backup.state["enabled"]:
+            backup._log("Sao lưu lần cuối:", "xong" if r.get("ok") else r.get("error"))
         return httpd
     print("Không tìm được cổng trống.")
     sys.exit(1)

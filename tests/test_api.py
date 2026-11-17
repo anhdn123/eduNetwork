@@ -767,5 +767,209 @@ class ApiTest(unittest.TestCase):
             except Exception:
                 proc.kill()
 
+    # ---------- sao lưu / khôi phục ra kho ngoài ----------
+    class _Dirs:
+        """Tạm trỏ thư mục dữ liệu của máy chủ sang thư mục riêng để thử sao lưu mà không đụng CSDL của các test khác."""
+        def __init__(self, path):
+            self.path = path
+
+        def __enter__(self):
+            from server import backup
+            self.old = (db.DATA_DIR, db.DB_PATH, db.UPLOAD_DIR, dict(backup.state), backup._last_sig)
+            db.DATA_DIR, db.DB_PATH, db.UPLOAD_DIR = self.path, os.path.join(self.path, "lbai.db"), os.path.join(self.path, "uploads")
+            backup.state.update(enabled=False, last_ok=None, last_error="", last_size=0, restored=None, blocked=False, last_daily=None)
+            backup._last_sig = None
+            return self
+
+        def __exit__(self, *a):
+            from server import backup
+            db.DATA_DIR, db.DB_PATH, db.UPLOAD_DIR = self.old[:3]
+            backup.state.clear()
+            backup.state.update(self.old[3])
+            backup._last_sig = self.old[4]
+
+    def test_zz_backup_restore(self):
+        """Sao lưu rồi khôi phục vào thư mục trống: giữ nguyên tài khoản và file tải lên; không đẩy lại khi không đổi; chặn khi khôi phục lỗi."""
+        from server import backup
+        import zipfile
+        A, B, C = (tempfile.mkdtemp(prefix=f"lbai_bk{n}_") for n in "ABC")
+        old_env = {k: os.environ.get(k) for k in ("LBAI_BACKUP_DIR", "LBAI_BACKUP_URL", "LBAI_BACKUP_KEY")}
+        os.environ["LBAI_BACKUP_DIR"] = B
+        os.environ.pop("LBAI_BACKUP_URL", None); os.environ.pop("LBAI_BACKUP_KEY", None)
+        try:
+            with self._Dirs(A):
+                db.init()
+                con = db.connect()
+                app.create_user(con, None, "Bản gốc", "admin", "goc.admin", "Aa1-" + secrets.token_urlsafe(8), must_change=False)
+                con.commit(); con.close()
+                with open(os.path.join(db.UPLOAD_DIR, "tai-lieu.txt"), "wb") as f:
+                    f.write(b"noi dung file")
+                r = backup.run_backup()
+                self.assertTrue(r["ok"] and r["size"] > 0, r)
+                self.assertTrue(os.path.isfile(os.path.join(B, "latest.zip")))
+                self.assertEqual(len([n for n in os.listdir(B) if n.startswith("daily-")]), 1)
+                self.assertTrue(backup.run_backup().get("skipped"))                 # không đổi gì → không đẩy lại
+                self.assertTrue(backup.run_backup(force=True)["ok"])
+            with self._Dirs(C):                                                    # container mới: thư mục dữ liệu trống
+                backup.restore_if_needed()
+                self.assertEqual(backup.state["restored"], "ok")
+                db.init()
+                con = db.connect()
+                self.assertEqual([r["username"] for r in con.execute("SELECT username FROM users")], ["goc.admin"])
+                con.close()
+                with open(os.path.join(db.UPLOAD_DIR, "tai-lieu.txt"), "rb") as f:
+                    self.assertEqual(f.read(), b"noi dung file")
+                backup.restore_if_needed()                                         # đã có CSDL cục bộ → không khôi phục đè
+                self.assertEqual(backup.state["restored"], "local")
+            # khôi phục lỗi → chặn sao lưu để không ghi đè bản tốt bằng CSDL trống
+            good = open(os.path.join(B, "latest.zip"), "rb").read()
+            with open(os.path.join(B, "latest.zip"), "wb") as f:
+                f.write(b"khong phai file zip")
+            D = tempfile.mkdtemp(prefix="lbai_bkD_")
+            with self._Dirs(D):
+                backup.restore_if_needed()
+                self.assertEqual((backup.state["restored"], backup.state["blocked"]), ("error", True))
+                db.init()
+                r = backup.run_backup(force=True)
+                self.assertFalse(r["ok"])
+                self.assertEqual(open(os.path.join(B, "latest.zip"), "rb").read(), b"khong phai file zip")   # bản trên kho không bị đụng tới
+            # file zip độc hại (đường dẫn ra ngoài thư mục dữ liệu) bị từ chối
+            evil = os.path.join(B, "latest.zip")
+            with zipfile.ZipFile(evil, "w") as z:
+                z.writestr("lbai.db", b"x")
+                z.writestr("../thoat-ra-ngoai.txt", b"x")
+            E = tempfile.mkdtemp(prefix="lbai_bkE_")
+            with self._Dirs(E):
+                backup.restore_if_needed()
+                self.assertEqual(backup.state["restored"], "error")
+                self.assertFalse(os.path.exists(os.path.join(os.path.dirname(E), "thoat-ra-ngoai.txt")))
+                self.assertFalse(os.path.exists(db.DB_PATH))
+            self.assertGreater(len(good), 100)
+        finally:
+            for k, v in old_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_zz_backup_supabase_api(self):
+        """Kho Supabase Storage: kiểm tra đúng đường dẫn, header xác thực, upsert và xử lý 'không tìm thấy' (máy chủ giả lập)."""
+        from server import backup
+        import http.server as hs
+        store, seen = {}, []
+
+        class H(hs.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _auth(self):
+                seen.append((self.command, self.path, self.headers.get("Authorization"), self.headers.get("apikey"), self.headers.get("x-upsert")))
+                return self.headers.get("Authorization") == "Bearer " + KEY and self.headers.get("apikey") == KEY
+
+            def _send(self, code, body=b"{}"):
+                self.send_response(code)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                data = self.rfile.read(n)
+                if not self._auth():
+                    return self._send(401)
+                if self.path == "/storage/v1/bucket":
+                    return self._send(200 if "bkt" not in store else 409)
+                store[self.path] = data
+                self._send(200)
+
+            def do_GET(self):
+                if not self._auth():
+                    return self._send(401)
+                key = self.path.replace("/object/authenticated/", "/object/")
+                if key in store:
+                    return self._send(200, store[key])
+                self._send(400, b'{"statusCode":"404","error":"Bucket not found","message":"Object not found"}')
+
+        KEY = "khoa-thu-nghiem-" + secrets.token_hex(8)
+        srv = hs.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        old_env = {k: os.environ.get(k) for k in ("LBAI_BACKUP_DIR", "LBAI_BACKUP_URL", "LBAI_BACKUP_KEY", "LBAI_BACKUP_BUCKET")}
+        os.environ.pop("LBAI_BACKUP_DIR", None)
+        os.environ.update(LBAI_BACKUP_URL=f"http://127.0.0.1:{srv.server_address[1]}", LBAI_BACKUP_KEY=KEY, LBAI_BACKUP_BUCKET="bkt")
+        try:
+            A, C = tempfile.mkdtemp(prefix="lbai_sbA_"), tempfile.mkdtemp(prefix="lbai_sbC_")
+            with self._Dirs(A):
+                backup.restore_if_needed()
+                self.assertEqual(backup.state["restored"], "none")                  # kho trống → hệ thống mới, không lỗi, không chặn
+                self.assertFalse(backup.state["blocked"])
+                db.init()
+                con = db.connect()
+                app.create_user(con, None, "Qua Supabase", "admin", "sb.admin", "Aa1-" + secrets.token_urlsafe(8), must_change=False)
+                con.commit(); con.close()
+                self.assertTrue(backup.run_backup()["ok"])
+            self.assertIn("/storage/v1/object/bkt/latest.zip", store)
+            self.assertTrue(any(x[0] == "POST" and x[1].endswith("latest.zip") and x[4] == "true" for x in seen))   # ghi đè bằng x-upsert
+            with self._Dirs(C):
+                backup.restore_if_needed()
+                self.assertEqual(backup.state["restored"], "ok")
+                db.init()
+                con = db.connect()
+                self.assertEqual(con.execute("SELECT username FROM users").fetchone()["username"], "sb.admin")
+                con.close()
+            os.environ["LBAI_BACKUP_KEY"] = "sai-khoa"                              # sai khóa → lỗi rõ ràng, chặn sao lưu, không sập
+            F = tempfile.mkdtemp(prefix="lbai_sbF_")
+            with self._Dirs(F):
+                backup.restore_if_needed()
+                self.assertEqual((backup.state["restored"], backup.state["blocked"]), ("error", True))
+        finally:
+            srv.shutdown()
+            for k, v in old_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_zz_backup_survives_restart(self):
+        """Máy chủ thật: tạo dữ liệu → sao lưu → xóa sạch thư mục dữ liệu (mô phỏng container mới) → khởi động lại vẫn còn tài khoản."""
+        import subprocess
+        import time
+        import socket
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        store_dir, pw = tempfile.mkdtemp(prefix="lbai_store_"), "Aa1-" + secrets.token_urlsafe(10)
+
+        def start():
+            sock = socket.socket(); sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]; sock.close()
+            env = {**os.environ, "PORT": str(port), "LBAI_DATA": tempfile.mkdtemp(prefix="lbai_new_"), "LBAI_BACKUP_DIR": store_dir,
+                   "LBAI_NO_BROWSER": "1", "LBAI_QUIET": "1", "LBAI_BACKUP_INTERVAL": "3600"}
+            for k in ("LBAI_PORT", "LBAI_HOST", "LBAI_SETUP_CODE", "LBAI_BACKUP_URL", "LBAI_BACKUP_KEY"):
+                env.pop(k, None)
+            pr = subprocess.Popen([sys.executable, "-m", "server"], cwd=base, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            c = Client(port)
+            for _ in range(80):
+                try:
+                    c.get("/api/status")
+                    return pr, c
+                except OSError:
+                    time.sleep(0.25)
+            pr.kill()
+            self.fail("máy chủ không khởi động")
+
+        p1, c1 = start()
+        try:
+            self.assertEqual(c1.get("/api/status")[1]["needs_setup"], True)
+            self.assertEqual(c1.post("/api/setup", {"name": "Quản trị", "username": "quantri", "password": pw})[0], 200)
+            self.assertEqual(c1.get("/api/backup/status")[1]["enabled"], True)
+            st, r = c1.post("/api/backup/run")
+            self.assertEqual((st, r["ok"]), (200, True))
+        finally:
+            p1.terminate(); p1.wait(timeout=10)
+        p2, c2 = start()                                                           # thư mục dữ liệu MỚI hoàn toàn
+        try:
+            self.assertEqual(c2.get("/api/status")[1]["needs_setup"], False)       # tài khoản được khôi phục từ kho
+            self.assertEqual(c2.post("/api/login", {"username": "quantri", "password": pw})[0], 200)
+            self.assertEqual(c2.get("/api/backup/status")[1]["restored"], "ok")
+        finally:
+            p2.terminate(); p2.wait(timeout=10)
+
 if __name__ == "__main__":
     unittest.main()

@@ -123,3 +123,20 @@ Chạy thử trên Render (file render.yaml có sẵn):
   3) Mở địa chỉ https://<tên>.onrender.com → nhập mã thiết lập và tạo tài khoản quản trị NGAY, trước khi gửi link cho ai.
 Gói free: đĩa tạm thời (khởi động lại là mất dữ liệu) và "ngủ" sau 15 phút không dùng → chỉ để chạy thử với dữ liệu giả.
 Chạy thật: dùng gói trả phí có đĩa lưu bền (LBAI_DATA=/var/data) hoặc VPS, và sao lưu thư mục dữ liệu hằng ngày.
+
+8. SAO LƯU TỰ ĐỘNG RA KHO NGOÀI (để bản free của Render không mất dữ liệu)
+-------------------------------------------------------------------------
+Ứng dụng tự đẩy bản sao (CSDL + file tải lên, nén zip) ra kho ngoài vài phút một lần khi có thay đổi, đẩy lần cuối khi bị tắt (SIGTERM),
+và tự khôi phục khi khởi động lại mà chưa có CSDL cục bộ. Có đĩa lưu bền thì dữ liệu sẵn trên đĩa, không khôi phục đè.
+  Cách A — Supabase Storage (miễn phí):
+    1) Tạo một dự án Supabase RIÊNG chỉ để sao lưu (đừng dùng chung dự án khác, vì service key có toàn quyền với dự án đó).
+    2) Lấy Project URL (https://xxxx.supabase.co) và service_role key ở Project Settings → API.
+    3) Trên Render đặt LBAI_BACKUP_URL và LBAI_BACKUP_KEY. Ứng dụng tự tạo bucket riêng tư "lbai-backup".
+    Gói free của Supabase giới hạn ~50 MB mỗi file: khi bản sao lưu vượt ~45 MB (LBAI_BACKUP_MAX_MB) sẽ báo lỗi ở khung "Sao lưu dữ liệu"
+    (tab Giáo viên của quản trị viên) — lúc đó nên chuyển sang gói có đĩa lưu bền.
+  Cách B — thư mục: LBAI_BACKUP_DIR=/duong/dan (ổ gắn ngoài / ổ mạng).
+  LBAI_BACKUP_INTERVAL=300  giây giữa hai lần kiểm tra. Mỗi ngày có thêm bản riêng quay vòng 7 ngày (daily-0 … daily-6) để cứu khi dữ liệu bị hỏng.
+An toàn: nếu khôi phục khi khởi động bị LỖI (mạng, sai khóa, file hỏng) thì ứng dụng TẠM DỪNG sao lưu để không ghi đè bản tốt bằng CSDL trống;
+quản trị viên thấy cảnh báo đỏ và cần xử lý nguyên nhân rồi khởi động lại.
+Giới hạn: nếu dịch vụ bị tắt đột ngột (mất điện/crash) có thể mất tối đa vài phút dữ liệu mới nhất. Dữ liệu học sinh lưu ở kho ngoài là dữ liệu cá nhân:
+dùng bucket riêng tư, giữ khóa bí mật, và xem lại yêu cầu pháp lý về lưu trữ dữ liệu ngoài Việt Nam.
