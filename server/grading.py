@@ -31,12 +31,22 @@ def _norm(s) -> str:
     return s[:-1] if s.endswith(".") else s
 
 
+def _num(s):
+    """Số thực của chuỗi đã chuẩn hóa; hiểu cả phân số đơn giản "p/q" (1/2 = 0,5)."""
+    if "/" in s:
+        a, _, b = s.partition("/")
+        d = float(b)
+        return float(a) / d if d else None
+    return float(s)
+
+
 def same_short(given, key) -> bool:
     x, y = _norm(given), _norm(key)
     if x == y:
         return True
     try:
-        return x != "" and y != "" and abs(float(x) - float(y)) < 1e-9
+        nx, ny = _num(x), _num(y)
+        return x != "" and y != "" and nx is not None and ny is not None and abs(nx - ny) < 1e-9
     except ValueError:
         return False
 

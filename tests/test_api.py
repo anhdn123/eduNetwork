@@ -266,6 +266,13 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(an.get(f"/api/users/{other}/public")[0], 404)
         self.assertEqual(an.get(f"/api/users/{lan_id}/public")[0], 200)
 
+    def test_short_answer_fractions(self):
+        """Trả lời ngắn: phân số và số thập phân tương đương được chấm như nhau (1/2 = 0,5); khác giá trị thì sai."""
+        from server import grading
+        for given, key, ok in [("1/2", "0,5", True), ("0.5", "1/2", True), ("2/4", "1/2", True), ("-3/6", "-0,5", True), ("1/3", "0,33", False),
+                               ("1/0", "0", False), ("a/b", "1/2", False), ("1/2", "1/2", True), ("22,5", "22.5", True), ("2", "3", False)]:
+            self.assertEqual(grading.same_short(given, key), ok, (given, key))
+
     def test_practice_points_levels(self):
         """Tự luyện: điểm theo dạng câu (TN 0,25 · Đ/S 0,1/0,25/0,5/1 · TLN 1), giờ tự tính (TN 2' · Đ/S 7' · TLN 8'), chọn số câu theo mức độ."""
         lan, an = self.C(), self.C()

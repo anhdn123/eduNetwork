@@ -862,7 +862,7 @@ async function extractPdfText(file, onProgress, ocr, pdfOverride) {
       const t = l.text.trim(), n = zone(l, H) ? (rep.get(keyOf(l, H)) || 0) : 0;
       l.skip = PAGENUM_RE.test(t) ? (many ? n >= (/^(?:Trang|Page)/i.test(t) ? minTxt : minNum) : (l.top > H * 0.94 || l.bot < H * 0.06))
         : many ? (hfText(l) && n >= minTxt)   // nhiều trang: chỉ coi là đầu/chân trang khi lặp lại (nội dung đề có thể bắt đầu sát mép trang)
-        : t.length <= 40 && (l.top > H * 0.96 || l.bot < H * 0.04);
+        : t.length <= 40 && (l.top > H * 0.96 || l.bot < H * 0.04) && !LAB_RE.test(t) && !/^[A-Da-d][.)]/.test(t);   // file ngắn không so được các trang với nhau: chỉ bỏ dòng ngắn sát mép, nhưng KHÔNG bao giờ bỏ nhãn “Câu N.” hay dòng phương án
     });
     const real = pl.filter(l => !l.skip), hdr = pl.filter(l => l.skip && l.top > H / 2), ftr = pl.filter(l => l.skip && l.bot <= H / 2);
     pages[p] = {h: H, l: real.length ? Math.min(...real.map(l => l.l)) : 0, r: real.length ? Math.max(...real.map(l => l.r)) : W,
@@ -895,6 +895,9 @@ function regionSegs(rs, ext) {
       }
       return top;
     };
+    // đáy thấp nhất của các dòng ngay trước dòng mốc i (cùng trang): đường cắt phía trên i không được vượt lên quá đáy các dòng đó,
+    // nếu không ảnh sẽ lẫn dòng cuối của câu trước khi hai câu dính sát nhau (không có khe trắng)
+    const prevBot = i => { let lo = null; for (let k = i - 1, n = 0; k >= 0 && n < 8; k--) { const o = L[k]; if (!o) break; if (o.skip || !o.text.trim()) continue; if (o.p !== L[i].p) break; lo = lo == null ? o.bot : Math.min(lo, o.bot); n++; } return lo; };
     for (let p = first.p; p <= L[la].p; p++) {
       const pg = ext.pages[p];
       const ft = p === first.p ? aTop(a) : 0, et = end && p === L[la].p && end.p === p ? aTop(e) : 0;
@@ -902,7 +905,7 @@ function regionSegs(rs, ext) {
       const bt = et ? et + 0.5 : pg.cb;
       if (t - bt < 6) continue;
       const sg = {p, t, b: bt};
-      if (p === first.p) sg.tA = ft;   // dòng mốc đầu đoạn (nhãn "Câu N." hoặc dòng a) b)): cắt ảnh sẽ đi lên từ đây tới dải trắng
+      if (p === first.p) { sg.tA = ft; const pb = prevBot(a); if (pb != null) sg.tMin = pb; }   // dòng mốc đầu đoạn (nhãn "Câu N." hoặc dòng a) b)): cắt ảnh sẽ đi lên từ đây tới dải trắng
       // đáy thấp nhất / đỉnh cao nhất của các dòng thuộc câu trên trang này: đường cắt không được cắt vào các dòng đó
       let lo = 1e9, hi = -1e9; for (let i = a; i <= la; i++) if (has(i) && L[i].p === p) { lo = Math.min(lo, L[i].bot); hi = Math.max(hi, L[i].top); }
       if (lo < 1e9) { sg.minBot = lo; sg.maxTop = hi; }
@@ -959,7 +962,8 @@ function segPixels(g0, pg, sg, SC, W, H) {
     y1 = Math.round(sg.bA != null ? edgeUp(g0, x0, x1, (pg.h - sg.bA) * SC, H) : snapRow(g0, x0, x1, y1, H));
     // không cắt vào chính các dòng của câu: đáy ảnh phải thấp hơn đáy dòng cuối, đỉnh ảnh phải cao hơn đỉnh dòng đầu
     if (sg.minBot != null) y1 = Math.min(H, Math.max(y1, Math.ceil((pg.h - sg.minBot) * SC) + 1));
-    if (sg.maxTop != null) y0 = Math.max(0, Math.min(y0, Math.floor((pg.h - sg.maxTop) * SC) - 1));
+    if (sg.tMin != null) y0 = Math.max(y0, Math.min(y1 - 8, Math.floor((pg.h - sg.tMin) * SC)));   // đỉnh ảnh không vượt lên trên đáy dòng liền trước…
+    if (sg.maxTop != null) y0 = Math.max(0, Math.min(y0, Math.floor((pg.h - sg.maxTop) * SC) - 1));   // …nhưng LUÔN giữ đủ các dòng của chính câu (ưu tiên hơn việc tránh vệt của câu trước)
   }
   return {x0, x1, y0, y1};
 }

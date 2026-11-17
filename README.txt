@@ -139,3 +139,17 @@ An toàn: nếu khôi phục khi khởi động bị LỖI (mạng, sai khóa, f
 quản trị viên thấy cảnh báo đỏ và cần xử lý nguyên nhân rồi khởi động lại.
 Giới hạn: nếu dịch vụ bị tắt đột ngột (mất điện/crash) có thể mất tối đa vài phút dữ liệu mới nhất. Dữ liệu học sinh lưu ở kho ngoài là dữ liệu cá nhân:
 dùng bucket riêng tư, giữ khóa bí mật, và xem lại yêu cầu pháp lý về lưu trữ dữ liệu ngoài Việt Nam.
+
+9) IMPORT HÀNG LOẠT CHUYÊN ĐỀ (tools/bulk_import.js)
+  Dùng khi có cả thư mục PDF chuyên đề (ví dụ "TOÁN 9", 33 file). Chạy đúng đường import của giao diện web nên kết quả giống hệt khi bấm tay.
+  File chuyên đề thường KHÔNG có đáp án: Claude giải từ ảnh các câu rồi nạp đáp án bằng lệnh apply.
+  Cần Node.js và Chrome trên máy. Đặt thông tin đăng nhập giáo viên trong biến môi trường (KHÔNG gõ mật khẩu vào lệnh, KHÔNG ghi vào file):
+      setx LBAI_USER "tên đăng nhập"      setx LBAI_PASS "mật khẩu"      (mở lại cửa sổ lệnh / VS Code sau khi đặt)
+      LBAI_URL mặc định là https://learning-by-ai.onrender.com
+  Lệnh:
+      node tools/bulk_import.js status                              xem chuyên đề nào đã có, còn bao nhiêu câu thiếu đáp án
+      node tools/bulk_import.js import "TOÁN 9" --only 05           import (bỏ --only để import cả thư mục; chuyên đề đã có thì bỏ qua, --again để ép)
+      node tools/bulk_import.js sheets 05                           xuất ảnh các câu chưa có đáp án vào tools/_work/05 (Claude đọc và giải)
+      node tools/bulk_import.js apply tools/answers/05.txt --dry    xem trước; bỏ --dry để ghi. --force để ghi đè đáp án đã có
+  Thêm --local để chạy thử trên máy chủ tạm của máy này (không đụng web thật).
+  Lưu ý: ảnh cắt và phân dạng do trình duyệt trên WEB THẬT thực hiện, nên web phải đang chạy bản code mới nhất.
