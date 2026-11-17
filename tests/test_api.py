@@ -788,6 +788,31 @@ class ApiTest(unittest.TestCase):
             backup.state.update(self.old[3])
             backup._last_sig = self.old[4]
 
+    def test_zz_backup_chunks(self):
+        """Bản sao lưu lớn hơn giới hạn từng file được chia thành nhiều phần, ghép lại đúng; thiếu/lệch phần thì báo lỗi, không khôi phục sai."""
+        from server import backup
+        B = tempfile.mkdtemp(prefix="lbai_bkchunk_")
+        st = backup.DirStore(B)
+        old = backup.CHUNK
+        backup.CHUNK = 1000
+        try:
+            data = b"PK" + os.urandom(3500)
+            self.assertEqual(backup.save(st, "latest.zip", data), 4)
+            self.assertEqual(backup.load(st, "latest.zip"), data)
+            self.assertEqual(backup.save(st, "latest.zip", b"PK" + b"x" * 10), 1)     # nhỏ lại → ghi thẳng, không dính chỉ mục cũ
+            self.assertEqual(backup.load(st, "latest.zip"), b"PK" + b"x" * 10)
+            backup.save(st, "latest.zip", data)
+            with open(os.path.join(B, "latest.zip.part2"), "wb") as f:
+                f.write(os.urandom(1000))                                            # một phần bị đổi → sha256 không khớp
+            with self.assertRaises(ValueError):
+                backup.load(st, "latest.zip")
+            os.remove(os.path.join(B, "latest.zip.part1"))
+            with self.assertRaises(ValueError):
+                backup.load(st, "latest.zip")
+            self.assertIsNone(backup.load(st, "khong-co.zip"))
+        finally:
+            backup.CHUNK = old
+
     def test_zz_backup_restore(self):
         """Sao lưu rồi khôi phục vào thư mục trống: giữ nguyên tài khoản và file tải lên; không đẩy lại khi không đổi; chặn khi khôi phục lỗi."""
         from server import backup

@@ -10,6 +10,7 @@ Chọn kho lưu trữ bằng biến môi trường (khóa/mật khẩu chỉ đ�
   LBAI_BACKUP_DIR=/duong/dan            sao lưu ra một thư mục (ổ gắn ngoài, ổ mạng...)
   LBAI_BACKUP_URL + LBAI_BACKUP_KEY     Supabase Storage (URL dự án + service key); LBAI_BACKUP_BUCKET (mặc định lbai-backup)
 """
+import hashlib
 import io
 import json
 import os
@@ -27,7 +28,8 @@ import zipfile
 from . import db
 
 LATEST = "latest.zip"
-MAX_ARCHIVE = int(os.environ.get("LBAI_BACKUP_MAX_MB") or 45) * 1024 * 1024   # Supabase gói free giới hạn ~50 MB mỗi file
+CHUNK = int(os.environ.get("LBAI_BACKUP_CHUNK_MB") or 40) * 1024 * 1024   # Supabase gói free giới hạn ~50 MB mỗi file → bản lớn hơn được chia thành nhiều phần
+MAX_ARCHIVE = int(os.environ.get("LBAI_BACKUP_MAX_MB") or 900) * 1024 * 1024   # trần tổng dung lượng một bản sao lưu
 state = {"enabled": False, "provider": "", "last_ok": None, "last_error": "", "last_size": 0, "restored": None, "blocked": False, "last_daily": None}
 _lock = threading.Lock()
 _last_sig = None
@@ -89,7 +91,6 @@ class SupabaseStore:
             pass   # đã tồn tại / không đủ quyền tạo → sẽ báo lỗi rõ ở bước tải lên
 
     def put(self, name, data):
-        self.prepare()
         self._req("POST", f"/storage/v1/object/{urllib.parse.quote(self.bucket)}/{urllib.parse.quote(name)}", data,
                   {"Content-Type": "application/zip", "x-upsert": "true"}).close()
 
@@ -102,6 +103,44 @@ class SupabaseStore:
             if e.code == 404 or (e.code == 400 and ("not found" in body or "404" in body)):
                 return None   # chưa có bản sao lưu nào (hoặc bucket chưa tạo)
             raise
+
+
+def save(st, name, data):
+    """Bản nhỏ: ghi thẳng file zip. Bản lớn: ghi các phần `<name>.partN` rồi ghi vào `<name>` một file chỉ mục JSON (kèm sha256).
+    Chỉ mục ghi SAU CÙNG nên người đọc không bao giờ thấy chỉ mục trỏ tới phần chưa có."""
+    if len(data) <= CHUNK:
+        st.put(name, data)
+        return 1
+    parts = [data[i:i + CHUNK] for i in range(0, len(data), CHUNK)]
+    for i, part in enumerate(parts):
+        st.put(f"{name}.part{i}", part)
+    st.put(name, json.dumps({"format": "lbai-parts", "parts": len(parts), "size": len(data),
+                             "sha256": hashlib.sha256(data).hexdigest()}).encode())
+    return len(parts)
+
+
+def load(st, name):
+    """Đọc bản sao lưu (nguyên file hoặc ghép từ các phần); trả None nếu chưa có."""
+    head = st.get(name)
+    if head is None or head[:2] == b"PK":
+        return head
+    try:
+        m = json.loads(head.decode("utf-8"))
+        n, size = int(m["parts"]), int(m["size"])
+        if m.get("format") != "lbai-parts" or not 1 <= n <= 200:
+            raise ValueError
+    except Exception:
+        raise ValueError("chỉ mục bản sao lưu không hợp lệ")
+    buf = bytearray()
+    for i in range(n):
+        part = st.get(f"{name}.part{i}")
+        if part is None:
+            raise ValueError(f"thiếu phần {i} của bản sao lưu")
+        buf += part
+    data = bytes(buf)
+    if len(data) != size or hashlib.sha256(data).hexdigest() != m.get("sha256"):
+        raise ValueError("các phần của bản sao lưu không khớp nhau (có thể đang ghi dở)")
+    return data
 
 
 def store():
@@ -171,10 +210,11 @@ def run_backup(force=False) -> dict:
             data = build_archive()
             if len(data) > MAX_ARCHIVE:
                 raise RuntimeError(f"Bản sao lưu {len(data) // 1048576} MB vượt giới hạn {MAX_ARCHIVE // 1048576} MB của kho lưu trữ")
-            st.put(LATEST, data)
+            st.prepare()
+            save(st, LATEST, data)
             today = time.strftime("%Y-%m-%d", time.gmtime())
             if state["last_daily"] != today:   # mỗi ngày một bản riêng, quay vòng 7 ngày (daily-0 … daily-6) để cứu khi dữ liệu bị hỏng
-                st.put(f"daily-{time.gmtime().tm_wday}.zip", data)
+                save(st, f"daily-{time.gmtime().tm_wday}.zip", data)
                 state["last_daily"] = today
         except Exception as e:   # không để lỗi mạng làm sập ứng dụng; ghi lại để quản trị viên thấy
             state["last_error"] = f"{type(e).__name__}: {str(e)[:200]}"
@@ -225,7 +265,7 @@ def restore_if_needed():
         return
     try:
         os.makedirs(db.DATA_DIR, exist_ok=True)
-        data = st.get(LATEST)
+        data = load(st, LATEST)
         if data is None:
             state["restored"] = "none"   # chưa có bản sao lưu: hệ thống mới
             return
