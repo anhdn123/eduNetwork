@@ -172,7 +172,8 @@ CREATE TABLE IF NOT EXISTS practice(
   max_score INTEGER,
   details TEXT,
   started_at INTEGER NOT NULL,
-  submitted_at INTEGER
+  submitted_at INTEGER,
+  scheme INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_practice_st ON practice(student_id, submitted_at);
 CREATE TABLE IF NOT EXISTS bonus_config(
@@ -262,6 +263,9 @@ def init():
     # nâng cấp CSDL cũ: thêm cột số phút đi muộn cho bảng điểm danh
     if "late_min" not in [r[1] for r in con.execute("PRAGMA table_info(attendance)").fetchall()]:
         con.execute("ALTER TABLE attendance ADD COLUMN late_min INTEGER NOT NULL DEFAULT 0")
+    # bài tự luyện tính điểm theo thang mới (scheme=1: điểm thật theo dạng câu) khác bài cũ (scheme=0: số câu đúng)
+    if "scheme" not in [r[1] for r in con.execute("PRAGMA table_info(practice)").fetchall()]:
+        con.execute("ALTER TABLE practice ADD COLUMN scheme INTEGER NOT NULL DEFAULT 0")
     con.execute("PRAGMA journal_mode=WAL")
     con.commit()
     con.close()

@@ -3,6 +3,13 @@ import re
 
 TFG_SCORE = [0, 0.1, 0.25, 0.5, 1]   # đúng 0/1/2/3/4 ý của câu đúng-sai 4 ý
 
+# ---- Tự luyện tập: điểm và thời gian theo từng dạng câu ----
+# Điểm tối đa mỗi câu: trắc nghiệm 4 phương án 0,25; đúng/sai 1 (đúng 1 ý 0,1 · 2 ý 0,25 · 3 ý 0,5 · 4 ý 1); trả lời ngắn 1.
+# Thời gian làm mỗi câu (phút): trắc nghiệm 2, đúng/sai 7, trả lời ngắn 8.
+PRACTICE_POINTS = {"mcq": 0.25, "tf": 1.0, "short": 1.0}
+PRACTICE_MINUTES = {"mcq": 2, "tf": 7, "short": 8}
+LEVELS = (1, 2, 3)   # 1 nhận biết · 2 thông hiểu · 3 vận dụng
+
 
 def has_key(q: dict) -> bool:
     """Câu có đáp án để chấm tự động."""
@@ -62,6 +69,38 @@ def grade(questions: list, answers: list, reveal: bool):
     if reveal:
         details = reveal_details(questions, details)
     return round(total, 2), mx, details
+
+
+def practice_type(q: dict):
+    return "tf" if isinstance(q.get("sts"), list) else q.get("t")
+
+
+def question_level(q: dict) -> int:
+    """Mức độ 1–3 của câu (nhận biết / thông hiểu / vận dụng; mức cao hơn gộp vào vận dụng; chưa gắn mức thì coi là thông hiểu)."""
+    try:
+        lv = int(q.get("lv"))
+    except (TypeError, ValueError):
+        return 2
+    return min(max(lv, 1), 3)
+
+
+def grade_points(questions: list, answers: list, reveal: bool):
+    """Chấm bài tự luyện theo thang điểm của từng dạng. Trả về (điểm đạt, điểm tối đa, chi tiết từng câu).
+    Mỗi chi tiết giữ `score` ∈ [0,1] (tỉ lệ đúng) và thêm `pts`/`max_pts` (điểm thật của câu)."""
+    total, mx, details = 0.0, 0.0, []
+    for i, q in enumerate(questions):
+        given = answers[i] if i < len(answers) else None
+        sc = grade_question(q, given)
+        w = PRACTICE_POINTS.get(practice_type(q))
+        d = {"i": i, "t": q.get("t"), "score": sc, "given": given}
+        if sc is not None and w:
+            d["pts"], d["max_pts"] = round(sc * w, 4), w
+            total += sc * w
+            mx += w
+        details.append(d)
+    if reveal:
+        details = reveal_details(questions, details)
+    return round(total, 2), round(mx, 2), details
 
 
 def reveal_details(questions: list, details: list, manual: dict | None = None) -> list:

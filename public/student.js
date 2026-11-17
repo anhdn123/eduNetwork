@@ -61,6 +61,8 @@ async function start(a) {
 }
 /* ---------- Tự luyện tập: học sinh tự tạo đề từ các chuyên đề giáo viên đã mở cho lớp ---------- */
 const TYPE_VN = {mcq: 'Trắc nghiệm', tf: 'Đúng/Sai', short: 'Trả lời ngắn'};
+const LVS = [[1, 'Nhận biết'], [2, 'Thông hiểu'], [3, 'Vận dụng']], DEF = {mcq: [4, 4, 2], tf: [0, 1, 1], short: [0, 1, 1]};
+const mmss = sec => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
 async function drawPractice() {
   const host = $('#v-practice');
   host.innerHTML = '<div class="card empty">Đang tải...</div>';
@@ -68,7 +70,7 @@ async function drawPractice() {
   try { [tp, hist] = await Promise.all([api.get('/api/practice/topics'), api.get('/api/practice')]); }
   catch (e) { host.innerHTML = `<div class="card empty">${esc(e.message)}</div>`; return; }
   try { bn = await api.get('/api/bonus/me'); } catch (e) { /* không có điểm cộng thì bỏ qua khung này */ }
-  const G = tp.groups, fmtM = m => m.slice(5) + '/' + m.slice(0, 4), cfg = bn && bn.config;
+  const G = tp.groups, R = tp.rules || {points: {mcq: 0.25, tf: 1, short: 1}, tf_steps: [0, 0.1, 0.25, 0.5, 1], minutes: {mcq: 2, tf: 7, short: 8}}, fmtM = m => m.slice(5) + '/' + m.slice(0, 4), cfg = bn && bn.config;
   const rule = cfg ? ['mcq', 'tf', 'short'].filter(t => cfg[t] > 0).map(t => `${TYPE_VN[t]} <b>+${cfg[t]}</b>`).join(' · ') : '';
   const prev = bn ? bn.history.filter(h => h.month !== bn.month).slice(0, 3) : [];
   host.innerHTML = (bn ? `<div class="card" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:14px;background:linear-gradient(90deg,#fffbeb,#fff)">
@@ -83,16 +85,20 @@ async function drawPractice() {
         <div id="pf" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px"></div>
         <div id="pg" style="display:flex;flex-direction:column;gap:6px;max-height:240px;overflow:auto"></div>
         <div id="pcount" style="font-size:11px;color:#475467;margin-top:4px"></div>
-        <div style="font-size:11px;font-weight:700;margin:14px 0 6px">2. Số câu mỗi dạng</div>
-        <div class="lb-row">${['mcq', 'tf', 'short'].map(t => `<label style="font-size:11px;color:#667085">${TYPE_VN[t]}<input type="number" min="0" max="50" value="${t === 'mcq' ? 10 : 2}" data-c="${t}" style="display:block;width:92px;padding:7px;border:1px solid var(--line);border-radius:8px;margin-top:3px"></label>`).join('')}</div>
-        <div id="avail" style="font-size:11px;color:#1e40af;margin:6px 0"></div>
-        <div style="font-size:11px;font-weight:700;margin:12px 0 6px">3. Thời gian làm bài (phút, 0 = không giới hạn)</div>
-        <input type="number" min="0" max="180" value="0" id="pmin" style="width:92px;padding:7px;border:1px solid var(--line);border-radius:8px">
+        <div style="font-size:11px;font-weight:700;margin:14px 0 6px">2. Số câu theo dạng và mức độ</div>
+        <table class="tbl" style="font-size:12px"><tr><th>Dạng câu</th>${LVS.map(([, n]) => `<th>${n}</th>`).join('')}<th>Điểm · giờ</th></tr>
+          ${['mcq', 'tf', 'short'].map(t => `<tr><td><b>${TYPE_VN[t]}</b></td>${LVS.map(([lv], j) => `<td><input type="number" min="0" max="50" value="${DEF[t][j]}" data-m="${t}:${lv}" style="width:50px;padding:6px;border:1px solid var(--line);border-radius:8px"><div data-a="${t}:${lv}" style="font-size:10px;color:#667085;margin-top:2px"></div></td>`).join('')}
+            <td style="white-space:nowrap;font-size:11px;line-height:1.4">${t === 'tf' ? 'tối đa 1' : fmtScore(R.points[t])} điểm<br>${R.minutes[t]} phút</td></tr>`).join('')}</table>
+        <div id="psum" style="font-size:12px;font-weight:700;color:#1e3a8a;margin:8px 0 4px"></div>
+        <div id="avail" style="font-size:11px;color:#1e40af;margin:2px 0"></div>
+        <div style="font-size:11px;color:#475467;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.5">
+          <b>Cách tính điểm:</b> trắc nghiệm ${fmtScore(R.points.mcq)} điểm/câu · đúng/sai: đúng 1 ý ${fmtScore(R.tf_steps[1])}, 2 ý ${fmtScore(R.tf_steps[2])}, 3 ý ${fmtScore(R.tf_steps[3])}, đủ 4 ý ${fmtScore(R.tf_steps[4])} điểm · trả lời ngắn ${fmtScore(R.points.short)} điểm/câu.<br>
+          <b>Thời gian:</b> tự tính theo số câu — trắc nghiệm ${R.minutes.mcq} phút/câu · đúng/sai ${R.minutes.tf} phút/câu · trả lời ngắn ${R.minutes.short} phút/câu. Đồng hồ chạy ngay khi bạn bắt đầu; hết giờ bài tự động nộp.</div>
         <div style="margin-top:16px"><button class="btn btn-blue" id="pstart">▶ Tạo đề và bắt đầu làm bài</button></div>`
       : '<div class="empty">Giáo viên chưa mở chuyên đề luyện tập cho lớp của bạn.<br>Khi giáo viên mở, chuyên đề sẽ hiện ở đây.</div>'}
     </div>
     <div class="card"><h2 style="margin:0 0 10px;font-size:18px">Lịch sử luyện tập${hist.avg != null ? ` <small style="font-weight:400;color:#667085">· điểm trung bình ${fmtScore(hist.avg)}</small>` : ''}</h2>
-      ${hist.sessions.length ? `<table class="tbl"><tr><th>Bài</th><th>Điểm (10)</th><th>Đúng/Tổng</th><th>Điểm cộng</th><th>Lúc</th><th></th></tr>${hist.sessions.map(s => `<tr data-s="${s.id}"><td>${esc(s.title)}</td><td><b>${fmtScore(s.score10)}</b></td><td>${fmtScore(s.score)}/${s.max}</td><td>${s.bonus ? `<b style="color:#b45309">+${s.bonus.toLocaleString('vi-VN')}</b>` : '<span style="color:#98a2b3">0</span>'}</td><td>${fmtDate(s.at)}</td><td><button class="btn btn-outline sm" data-v="1">Xem lại</button></td></tr>`).join('')}</table>` : '<div class="empty">Bạn chưa luyện tập lần nào.</div>'}</div></div>`;
+      ${hist.sessions.length ? `<table class="tbl"><tr><th>Bài</th><th>Điểm</th><th>Thời gian</th><th>Điểm cộng</th><th>Lúc</th><th></th></tr>${hist.sessions.map(s => `<tr data-s="${s.id}"><td>${esc(s.title)}</td><td>${s.points ? `<b>${fmtScore(s.score)}/${fmtScore(s.max)}</b><div style="font-size:10px;color:#667085">thang 10: ${fmtScore(s.score10)}</div>` : `<b>${fmtScore(s.score10)}</b>/10`}</td><td style="white-space:nowrap">${mmss(s.spent_sec || 0)}${s.duration_min ? ` / ${s.duration_min}'` : ''}</td><td>${s.bonus ? `<b style="color:#b45309">+${s.bonus.toLocaleString('vi-VN')}</b>` : '<span style="color:#98a2b3">0</span>'}</td><td>${fmtDate(s.at)}</td><td><button class="btn btn-outline sm" data-v="1">Xem lại</button></td></tr>`).join('')}</table>` : '<div class="empty">Bạn chưa luyện tập lần nào.</div>'}</div></div>`;
 
   // lọc theo khối / môn (mặc định: khối của lớp mình nếu có chuyên đề); các chuyên đề đã tick được giữ khi đổi bộ lọc
   const pick = new Set(), uniq = f => [...new Set(G.map(f).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi', {numeric: true}));
@@ -110,20 +116,28 @@ async function drawPractice() {
     upd();
   };
   const sel = () => [...pick].map(i => G[i]);
-  const counts = () => Object.fromEntries($$('[data-c]', host).map(i => [i.dataset.c, Math.max(0, Math.min(50, Math.floor(+i.value || 0)))]));
+  const matrix = () => { const m = {mcq: {}, tf: {}, short: {}}; $$('[data-m]', host).forEach(i => { const [t, lv] = i.dataset.m.split(':'); m[t][lv] = Math.max(0, Math.min(50, Math.floor(+i.value || 0))); }); return m; };
   const upd = () => {
-    const a = el => sel().reduce((n, g) => n + g.counts[el], 0), box = $('#avail', host); if (!box) return;
-    box.textContent = sel().length ? `Có sẵn trong các chuyên đề đã chọn: ${['mcq', 'tf', 'short'].map(t => TYPE_VN[t] + ' ' + a(t)).join(' · ')}` : 'Hãy tick ít nhất một chuyên đề.';
+    const m = matrix(), g = sel(), tot = {mcq: 0, tf: 0, short: 0};
+    $$('[data-a]', host).forEach(el => {
+      const [t, lv] = el.dataset.a.split(':'), have = g.reduce((n, x) => n + (x.levels ? x.levels[t][lv - 1] : 0), 0);
+      el.textContent = g.length ? `có ${have}` : ''; el.style.color = g.length && m[t][lv] > have ? '#b91c1c' : '#667085';
+    });
+    ['mcq', 'tf', 'short'].forEach(t => { tot[t] = Object.values(m[t]).reduce((x, y) => x + y, 0); });
+    const n = tot.mcq + tot.tf + tot.short, pts = tot.mcq * R.points.mcq + tot.tf * R.points.tf + tot.short * R.points.short, min = tot.mcq * R.minutes.mcq + tot.tf * R.minutes.tf + tot.short * R.minutes.short;
+    const sm = $('#psum', host); if (sm) sm.textContent = `Tổng ${n} câu · điểm tối đa ${fmtScore(Math.round(pts * 100) / 100)} · thời gian ${min} phút`;
+    const box = $('#avail', host); if (!box) return;
+    box.textContent = g.length ? '' : 'Hãy tick ít nhất một chuyên đề.';
   };
-  $$('[data-c]', host).forEach(el => el.oninput = upd); drawList();
+  $$('[data-m]', host).forEach(el => el.oninput = upd); drawList();
   const st = $('#pstart', host);
   if (st) st.onclick = async () => {
-    const groups = sel(), c = counts();
+    const groups = sel(), m = matrix();
     if (!groups.length) return toast('Hãy chọn ít nhất một chuyên đề');
-    if (c.mcq + c.tf + c.short < 1) return toast('Hãy nhập số câu');
+    if (Object.values(m).reduce((n, r) => n + Object.values(r).reduce((x, y) => x + y, 0), 0) < 1) return toast('Hãy nhập số câu');
     st.disabled = true;
     try {
-      const data = await api.post('/api/practice/start', {groups: groups.map(g => ({subject: g.subject, grade: g.grade, topic: g.topic})), counts: c, duration_min: +$('#pmin', host).value || 0});
+      const data = await api.post('/api/practice/start', {groups: groups.map(g => ({subject: g.subject, grade: g.grade, topic: g.topic})), matrix: m});
       if (data.note) toast('Lưu ý — ' + data.note);
       LBX.runExam(data, {submitUrl: `/api/practice/${data.id}/submit`, after: drawPractice});
     } catch (e) { toast(e.message); st.disabled = false; }
@@ -131,7 +145,7 @@ async function drawPractice() {
   $$('[data-v]', host).forEach(b => b.onclick = async () => {
     try {
       const r = await api.get('/api/practice/' + b.closest('tr').dataset.s);
-      modal(`<h2>${esc(r.title)}</h2><p style="font-size:13px">Điểm: <b>${fmtScore(r.score10)}</b>/10 · đúng ${fmtScore(r.score)}/${r.max} câu</p><div style="max-height:60vh;overflow:auto">${LBX.reviewHTML(r.questions, r.details)}</div>`, true);
+      modal(`<h2>${esc(r.title)}</h2><p style="font-size:13px">${r.points ? `Điểm: <b>${fmtScore(r.score)}</b>/${fmtScore(r.max)} (thang 10: ${fmtScore(r.score10)})` : `Điểm: <b>${fmtScore(r.score10)}</b>/10 · đúng ${fmtScore(r.score)}/${r.max} câu`} · thời gian ${mmss(r.spent_sec || 0)}${r.duration_min ? ` / ${r.duration_min} phút` : ''}</p><div style="max-height:60vh;overflow:auto">${LBX.reviewHTML(r.questions, r.details)}</div>`, true);
     } catch (e) { toast(e.message); }
   });
 }

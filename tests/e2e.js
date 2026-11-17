@@ -1,5 +1,6 @@
 // Kiểm thử đầu-cuối: server thật + trình duyệt thật (Chrome headless qua CDP)
 const {spawn} = require('child_process');
+for (const k of Object.keys(process.env)) if (k.startsWith('LBAI_BACKUP')) delete process.env[k];   // không bao giờ dùng kho sao lưu thật khi chạy thử
 const fs = require('fs'), os = require('os'), path = require('path');
 const ROOT = path.resolve(__dirname, '..'), SP = fs.mkdtempSync(path.join(os.tmpdir(), 'lbai_e2e_shots_'));
 const PORT = 5700 + Math.floor(Math.random() * 200), DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'lbai_e2e_'));
@@ -12,7 +13,7 @@ let fails = 0; const check = (name, ok, extra) => { if (!ok) fails++; log((ok ? 
 
 const server = spawn('python', ['-m', 'server'], {cwd: ROOT, env: {...process.env, LBAI_DATA: DATA, LBAI_PORT: String(PORT), LBAI_QUIET: '1', LBAI_NO_BROWSER: '1', PYTHONUTF8: '1'}, stdio: ['ignore', 'pipe', 'pipe']});
 let serverErr = ''; server.stderr.on('data', d => serverErr += d); server.stdout.on('data', () => {});
-const DP = 9600 + Math.floor(Math.random() * 200);
+const DP = 10100 + Math.floor(Math.random() * 800);   // tránh các dải cổng Windows giữ chỗ (netsh int ipv4 show excludedportrange)
 const chrome = spawn(process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--remote-debugging-port=' + DP, '--user-data-dir=' + path.join(DATA, 'chrome'), '--window-size=1300,1700', 'about:blank'], {stdio: ['ignore', 'pipe', 'pipe']});
 let chromeErr = ''; chrome.stderr.on('data', d => chromeErr += d); chrome.stdout.on('data', () => {});
 setTimeout(() => { console.log('TIMEOUT toàn bộ kịch bản (240s)'); cleanup(); process.exit(2); }, 240000);
@@ -169,7 +170,9 @@ process.on('exit', cleanup);
     await waitFor("document.querySelector('[data-g]')", 8, 'danh sách chuyên đề luyện tập');
     check('học sinh thấy chuyên đề giáo viên đã mở (chỉ 1 chuyên đề)', (await ev("document.querySelectorAll('[data-g]').length")) === 1);
     await ev("document.querySelector('[data-g]').click()");
-    await setv('[data-c=mcq]', '4'); await setv('[data-c=tf]', '1'); await setv('[data-c=short]', '1');
+    for (const t of ['mcq', 'tf', 'short']) for (const lv of [1, 2, 3]) await setv(`[data-m="${t}:${lv}"]`, (lv === 2 && t === 'mcq') ? '4' : (lv === 2 ? '1' : '0'));   // câu chưa gắn mức = thông hiểu
+    check('hiện tổng điểm tối đa và thời gian tự tính', /Tổng 6 câu · điểm tối đa 3 · thời gian 23 phút/.test(await ev("document.querySelector('#psum').innerText")), await ev("document.querySelector('#psum').innerText"));
+    await shot('e2e_practice_setup');
     await click('#pstart');
     await waitFor("document.querySelector('.q-item')", 10, 'đề luyện tập hiện ra');
     check('đề luyện tập có đúng 6 câu học sinh tự chọn', (await ev("document.querySelectorAll('.q-item').length")) === 6);

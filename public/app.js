@@ -2456,6 +2456,7 @@ function reviewHTML(qs, details, who) {
     const d = details[i] || {}, sc = d.score, g = d.given, key = d.key, reveal = has(key) || has(d.sol);
     const blank = g == null || g === '' || (Array.isArray(g) && g.every(v => v == null));
     const pill = sc == null ? (d.manual != null ? `<span class="pill ok">GV chấm ${String(d.manual).replace('.', ',')} điểm</span>` : '<span class="pill">Tự luận · chờ giáo viên chấm</span>')
+      : d.max_pts != null ? (sc === 1 ? `<span class="pill ok">✓ Đúng · +${String(d.pts).replace('.', ',')} điểm</span>` : sc > 0 ? `<span class="pill warn">Đúng một phần · ${String(d.pts).replace('.', ',')}/${String(d.max_pts).replace('.', ',')} điểm</span>` : `<span class="pill bad">✗ ${blank ? 'Bỏ trống' : 'Sai'} · 0/${String(d.max_pts).replace('.', ',')} điểm</span>`)
       : sc === 1 ? '<span class="pill ok">✓ Đúng</span>' : sc > 0 ? `<span class="pill warn">Đúng một phần · ${String(sc).replace('.', ',')} điểm</span>` : `<span class="pill bad">✗ ${blank ? 'Bỏ trống' : 'Sai'}</span>`;
     let body;
     if (isTfg(q)) {   // đúng/sai 4 ý: từng ý bạn chọn gì, đáp án là gì
@@ -2540,8 +2541,10 @@ function runExam(data, o) {
   const showResult = (res, auto) => {
     const rv = res.details ? reviewHTML(res.questions, res.details) : `<div class="lb-note">${esc(res.reveal_note || 'Giáo viên chưa cho xem đáp án chi tiết. Kết quả sẽ được thông báo sau.')} Bạn có thể xem lại bài làm bất cứ lúc nào ở mục <b>Bài của tôi → 📖 Xem lại bài</b>.</div>`;
     b.innerHTML = `<h2>Kết quả · ${esc(data.title)}</h2>${auto ? '<div class="lb-note">⏰ Hết giờ — bài của bạn đã được nộp tự động.</div>' : ''}
-      <div style="text-align:center;margin:8px 0 14px"><div class="res-big">${res.score10 == null ? '—' : String(res.score10).replace('.', ',')}<small style="font-size:16px;color:#667085"> / 10</small></div>
-      <div style="font-size:13px;color:#475467">Đúng ${String(res.score).replace('.', ',')}/${res.max} câu chấm tự động${res.essay ? ` · ${res.essay} câu tự luận chờ giáo viên chấm` : ''}${res.late ? ' · <b style="color:#b91c1c">nộp trễ</b>' : ''}</div></div>
+      <div style="text-align:center;margin:8px 0 14px">${res.points ? `<div class="res-big">${String(res.score).replace('.', ',')}<small style="font-size:16px;color:#667085"> / ${String(res.max).replace('.', ',')} điểm</small></div>
+      <div style="font-size:13px;color:#475467">Quy ra thang 10: <b>${res.score10 == null ? '—' : String(res.score10).replace('.', ',')}</b> · thời gian làm bài <b>${fmtT(res.spent_sec || 0)}</b>${res.duration_min ? ` / ${res.duration_min} phút` : ''}${res.overtime ? ' · <b style="color:#b91c1c">quá giờ</b>' : ''}</div>`
+      : `<div class="res-big">${res.score10 == null ? '—' : String(res.score10).replace('.', ',')}<small style="font-size:16px;color:#667085"> / 10</small></div>
+      <div style="font-size:13px;color:#475467">Đúng ${String(res.score).replace('.', ',')}/${res.max} câu chấm tự động${res.essay ? ` · ${res.essay} câu tự luận chờ giáo viên chấm` : ''}${res.late ? ' · <b style="color:#b91c1c">nộp trễ</b>' : ''}</div>`}</div>
       ${res.bonus ? bonusHTML(res.bonus) : ''}
       <div style="max-height:50vh;overflow:auto">${rv}</div><div class="lb-row" style="margin-top:12px"><button class="btn btn-blue" id="cl">Đóng</button></div>`;
     $('#cl', b).onclick = () => { m.close(); o.after && o.after(); };

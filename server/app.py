@@ -1118,15 +1118,19 @@ FIXED_OPT = re.compile(r"tất\s*cả|cả\s+[A-D]\b|các\s+đáp\s+án|không\s
 PRACTICE_TYPES = ("mcq", "tf", "short")
 
 
-def bank_groups(con, owner_id):
-    """Nhóm (môn, khối, chuyên đề) trong ngân hàng của giáo viên, chỉ đếm câu có đáp án chấm được (không tính tự luận)."""
+def bank_groups(con, owner_id, levels=None):
+    """Nhóm (môn, khối, chuyên đề) trong ngân hàng của giáo viên, chỉ đếm câu có đáp án chấm được (không tính tự luận).
+    Truyền dict vào `levels` để nhận thêm số câu theo mức độ: levels[nhóm][dạng] = [nhận biết, thông hiểu, vận dụng]."""
     groups = {}
     for r in con.execute("SELECT subject, grade, topic, data FROM bank WHERE owner_id=?", (owner_id,)).fetchall():
         q = json.loads(r["data"])
         if q.get("t") not in PRACTICE_TYPES or not grading.has_key(q):
             continue
-        g = groups.setdefault((r["subject"], r["grade"], r["topic"]), {"mcq": 0, "tf": 0, "short": 0})
+        key = (r["subject"], r["grade"], r["topic"])
+        g = groups.setdefault(key, {"mcq": 0, "tf": 0, "short": 0})
         g[q["t"]] += 1
+        if levels is not None:
+            levels.setdefault(key, {t: [0, 0, 0] for t in PRACTICE_TYPES})[q["t"]][grading.question_level(q) - 1] += 1
     return groups
 
 
@@ -1134,8 +1138,10 @@ def open_groups(con, class_id):
     return {(r["subject"], r["grade"], r["topic"]) for r in con.execute("SELECT subject,grade,topic FROM practice_topics WHERE class_id=?", (class_id,)).fetchall()}
 
 
-def group_dict(key, counts, is_open=None):
+def group_dict(key, counts, is_open=None, levels=None):
     d = {"subject": key[0], "grade": key[1], "topic": key[2], "counts": counts, "total": sum(counts.values())}
+    if levels is not None:
+        d["levels"] = levels
     if is_open is not None:
         d["open"] = is_open
     return d
@@ -1180,8 +1186,10 @@ def my_class(c):
 def r_practice_topics(c):
     cls = my_class(c)
     opened = open_groups(c.con, cls["id"])
-    groups = bank_groups(c.con, cls["owner_id"])
-    return {"groups": [group_dict(k, v) for k, v in sorted(groups.items()) if k in opened]}
+    lv = {}
+    groups = bank_groups(c.con, cls["owner_id"], lv)
+    return {"groups": [group_dict(k, v, None, lv.get(k)) for k, v in sorted(groups.items()) if k in opened],
+            "rules": {"points": grading.PRACTICE_POINTS, "tf_steps": grading.TFG_SCORE, "minutes": grading.PRACTICE_MINUTES}}
 
 
 def shuffle_options(q):
@@ -1208,9 +1216,18 @@ def r_practice_start(c):
     sel = {(str(g.get("subject") or ""), str(g.get("grade") or ""), str(g.get("topic") or "")) for g in groups if isinstance(g, dict)} & opened
     if not sel:
         raise ApiError(403, "Các chuyên đề này chưa được giáo viên mở cho lớp của bạn")
-    counts = b.get("counts") if isinstance(b.get("counts"), dict) else {}
-    want = {t: need_int(counts, t, 0, 50, 0) for t in PRACTICE_TYPES}
-    if not 1 <= sum(want.values()) <= 60:
+    # số câu cần lấy: ma trận {dạng: {mức: số câu}} (mức 1 nhận biết · 2 thông hiểu · 3 vận dụng); bản cũ chỉ gửi số câu theo dạng (không chia mức)
+    plan = []   # (dạng, mức hoặc None, số câu)
+    matrix = b.get("matrix")
+    if isinstance(matrix, dict):
+        for t in PRACTICE_TYPES:
+            row = matrix.get(t) if isinstance(matrix.get(t), dict) else {}
+            for lv in grading.LEVELS:
+                plan.append((t, lv, need_int(row, str(lv), 0, 50, 0)))
+    else:
+        counts = b.get("counts") if isinstance(b.get("counts"), dict) else {}
+        plan = [(t, None, need_int(counts, t, 0, 50, 0)) for t in PRACTICE_TYPES]
+    if not 1 <= sum(n for _, _, n in plan) <= 60:
         raise ApiError(400, "Số câu mỗi đề từ 1 đến 60")
     pool = {t: [] for t in PRACTICE_TYPES}
     for r in c.con.execute("SELECT subject, grade, topic, data FROM bank WHERE owner_id=?", (cls["owner_id"],)).fetchall():
@@ -1218,21 +1235,28 @@ def r_practice_start(c):
             q = json.loads(r["data"])
             if q.get("t") in pool and grading.has_key(q):
                 pool[q["t"]].append(q)
+    TV = {"mcq": "trắc nghiệm", "tf": "đúng/sai", "short": "trả lời ngắn"}
+    LVN = {1: "nhận biết", 2: "thông hiểu", 3: "vận dụng"}
     qs, short = [], []
-    for t in PRACTICE_TYPES:
-        pick = random.sample(pool[t], min(want[t], len(pool[t])))
-        if len(pick) < want[t]:
-            short.append(f"{({'mcq': 'trắc nghiệm', 'tf': 'đúng/sai', 'short': 'trả lời ngắn'})[t]}: có {len(pick)}/{want[t]}")
+    for t, lv, n in plan:
+        if not n:
+            continue
+        cand = [q for q in pool[t] if lv is None or grading.question_level(q) == lv]
+        pick = random.sample(cand, min(n, len(cand)))
+        if len(pick) < n:
+            short.append(f"{TV[t]}{' · ' + LVN[lv] if lv else ''}: có {len(pick)}/{n}")
         qs += [shuffle_options(q) for q in pick]
     if not qs:
         raise ApiError(400, "Các chuyên đề đã chọn chưa có câu hỏi phù hợp với số câu bạn yêu cầu")
-    dur = need_int(b, "duration_min", 0, 180, 0)
+    # thời gian do hệ thống tính theo số câu thực tế của từng dạng (không tin số phút do máy khách gửi)
+    dur = sum(grading.PRACTICE_MINUTES[grading.practice_type(q)] for q in qs)
     topics = sorted({k[2] or "Chưa phân chuyên đề" for k in sel})
     title = "Luyện tập · " + (", ".join(topics[:3]) + (f" (+{len(topics) - 3})" if len(topics) > 3 else ""))
-    cur = c.con.execute("INSERT INTO practice(student_id,title,topics,questions,duration_min,started_at) VALUES(?,?,?,?,?,?)",
+    cur = c.con.execute("INSERT INTO practice(student_id,title,topics,questions,duration_min,started_at,scheme) VALUES(?,?,?,?,?,?,1)",
                         (c.user["id"], title[:200], json.dumps(topics, ensure_ascii=False), json.dumps(qs, ensure_ascii=False), dur, db.now()))
-    return {"id": cur.lastrowid, "title": title, "code": "Tự luyện tập", "duration_min": dur, "remaining": dur * 60 if dur else None,
-            "questions": [grading.sanitize_question(q) for q in qs], "note": "; ".join(short)}
+    mx = round(sum(grading.PRACTICE_POINTS[grading.practice_type(q)] for q in qs), 2)
+    return {"id": cur.lastrowid, "title": title, "code": "Tự luyện tập", "duration_min": dur, "remaining": dur * 60,
+            "max_points": mx, "questions": [grading.sanitize_question(q) for q in qs], "note": "; ".join(short)}
 
 
 def own_practice(c, pid):
@@ -1251,20 +1275,25 @@ def r_practice_submit(c):
     if not isinstance(answers, list) or len(answers) > 100:
         raise ApiError(400, "Dữ liệu bài làm không hợp lệ")
     qs = json.loads(p["questions"])
-    sc, mx, details = grading.grade(qs, answers, reveal=True)
+    new_scheme = p["scheme"] == 1
+    sc, mx, details = grading.grade_points(qs, answers, reveal=True) if new_scheme else grading.grade(qs, answers, reveal=True)
     now = db.now()
     c.con.execute("UPDATE practice SET answers=?, score=?, max_score=?, details=?, submitted_at=? WHERE id=?",
                   (json.dumps(answers, ensure_ascii=False), sc, mx, json.dumps(details, ensure_ascii=False), now, p["id"]))
     bonus = award_bonus(c.con, c.user, p["id"], qs, details, now)
+    spent = max(0, now - p["started_at"])
     return {"score": sc, "max": mx, "score10": score10(sc, mx), "late": False, "essay": 0, "details": details,
-            "questions": [grading.sanitize_question(q) for q in qs], "bonus": bonus}
+            "questions": [grading.sanitize_question(q) for q in qs], "bonus": bonus,
+            "points": new_scheme, "spent_sec": spent, "duration_min": p["duration_min"],
+            "overtime": bool(p["duration_min"]) and spent > p["duration_min"] * 60 + 15}
 
 
 def practice_sessions(con, student_id):
     rows = con.execute("SELECT p.*, b.points bonus FROM practice p LEFT JOIN bonus_log b ON b.practice_id=p.id "
                        "WHERE p.student_id=? AND p.submitted_at IS NOT NULL ORDER BY p.id DESC LIMIT 100", (student_id,)).fetchall()
     out = [{"id": r["id"], "title": r["title"], "topics": json.loads(r["topics"] or "[]"), "score": r["score"], "max": r["max_score"],
-            "score10": score10(r["score"], r["max_score"]), "at": r["submitted_at"], "bonus": r["bonus"] or 0} for r in rows]
+            "score10": score10(r["score"], r["max_score"]), "at": r["submitted_at"], "bonus": r["bonus"] or 0,
+            "points": r["scheme"] == 1, "spent_sec": max(0, r["submitted_at"] - r["started_at"]), "duration_min": r["duration_min"]} for r in rows]
     vals = [x["score10"] for x in out if x["score10"] is not None]
     return {"sessions": out, "avg": round(sum(vals) / len(vals), 2) if vals else None}
 
@@ -1274,7 +1303,8 @@ def practice_review(p):
         raise ApiError(400, "Bài chưa nộp")
     qs = json.loads(p["questions"])
     return {"title": p["title"], "score": p["score"], "max": p["max_score"], "score10": score10(p["score"], p["max_score"]),
-            "details": json.loads(p["details"]), "questions": [grading.sanitize_question(q) for q in qs], "answers": json.loads(p["answers"] or "[]")}
+            "details": json.loads(p["details"]), "questions": [grading.sanitize_question(q) for q in qs], "answers": json.loads(p["answers"] or "[]"),
+            "points": p["scheme"] == 1, "spent_sec": max(0, p["submitted_at"] - p["started_at"]), "duration_min": p["duration_min"]}
 
 
 @route("GET", "/api/practice", ("student",))

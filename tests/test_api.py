@@ -19,6 +19,9 @@ ADMIN_PW, LAN_PW, AN_PW = _pw(), _pw(), _pw()
 TMP = tempfile.mkdtemp(prefix="lbai_test_")
 os.environ["LBAI_DATA"] = TMP
 os.environ["LBAI_QUIET"] = "1"
+# Kiểm thử TUYỆT ĐỐI không dùng kho sao lưu thật: xóa mọi biến sao lưu kế thừa từ môi trường máy (tiến trình con của test cũng thừa hưởng os.environ)
+for _k in [k for k in os.environ if k.startswith("LBAI_BACKUP")]:
+    del os.environ[_k]
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from server import app, db  # noqa: E402
 
@@ -263,6 +266,70 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(an.get(f"/api/users/{other}/public")[0], 404)
         self.assertEqual(an.get(f"/api/users/{lan_id}/public")[0], 200)
 
+    def test_practice_points_levels(self):
+        """Tự luyện: điểm theo dạng câu (TN 0,25 · Đ/S 0,1/0,25/0,5/1 · TLN 1), giờ tự tính (TN 2' · Đ/S 7' · TLN 8'), chọn số câu theo mức độ."""
+        lan, an = self.C(), self.C()
+        lan.post("/api/login", {"username": "lan", "password": LAN_PW})
+        an.post("/api/login", {"username": "an.nv", "password": AN_PW})
+        cid = [k for k in lan.get("/api/classes")[1]["classes"] if k["name"] == "9A1"][0]["id"]
+        key = {"subject": "Toán", "grade": "9", "topic": "Theo mức"}
+        base = {"subject": "Toán", "grade": "9", "topic": "Theo mức"}
+        bank = []
+        for lv in (1, 2, 3):
+            for i in range(3):
+                bank.append({**base, "id": f"lm{lv}{i}", "t": "mcq", "lv": lv, "q": f"TN {lv}{i}", "opts": ["a", "b", "c", "d"], "ans": 0})
+        for i in range(2):
+            bank.append({**base, "id": f"lg{i}", "t": "tf", "lv": 3, "q": f"ĐS {i}", "sts": ["a", "b", "c", "d"], "ans": [0, 1, 0, 1]})
+            bank.append({**base, "id": f"ls{i}", "t": "short", "lv": 2, "q": f"TLN {i}", "ans": "5"})
+        self.assertEqual(lan.post("/api/bank/sync", {"upsert": bank})[0], 200)
+        lan.post(f"/api/classes/{cid}/practice", {"open": [key]})
+        grp = [g for g in an.get("/api/practice/topics")[1]["groups"] if g["topic"] == "Theo mức"][0]
+        self.assertEqual(grp["levels"], {"mcq": [3, 3, 3], "tf": [0, 0, 2], "short": [0, 2, 0]})        # số câu theo mức độ
+        rules = an.get("/api/practice/topics")[1]["rules"]
+        self.assertEqual((rules["points"]["mcq"], rules["minutes"], rules["tf_steps"]), (0.25, {"mcq": 2, "tf": 7, "short": 8}, [0, 0.1, 0.25, 0.5, 1]))
+
+        # chọn theo mức: 2 TN nhận biết + 1 TN thông hiểu + 1 Đ/S vận dụng + 1 TLN thông hiểu
+        st, r = an.post("/api/practice/start", {"groups": [key], "matrix": {"mcq": {"1": 2, "2": 1, "3": 0}, "tf": {"3": 1}, "short": {"2": 1}}})
+        self.assertEqual(st, 200)
+        lvs = sorted((q["t"], q["lv"]) for q in r["questions"])
+        self.assertEqual(lvs, [("mcq", 1), ("mcq", 1), ("mcq", 2), ("short", 2), ("tf", 3)])
+        self.assertEqual(r["duration_min"], 3 * 2 + 7 + 8)                                              # 21 phút, do server tính
+        self.assertEqual((r["remaining"], r["max_points"]), (21 * 60, round(3 * 0.25 + 1 + 1, 2)))
+        # không lộ đáp án; học sinh không thể ép giờ làm bài bằng cách gửi duration_min
+        self.assertNotIn('"ans"', json.dumps(r["questions"]))
+        st, r2 = an.post("/api/practice/start", {"groups": [key], "matrix": {"mcq": {"1": 1}}, "duration_min": 1})
+        self.assertEqual((st, r2["duration_min"]), (200, 2))
+        an.post(f"/api/practice/{r2['id']}/submit", {"answers": [0]})
+
+        # chấm: TN đúng 2/3 (0,5), Đ/S đúng 2 ý (0,25), TLN đúng (1) → 1,75 / 2,75
+        ans, n_mcq = [], 0
+        for q in r["questions"]:
+            if q["t"] == "tf":
+                ans.append([0, 1, 1, 0])                              # đáp án [0,1,0,1] → đúng 2 ý đầu
+            elif q["t"] == "short":
+                ans.append("5")
+            else:
+                right = q["opts"].index("a")                          # server có đảo phương án → dò theo nội dung
+                ans.append(right if n_mcq < 2 else (right + 1) % 4)   # 2 câu đầu đúng, câu thứ 3 sai
+                n_mcq += 1
+        st, res = an.post(f"/api/practice/{r['id']}/submit", {"answers": ans})
+        self.assertEqual(st, 200)
+        self.assertEqual((res["score"], res["max"], res["points"]), (1.75, 2.75, True))
+        self.assertEqual(res["score10"], round(1.75 / 2.75 * 10, 2))
+        self.assertEqual(sorted(d["pts"] for d in res["details"]), [0, 0.25, 0.25, 0.25, 1])
+        self.assertEqual(sorted(d["max_pts"] for d in res["details"]), [0.25, 0.25, 0.25, 1, 1])
+        self.assertFalse(res["overtime"])
+        # lịch sử có điểm thật và thời gian
+        h = [x for x in an.get("/api/practice")[1]["sessions"] if x["id"] == r["id"]][0]
+        self.assertEqual((h["points"], h["score"], h["max"], h["duration_min"]), (True, 1.75, 2.75, 21))
+        self.assertGreaterEqual(h["spent_sec"], 0)
+        # thiếu câu theo mức: vẫn tạo đề với số câu có sẵn và báo rõ
+        st, r3 = an.post("/api/practice/start", {"groups": [key], "matrix": {"mcq": {"1": 5}}})
+        self.assertEqual((st, len(r3["questions"])), (200, 3))
+        self.assertIn("nhận biết", r3["note"])
+        self.assertEqual(an.post("/api/practice/start", {"groups": [key], "matrix": {}})[0], 400)       # phải chọn ít nhất 1 câu
+        self.assertEqual(an.post("/api/practice/start", {"groups": [key], "matrix": {"mcq": {"1": 99}}})[0], 400)   # tối đa 50 câu mỗi ô
+
     def test_practice(self):
         """Học sinh tự luyện tập (chạy sau test_full_flow: dùng lớp 9A1 của cô Lan và học sinh an.nv)."""
         lan, binh, an = self.C(), self.C(), self.C()
@@ -315,7 +382,10 @@ class ApiTest(unittest.TestCase):
                 n = int(q["q"].split()[-1])
                 answers.append(q["opts"].index(f"{'xyzw'[n % 4]}{n}"))
         st, res = an.post(f"/api/practice/{r['id']}/submit", {"answers": answers})
-        self.assertEqual((res["score"], res["max"], res["score10"]), (12, 12, 10.0))
+        # thang điểm mới: 8 TN × 0,25 + 2 Đ/S × 1 + 2 TLN × 1 = 6 điểm
+        self.assertEqual((res["score"], res["max"], res["score10"], res["points"]), (6.0, 6.0, 10.0, True))
+        self.assertEqual(res["duration_min"], 8 * 2 + 2 * 7 + 2 * 8)                                   # giờ: 16 + 14 + 16 = 46 phút
+        self.assertGreaterEqual(res["spent_sec"], 0)
         # điểm cộng mặc định: 8 TN × 10 + 2 Đ/S × 40 + 2 TLN × 50 = 260
         b = res["bonus"]
         self.assertEqual((b["points"], b["counts"], b["repeat"], b["month_total"]), (260, {"mcq": 8, "tf": 2, "short": 2}, 0, 260))
