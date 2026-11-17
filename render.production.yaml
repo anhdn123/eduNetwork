@@ -1,0 +1,31 @@
+# Render Blueprint — bản CHẠY THẬT: gói trả phí + đĩa lưu bền để SQLite (tài khoản, ngân hàng câu hỏi, kết quả) không mất khi khởi động lại.
+# Dùng bằng cách: New + → Blueprint → ô "Blueprint Path" gõ: render.production.yaml
+# Chi phí phát sinh (gói web + đĩa): kiểm tra bảng giá hiện tại ở render.com/pricing trước khi bấm tạo.
+services:
+  - type: web
+    name: learning-by-ai
+    runtime: python
+    plan: starter                # gói free không gắn được đĩa lưu bền; từ gói trả phí trở lên mới có đĩa và không bị "ngủ"
+    region: singapore            # gần Việt Nam nhất
+    buildCommand: python --version   # ứng dụng chỉ dùng thư viện chuẩn của Python, không cần cài gói
+    startCommand: python -m server
+    healthCheckPath: /api/status
+    disk:
+      name: lbai-data
+      mountPath: /var/data       # CSDL SQLite + ảnh câu hỏi + file tải lên nằm ở đây
+      sizeGB: 2
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: LBAI_DATA           # thư mục dữ liệu = đĩa lưu bền
+        value: /var/data
+      - key: LBAI_COOKIE_SECURE
+        value: "1"
+      - key: LBAI_TRUST_PROXY
+        value: "1"
+      - key: LBAI_NO_BROWSER
+        value: "1"
+      - key: LBAI_QUIET
+        value: "1"
+      - key: LBAI_SETUP_CODE     # mã bí mật tạo quản trị viên lần đầu — tự nhập trong bảng điều khiển Render, KHÔNG ghi vào file này
+        sync: false

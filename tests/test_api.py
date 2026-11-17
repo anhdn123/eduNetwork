@@ -73,7 +73,7 @@ class ApiTest(unittest.TestCase):
     # --- toàn bộ luồng, theo thứ tự ---
     def test_full_flow(self):
         admin = self.C()
-        self.assertEqual(admin.get("/api/status")[1], {"needs_setup": True})
+        self.assertEqual(admin.get("/api/status")[1], {"needs_setup": True, "needs_code": False})   # không đặt mã thiết lập → không đòi mã
         self.assertEqual(admin.get("/api/me")[0], 401)                      # chưa đăng nhập
         self.assertEqual(admin.post("/api/setup", {"name": "Admin", "username": "admin", "password": "short"})[0], 400)
         st, r = admin.post("/api/setup", {"name": "Quản trị", "username": "admin", "password": ADMIN_PW})
@@ -721,6 +721,51 @@ class ApiTest(unittest.TestCase):
         lan.post("/api/att-rules/student", {"student_id": B, "month": app.month_key(), "reward_min": None})   # đặt lại về mặc định
         self.assertEqual(lan.get(f"/api/att-rules?month={app.month_key()}")[1]["students"][1]["custom"] or
                          lan.get(f"/api/att-rules?month={app.month_key()}")[1]["students"][0]["custom"], False)
+
+    def test_zz_cloud_mode(self):
+        """Chạy kiểu đám mây: nhận cổng PORT, nghe 0.0.0.0, IP thật qua X-Forwarded-For, trang thiết lập cần mã bí mật."""
+        import subprocess
+        import time
+        import socket
+        sock = socket.socket(); sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]; sock.close()
+        code, pw = secrets.token_urlsafe(10), "Aa1-" + secrets.token_urlsafe(10)
+        env = {**os.environ, "PORT": str(port), "LBAI_DATA": tempfile.mkdtemp(prefix="lbai_cloud_"), "LBAI_SETUP_CODE": code,
+               "LBAI_TRUST_PROXY": "1", "LBAI_NO_BROWSER": "1", "LBAI_QUIET": "1"}
+        env.pop("LBAI_PORT", None); env.pop("LBAI_HOST", None)
+        proc = subprocess.Popen([sys.executable, "-m", "server"], cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))), env=env,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            c = Client(port)
+            for _ in range(60):
+                try:
+                    st, r = c.get("/api/status")
+                    break
+                except OSError:
+                    time.sleep(0.25)
+            else:
+                self.fail("máy chủ không khởi động ở cổng PORT")
+            self.assertEqual(r, {"needs_setup": True, "needs_code": True})
+            body = {"name": "Quản trị", "username": "quantri", "password": pw}
+            self.assertEqual(c.post("/api/setup", body)[0], 403)                                           # thiếu mã
+            self.assertEqual(c.post("/api/setup", {**body, "code": "sai-ma"})[0], 403)                     # sai mã
+            self.assertEqual(c.post("/api/setup", {**body, "code": code})[0], 200)                         # đúng mã
+            self.assertEqual(c.get("/api/status")[1], {"needs_setup": False, "needs_code": False})
+            # khóa đăng nhập tính theo IP thật (X-Forwarded-For), không khóa chung mọi người sau proxy
+            def bad(ip):
+                return c.post("/api/login", {"username": "quantri", "password": "sai-mat-khau"}, headers={"X-Forwarded-For": f"9.9.9.9, {ip}"})[0]
+            for _ in range(12):
+                bad("10.0.0.1")
+            self.assertEqual(bad("10.0.0.1"), 429)                                                         # IP này bị khóa tạm
+            other = Client(port)
+            self.assertEqual(other.post("/api/login", {"username": "quantri", "password": pw}, headers={"X-Forwarded-For": "1.1.1.1, 10.0.0.2"})[0], 200)  # IP khác vẫn đăng nhập được
+            # người dùng tự khai thêm địa chỉ giả ở đầu X-Forwarded-For không né được khóa
+            self.assertEqual(c.post("/api/login", {"username": "quantri", "password": "sai"}, headers={"X-Forwarded-For": "7.7.7.7, 10.0.0.1"})[0], 429)
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except Exception:
+                proc.kill()
 
 if __name__ == "__main__":
     unittest.main()

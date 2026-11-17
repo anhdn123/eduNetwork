@@ -1,0 +1,26 @@
+# Render Blueprint — chạy THỬ Learning by AI trên Render (New + → Blueprint → chọn repo này).
+# LƯU Ý: gói free có đĩa tạm thời → mỗi lần khởi động lại/triển khai lại, dữ liệu (tài khoản, ngân hàng câu hỏi, kết quả) bị xóa,
+# và dịch vụ "ngủ" sau 15 phút không có người dùng. Chỉ dùng dữ liệu giả khi chạy thử.
+# Muốn giữ dữ liệu: đổi plan sang trả phí, thêm khối `disk` (mountPath /var/data) và đặt LBAI_DATA=/var/data.
+services:
+  - type: web
+    name: learning-by-ai
+    runtime: python
+    plan: free
+    region: singapore            # gần Việt Nam nhất
+    buildCommand: python --version   # ứng dụng chỉ dùng thư viện chuẩn của Python, không cần cài gói
+    startCommand: python -m server
+    healthCheckPath: /api/status
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: LBAI_COOKIE_SECURE   # Render phục vụ HTTPS → cookie đăng nhập chỉ gửi qua HTTPS
+        value: "1"
+      - key: LBAI_TRUST_PROXY     # đứng sau proxy của Render: lấy IP thật từ X-Forwarded-For
+        value: "1"
+      - key: LBAI_NO_BROWSER
+        value: "1"
+      - key: LBAI_QUIET           # không ghi log từng yêu cầu (tránh lộ địa chỉ IP người dùng vào log)
+        value: "1"
+      - key: LBAI_SETUP_CODE      # mã bí mật để tạo tài khoản quản trị lần đầu — bạn tự nhập trong bảng điều khiển Render, KHÔNG ghi vào file này
+        sync: false

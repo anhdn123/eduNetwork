@@ -27,6 +27,7 @@
       <label class="lb-field"><span>TÊN ĐĂNG NHẬP (3–32 ký tự: chữ, số, . _ -)</span><input id="su" autocapitalize="off" required maxlength="32"></label>
       <label class="lb-field"><span>MẬT KHẨU (≥ 8 ký tự)</span><input id="sp" type="password" autocomplete="new-password" required></label>
       <label class="lb-field"><span>NHẬP LẠI MẬT KHẨU</span><input id="sp2" type="password" autocomplete="new-password" required></label>
+      <label class="lb-field" id="scode-wrap" hidden><span>MÃ THIẾT LẬP (do người triển khai máy chủ cấp)</span><input id="sc" type="password" autocomplete="off"></label>
       <div class="auth-err" id="se"></div>
       <button class="btn btn-blue" style="width:100%" id="sb">Tạo tài khoản quản trị</button>
     </form>
@@ -41,6 +42,7 @@
   const st = await api.get('/api/status');
   (st.needs_setup ? $('#setup') : $('#login')).hidden = false;
   (st.needs_setup ? $('#sn') : $('#lu')).focus();
+  $('#scode-wrap').hidden = !st.needs_code;
 
   function go(me) {
     const next = new URLSearchParams(location.search).get('next') || '';
@@ -55,7 +57,7 @@
     e.preventDefault(); $('#se').textContent = '';
     if ($('#sp').value !== $('#sp2').value) return $('#se').textContent = 'Hai mật khẩu không khớp';
     $('#sb').disabled = true;
-    try { await api.post('/api/setup', {name: $('#sn').value.trim(), username: $('#su').value.trim(), password: $('#sp').value}); location.href = 'manage.html'; }
+    try { await api.post('/api/setup', {name: $('#sn').value.trim(), username: $('#su').value.trim(), password: $('#sp').value, code: $('#sc').value}); location.href = 'manage.html'; }
     catch (err) { $('#se').textContent = err.message; $('#sb').disabled = false; }
   };
 })();

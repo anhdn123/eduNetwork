@@ -11,6 +11,7 @@ import base64
 import calendar
 import datetime
 import hashlib
+import hmac
 import http.server
 import json
 import mimetypes
@@ -29,6 +30,12 @@ from . import db, grading, security
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PUBLIC = os.path.join(ROOT, "public")
 COOKIE_SECURE = os.environ.get("LBAI_COOKIE_SECURE") == "1"
+# Chạy sau proxy/CDN (Render, Caddy, nginx, Cloudflare...): lấy IP thật của người dùng từ X-Forwarded-For để khóa đăng nhập đúng người.
+# Chỉ bật khi thật sự đứng sau proxy tin cậy; PROXY_HOPS = số lớp proxy (lấy địa chỉ thứ N tính từ bên phải, phần bên trái do người dùng tự khai nên không tin).
+TRUST_PROXY = os.environ.get("LBAI_TRUST_PROXY") == "1"
+PROXY_HOPS = max(1, int(os.environ.get("LBAI_PROXY_HOPS") or 1))
+# Mã thiết lập: nếu đặt, trang “Thiết lập lần đầu” (tạo quản trị viên) bắt buộc nhập mã này → người lạ vào trước không chiếm được quyền admin
+SETUP_CODE = os.environ.get("LBAI_SETUP_CODE") or ""
 MAX_JSON = 3 * 1024 * 1024
 MAX_UPLOAD = 25 * 1024 * 1024
 FILE_EXT = {  # whitelist file upload; MIME do server quyết định, không tin client
@@ -181,7 +188,16 @@ def create_user(con, creator_id, name, role, username=None, password=None, class
 @route("GET", "/api/status")
 def r_status(c):
     n = c.con.execute("SELECT COUNT(*) n FROM users").fetchone()["n"]
-    return {"needs_setup": n == 0}
+    return {"needs_setup": n == 0, "needs_code": n == 0 and bool(SETUP_CODE)}
+
+
+def client_ip(h) -> str:
+    peer = h.client_address[0]
+    if TRUST_PROXY:
+        parts = [p.strip() for p in (h.headers.get("X-Forwarded-For") or "").split(",") if p.strip()]
+        if len(parts) >= PROXY_HOPS:
+            return parts[-PROXY_HOPS][:64]
+    return peer
 
 
 def start_session(c, user_id):
@@ -197,6 +213,15 @@ def start_session(c, user_id):
 def r_setup(c):
     if c.con.execute("SELECT COUNT(*) n FROM users").fetchone()["n"]:
         raise ApiError(403, "Hệ thống đã được thiết lập")
+    if SETUP_CODE:
+        key = ("setup", client_ip(c.h))
+        wait = limiter.blocked(key)
+        if wait:
+            raise ApiError(429, f"Nhập sai mã thiết lập quá nhiều lần. Thử lại sau {wait} giây.")
+        if not hmac.compare_digest(str(c.body.get("code") or "").encode(), SETUP_CODE.encode()):
+            limiter.fail(key)
+            raise ApiError(403, "Mã thiết lập không đúng")
+        limiter.ok(key)
     name, username = need_str(c.body, "name", 80), need_str(c.body, "username", 32)
     pw = c.body.get("password") or ""
     u = create_user(c.con, None, name, "admin", username, pw, must_change=False)
@@ -209,7 +234,7 @@ def r_setup(c):
 def r_login(c):
     username = need_str(c.body, "username", 64).lower()
     pw = c.body.get("password") or ""
-    key = (c.h.client_address[0], username)
+    key = (client_ip(c.h), username)
     wait = limiter.blocked(key)
     if wait:
         raise ApiError(429, f"Đăng nhập sai quá nhiều lần. Thử lại sau {wait} giây.")
@@ -2102,9 +2127,11 @@ def lan_addresses():
 
 def serve(host=None, port=None, open_browser=True, page="index.html"):
     db.init()
-    host = host or os.environ.get("LBAI_HOST", "127.0.0.1")
-    pref = int(port or os.environ.get("LBAI_PORT") or 5500)
-    ports = [pref] + [p for p in (5500, 5501, 5502, 3000, 3001, 8090, 8100, 9000, 9100) if p != pref]
+    # Nền tảng đám mây (Render, Railway, Heroku...) cấp cổng qua biến PORT và yêu cầu nghe ở 0.0.0.0 — chỉ dùng đúng cổng đó
+    cloud_port = os.environ.get("PORT") if not os.environ.get("LBAI_PORT") else None
+    host = host or os.environ.get("LBAI_HOST") or ("0.0.0.0" if cloud_port else "127.0.0.1")
+    pref = int(port or os.environ.get("LBAI_PORT") or cloud_port or 5500)
+    ports = [pref] if cloud_port else [pref] + [p for p in (5500, 5501, 5502, 3000, 3001, 8090, 8100, 9000, 9100) if p != pref]
     for p in ports:
         try:
             httpd = Server((host, p), Handler)

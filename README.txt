@@ -105,6 +105,21 @@ Nếu mất kết nối đúng lúc nộp bài, bài làm vẫn được giữ t
 
 6. GHI CHÚ
 ----------
-  - Đọc PDF bằng pdf.js tải từ cdnjs: cần Internet khi import PDF lần đầu.
+  - PDF được đọc bằng pdf.js và OCR (Tesseract.js) cài sẵn ở public/vendor, chạy ngay trên trình duyệt — không cần Internet.
   - Câu tự luận không chấm tự động.
   - Các file cũ (ai.py, setup_project.py, xuly.py, Learning_by_AI_FINAL/) là công cụ/bản prototype cũ, không dùng nữa.
+
+7. ĐƯA LÊN MẠNG / CHẠY THỬ TRÊN RENDER
+--------------------------------------
+Biến môi trường dành cho chạy sau proxy / đám mây:
+  PORT                  cổng do nền tảng cấp (Render, Railway...) — có PORT thì tự nghe ở 0.0.0.0 và chỉ dùng cổng đó
+  LBAI_TRUST_PROXY=1    đứng sau proxy tin cậy: lấy IP thật từ X-Forwarded-For (khóa đăng nhập sai đúng người, không khóa chung cả lớp)
+  LBAI_PROXY_HOPS=1     số lớp proxy (lấy địa chỉ thứ N từ bên phải của X-Forwarded-For; nếu ngoài Render còn Cloudflare thì đặt 2)
+  LBAI_SETUP_CODE=...   mã bí mật bắt buộc nhập ở trang "Thiết lập lần đầu" → người lạ vào trước không chiếm được quyền quản trị
+  LBAI_COOKIE_SECURE=1  bắt buộc khi chạy HTTPS
+Chạy thử trên Render (file render.yaml có sẵn):
+  1) Đẩy mã lên GitHub; trên Render chọn New + → Blueprint → chọn repo (repo private thì cấp quyền cho Render đọc repo).
+  2) Khi được hỏi LBAI_SETUP_CODE, tự nhập một chuỗi bí mật (đừng ghi vào file).
+  3) Mở địa chỉ https://<tên>.onrender.com → nhập mã thiết lập và tạo tài khoản quản trị NGAY, trước khi gửi link cho ai.
+Gói free: đĩa tạm thời (khởi động lại là mất dữ liệu) và "ngủ" sau 15 phút không dùng → chỉ để chạy thử với dữ liệu giả.
+Chạy thật: dùng gói trả phí có đĩa lưu bền (LBAI_DATA=/var/data) hoặc VPS, và sao lưu thư mục dữ liệu hằng ngày.
