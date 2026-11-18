@@ -897,17 +897,21 @@ function regionSegs(rs, ext) {
     };
     // đáy thấp nhất của các dòng ngay trước dòng mốc i (cùng trang): đường cắt phía trên i không được vượt lên quá đáy các dòng đó,
     // nếu không ảnh sẽ lẫn dòng cuối của câu trước khi hai câu dính sát nhau (không có khe trắng)
-    const prevBot = i => { let lo = null; for (let k = i - 1, n = 0; k >= 0 && n < 8; k--) { const o = L[k]; if (!o) break; if (o.skip || !o.text.trim()) continue; if (o.p !== L[i].p) break; lo = lo == null ? o.bot : Math.min(lo, o.bot); n++; } return lo; };
-    for (let p = first.p; p <= L[la].p; p++) {
+    const prevBot = i => { let lo = null; for (let k = i - 1, n = 0; k >= 0 && n < 8; k--) { const o = L[k]; if (!o) break; if (o.skip || !o.text.trim()) continue; if (o.p !== L[i].p) break; if (o.bot < L[i].top - 1) continue; /* nằm thấp hơn dòng mốc = mảnh chữ lạc thứ tự, không phải câu trước */ lo = lo == null ? o.bot : Math.min(lo, o.bot); n++; } return lo; };
+    // Trong một số file (xuất từ Word), công thức / phương án của câu bị tách thành các khối chữ rời nằm CUỐI luồng văn bản, không đứng sau dòng "Câu N." của nó.
+    // Vì vậy vùng cắt chỉ dựa vào VỊ TRÍ THẬT trên trang: từ dòng nhãn của câu này đến dòng nhãn của câu kế tiếp (ảnh vẽ lại đủ mọi thứ nằm giữa hai nhãn).
+    const lastP = end && end.p >= first.p ? end.p : L[la].p;
+    for (let p = first.p; p <= lastP; p++) {
       const pg = ext.pages[p];
-      const ft = p === first.p ? aTop(a) : 0, et = end && p === L[la].p && end.p === p ? aTop(e) : 0;
+      const ft = p === first.p ? aTop(a) : 0, et = end && end.p === p ? aTop(e) : 0;
       const t = p === first.p ? ft + 2.5 : pg.ct;
       const bt = et ? et + 0.5 : pg.cb;
       if (t - bt < 6) continue;
       const sg = {p, t, b: bt};
-      if (p === first.p) { sg.tA = ft; const pb = prevBot(a); if (pb != null) sg.tMin = pb; }   // dòng mốc đầu đoạn (nhãn "Câu N." hoặc dòng a) b)): cắt ảnh sẽ đi lên từ đây tới dải trắng
+      if (p === first.p) { sg.tA = ft; const pb = prevBot(a); if (pb != null) sg.tMin = Math.min(pb, ft); }   // dòng mốc đầu đoạn (nhãn "Câu N." hoặc dòng a) b)): cắt ảnh sẽ đi lên từ đây tới dải trắng
       // đáy thấp nhất / đỉnh cao nhất của các dòng thuộc câu trên trang này: đường cắt không được cắt vào các dòng đó
-      let lo = 1e9, hi = -1e9; for (let i = a; i <= la; i++) if (has(i) && L[i].p === p) { lo = Math.min(lo, L[i].bot); hi = Math.max(hi, L[i].top); }
+      const topLim = p === first.p ? ft + 2 : pg.ct, botLim = et ? end.top - 4 : -1e9;   // chỉ các dòng nằm trong dải giữa hai nhãn; mảnh chữ lạc ở xa bị bỏ qua
+      let lo = 1e9, hi = -1e9; for (let i = a; i <= la; i++) if (has(i) && L[i].p === p && L[i].top <= topLim && L[i].bot >= botLim) { lo = Math.min(lo, L[i].bot); hi = Math.max(hi, L[i].top); }
       if (lo < 1e9) { sg.minBot = lo; sg.maxTop = hi; }
       if (et) sg.bA = et;   // dòng mốc kết thúc đoạn (đầu câu kế tiếp) — cùng giá trị với tA của câu đó nên hai ảnh chung một đường cắt
       if (ri === 0 && p === first.p && first.lab) sg.mask = {x1: first.lab + 1, t: first.top, b: first.bot};
@@ -1488,6 +1492,7 @@ function openBankManager(onChange, opts) {
       ${scoped ? `<div class="lb-note" style="margin:8px 0 0">📌 Đang chỉ hiện <b>${L.length}</b> câu của một lần import để bạn xử lý riêng — các câu import trước đó đã được lưu trong ngân hàng và đang được ẩn. <a href="#" data-bk="show-all">Xem toàn bộ ngân hàng (${all.length} câu)</a></div>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
         <select id="bk-b" title="Lọc theo lần import / file nguồn" style="padding:6px;border:1px solid #93c5fd;border-radius:6px;font-size:11px;max-width:260px;background:#eff6ff"><option value="all" ${st.b === 'all' ? 'selected' : ''}>Nguồn: tất cả (${all.length})</option>${srcOpts}</select>
+        ${scoped ? `<button class="btn btn-outline" data-bk="del-batch" style="font-size:10px;padding:5px 10px;color:#b91c1c;border-color:#fca5a5" title="Xóa mọi câu thuộc lần import / file đang chọn ở ô Nguồn">🗑 Xóa cả file import này (${all.filter(q => st.b === 'none' ? !q.batch : q.batch === st.b).length} câu)</button>` : ''}
         <select id="bk-f" style="padding:6px;border:1px solid #cbd5e1;border-radius:6px;font-size:11px">
           <option value="all" ${st.f === 'all' ? 'selected' : ''}>Tất cả (${all.length})</option>
           ${ORD.map(t => `<option value="${t}" ${st.f === t ? 'selected' : ''}>${TYL[t]} (${all.filter(q => q.t === t).length})</option>`).join('')}
@@ -1634,6 +1639,14 @@ function openBankManager(onChange, opts) {
       todo.forEach(([n, v]) => { const q = pool[n - 1]; q.ans = kind === 'mcq' ? 'ABCD'.indexOf(v) : v; pinned.add(q.id); });
       save(); onChange && onChange();
       toast(`Đã gán đáp án cho ${todo.length}/${pool.length} câu ${NAME}` + (bad.length ? `; bỏ qua ${bad.length} mục lỗi: ${bad.slice(0, 3).join(' | ')}` : ''));
+    }
+    else if (a === 'del-batch') {
+      const inB = q => st.b === 'none' ? !q.batch : q.batch === st.b, qs = (S.bank || []).filter(inB);
+      if (!qs.length) return toast('Nguồn này không còn câu nào');
+      const name = qs[0].src || 'import';
+      if (!confirm(`Xóa CẢ FILE import “${name}”: ${qs.length} câu (kể cả câu đang bị ẩn bởi bộ lọc)?\n\nViệc xóa chỉ được ghi vào cơ sở dữ liệu khi bạn bấm “💾 Lưu thay đổi” (có thể bấm “Hủy thay đổi” để khôi phục).`)) return;
+      dropLater(qs); S.bank = S.bank.filter(q => !inB(q)); sel.clear(); pinned.clear(); st.b = 'all'; st.p = 0; save(); onChange && onChange();
+      toast(`Đã xóa ${qs.length} câu của “${name}” — nhớ bấm 💾 Lưu thay đổi để ghi lại`);
     }
     else if (a === 'del-noans') { const n = S.bank.filter(q => !hasAns(q)).length; if (!n) return toast('Không có câu nào thiếu đáp án'); if (!confirm(`Xóa ${n} câu chưa có đáp án?`)) return; dropLater(S.bank.filter(q => !hasAns(q))); S.bank = S.bank.filter(hasAns); save(); onChange && onChange(); }
     else if (a === 'del-all') { if (!confirm(`Xóa toàn bộ ${S.bank.length} câu trong ngân hàng?`)) return; dropLater(S.bank); S.bank = []; sel.clear(); save(); onChange && onChange(); }
