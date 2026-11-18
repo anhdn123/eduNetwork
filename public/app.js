@@ -598,7 +598,8 @@ function parseBlock(raw, sec, ke, infer) {
   return [mk({t: 'essay', lv: 3, q: esc(flat)})];
 }
 
-const bankKey = q => q.t + '|' + q.q + '|' + (q.opts || []).join('|') + '|' + (q.sts || []).join('|');
+// câu thuộc một đề thi (examId) được giữ riêng theo từng đề, không bị coi là trùng với câu cùng nội dung ở chuyên đề/đề khác
+const bankKey = q => (q.examId ? q.examId + '|' : '') + q.t + '|' + q.q + '|' + (q.opts || []).join('|') + '|' + (q.sts || []).join('|');
 
 function parseQuestionBank(raw, src, hasLines) {
   const text = String(raw || '').replace(/\r/g, '').replace(/ /g, ' ').replace(/[ \t]+/g, ' ');
@@ -1093,7 +1094,7 @@ const TOPIC_KW = {'Toán|9': [
 const guessTopic = (s, g, q) => { const t = (q.q || '') + ' ' + (q.sts || []).join(' ') + ' ' + (q.opts || []).join(' '); const hit = (TOPIC_KW[s + '|' + g] || []).find(([, rx]) => rx.test(t)); return hit ? hit[0] : ''; };
 const KEY_NAME = /đ[aá]p\s*[aá]n|dap[\s_.-]*an|l[oờ]i\s*gi[aả]i|loi[\s_.-]*giai|huong[\s_.-]*dan|hdc|\bkey\b/i;
 
-async function importSmart(files, labels, withImg, onChange) {
+async function importSmart(files, labels, withImg, onChange, examOpt) {
   const m = modal(`<h2>⬆ Đang import đề mới</h2><div class="lb-prog"><span id="ip" style="width:0%"></span></div><div id="il" class="crawl-console" style="display:block;max-height:240px;overflow:auto"></div><div id="idone"></div>`, 1);
   const b = m.b, logBox = $('#il', b), bar = $('#ip', b);
   const log = (t, c = '') => { const d = document.createElement('div'); if (c) d.className = c; d.textContent = t; logBox.append(d); logBox.scrollTop = logBox.scrollHeight; };
@@ -1119,6 +1120,14 @@ async function importSmart(files, labels, withImg, onChange) {
       const res = parseQuestionBank(text, f.name, !!((ext || kExt) && withImg));
       if (!res.questions.length) { log('✗ Không nhận diện được câu hỏi nào (cần dạng "Câu 1. ... A. ... B. ..." hoặc có nhãn Câu/Bài).', 'err'); continue; }
       res.questions.forEach(q => { Object.assign(q, labels); q.batch = batchId; q.at = batchAt; if (!q.topic) q.topic = guessTopic(labels.subject, labels.grade, q); });
+      const eo = examOpt && examOpt.byName.get(f.name);
+      if (eo) {   // đề thi: mỗi file là một đề — lưu kèm nhóm đề, tên đề, số đề, phần (I TN · II Đ/S · III TLN) và số câu trong phần
+        const cnt = {};
+        res.questions.forEach(q => { const part = {mcq: 'I', tf: 'II', short: 'III', essay: 'IV'}[q.t] || 'IV'; cnt[part] = (cnt[part] || 0) + 1; Object.assign(q, {examId: batchId + '-' + eo.no, examCat: examOpt.cat, examName: eo.name, examNo: eo.no, examPart: part, examIdx: cnt[part]}); });
+        log(`   📑 Lưu thành “${examOpt.cat} · ${eo.name}” (Đề ${eo.no}): ${cnt.I || 0} TN · ${cnt.II || 0} Đ/S · ${cnt.III || 0} TLN.`, 'ok');
+      }
+      const lvT = autoLevels(res.questions);
+      log(`   🎯 Tự phân mức độ: ${lvT[1]} nhận biết · ${lvT[2]} thông hiểu · ${lvT[3]} vận dụng · ${lvT[4]} vận dụng cao (có thể chỉnh trong “Quản lý & sửa đáp án”).`, 'ok');
       let nImg = 0;
       if ((ext || kExt) && withImg) {
         log(`Đang cắt ảnh ${res.questions.length} câu hỏi và lời giải để giữ nguyên định dạng...`);
@@ -1155,20 +1164,43 @@ function openSmartImport(onChange) {
     <div class="lb-row" style="gap:10px"><label style="flex:1;font-size:11px;color:#475467">KHỐI LỚP<select id="si-g" style="${sel}">${GRADES.map(g => `<option value="${g}" ${g === gr ? 'selected' : ''}>Khối ${g}</option>`).join('')}</select></label>
       <label style="flex:1;font-size:11px;color:#475467">MÔN<select id="si-s" style="${sel}">${SUBJECTS.map(s => `<option ${s === sub ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label></div>
     <label style="display:block;margin-top:10px;font-size:11px;color:#475467">CHUYÊN ĐỀ<input id="si-tp" list="si-tpl" placeholder="Chọn gợi ý hoặc tự nhập — để trống thì hệ thống tự đoán theo nội dung câu" style="${sel}"><datalist id="si-tpl"></datalist></label>
+    <label style="display:flex;gap:8px;align-items:center;font-size:12px;margin:12px 0 4px;cursor:pointer"><input type="checkbox" id="si-exam"> <b>📑 Đây là các đề thi</b> <span style="color:#667085">(mỗi file là một đề — lưu riêng từng đề để giao nguyên đề; câu vẫn được xếp vào chuyên đề)</span></label>
+    <div id="si-exbox" hidden style="border:1px solid #bfdbfe;background:#f8fbff;border-radius:10px;padding:10px;margin-bottom:6px">
+      <label style="display:block;font-size:11px;color:#475467">NHÓM ĐỀ (chọn hoặc tự nhập)<input id="si-cat" list="si-catl" placeholder="VD: Đề giữa kì 1" style="${sel}"><datalist id="si-catl">${['Đề giữa kì 1', 'Đề cuối kì 1', 'Đề giữa kì 2', 'Đề cuối kì 2', 'Đề kiểm tra 15 phút', 'Đề kiểm tra 1 tiết', 'Đề thi vào 10', 'Đề ôn tập'].map(x => `<option value="${x}">`).join('')}</datalist></label>
+      <div style="font-size:11px;color:#475467;margin:8px 0 4px">Số và tên từng đề (số đề dùng khi nhập đáp án dạng <b>De1.I.01.A</b>):</div><div id="si-exrows" style="font-size:12px;color:#94a3b8">Chọn file ở bên dưới để đặt tên từng đề.</div></div>
     <div id="si-drop" style="margin-top:12px;border:2px dashed #93c5fd;border-radius:12px;padding:22px;text-align:center;background:#f8fbff;cursor:pointer"><div style="font-size:30px">📄</div><b style="font-size:13px">Bấm để chọn file hoặc kéo thả vào đây</b><div style="font-size:11px;color:#667085;margin-top:4px">PDF, ảnh (PNG/JPG) hoặc TXT · chọn được nhiều file</div><div id="si-names" style="font-size:12px;color:#1e40af;margin-top:8px"></div></div>
     <input type="file" id="si-f" accept=".pdf,.txt,.png,.jpg,.jpeg,application/pdf,text/plain,image/png,image/jpeg" multiple hidden>
     <p style="font-size:11px;color:#667085;margin:8px 0">Đáp án và <b>lời giải chi tiết từng câu</b> có thể nằm ngay sau mỗi câu (“Lời giải: …”), ở <b>cuối file đề</b> (“HƯỚNG DẪN GIẢI · Câu 1. Chọn A. …”), hoặc trong <b>file lời giải riêng</b> tải lên cùng lúc (đặt tên có chữ “đáp án” hoặc “lời giải”).</p>
     <label style="display:flex;gap:8px;font-size:12px;margin:6px 0"><input type="checkbox" id="si-img" checked> Giữ nguyên định dạng: lưu ảnh cắt từng câu và lời giải (công thức, hình vẽ hiện đúng như đề gốc)</label>
     <button class="btn btn-blue" id="si-go" disabled>Bắt đầu import</button>`);
   let files = [];
-  const set = fl => { files = [...fl].filter(f => /\.(pdf|txt|png|jpe?g)$/i.test(f.name) || /^(application\/pdf|text\/plain|image\/)/.test(f.type)); $('#si-names', m.b).innerHTML = files.map(f => '• ' + esc(f.name)).join('<br>'); $('#si-go', m.b).disabled = !files.length; };
+  const examFiles = () => { const keys = files.filter(f => KEY_NAME.test(f.name)); return keys.length === files.length ? files.slice() : files.filter(f => !keys.includes(f)); };
+  const drawEx = () => {
+    const on = $('#si-exam', m.b).checked; $('#si-exbox', m.b).hidden = !on; if (!on) return;
+    const ef = examFiles();
+    $('#si-exrows', m.b).innerHTML = ef.length ? ef.map((f, i) => `<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px"><input type="number" min="1" max="99" value="${i + 1}" data-exno="${i}" title="Số đề" style="width:56px;padding:6px;border:1px solid #cbd5e1;border-radius:6px"><input data-exnm="${i}" maxlength="60" value="${esc(f.name.replace(/\.[^.]+$/, '').replace(/_+/g, ' ').trim().slice(0, 60))}" style="flex:1;padding:6px;border:1px solid #cbd5e1;border-radius:6px"></div>`).join('') : '<span style="color:#94a3b8">Chọn file ở bên dưới để đặt tên từng đề.</span>';
+  };
+  const set = fl => { files = [...fl].filter(f => /\.(pdf|txt|png|jpe?g)$/i.test(f.name) || /^(application\/pdf|text\/plain|image\/)/.test(f.type)); $('#si-names', m.b).innerHTML = files.map(f => '• ' + esc(f.name)).join('<br>'); $('#si-go', m.b).disabled = !files.length; drawEx(); };
+  $('#si-exam', m.b).onchange = drawEx;
   const drop = $('#si-drop', m.b), inp = $('#si-f', m.b);
   drop.onclick = () => inp.click(); inp.onchange = () => set(inp.files);
   drop.ondragover = e => { e.preventDefault(); drop.style.background = '#e0f2fe'; }; drop.ondragleave = () => { drop.style.background = '#f8fbff'; };
   drop.ondrop = e => { e.preventDefault(); drop.style.background = '#f8fbff'; set(e.dataTransfer.files); };
   const fillTp = () => { $('#si-tpl', m.b).innerHTML = topicsFor($('#si-s', m.b).value, $('#si-g', m.b).value).map(t => `<option value="${esc(t)}">`).join(''); };
   $('#si-s', m.b).onchange = fillTp; $('#si-g', m.b).onchange = fillTp; fillTp();
-  $('#si-go', m.b).onclick = () => { const labels = {subject: $('#si-s', m.b).value, grade: $('#si-g', m.b).value, topic: $('#si-tp', m.b).value.trim()}, wi = $('#si-img', m.b).checked; m.close(); importSmart(files, labels, wi, onChange); };
+  $('#si-go', m.b).onclick = () => { const labels = {subject: $('#si-s', m.b).value, grade: $('#si-g', m.b).value, topic: $('#si-tp', m.b).value.trim()}, wi = $('#si-img', m.b).checked;
+    let examOpt = null;
+    if ($('#si-exam', m.b).checked) {
+      const cat = $('#si-cat', m.b).value.trim(), ef = examFiles(), byName = new Map(), used = new Set();
+      if (!cat) return toast('Hãy nhập nhóm đề (ví dụ “Đề giữa kì 1”)');
+      for (let i = 0; i < ef.length; i++) {
+        const no = Math.max(1, Math.floor(+$(`[data-exno="${i}"]`, m.b).value) || 0), nm = $(`[data-exnm="${i}"]`, m.b).value.trim() || `Đề ${no}`;
+        if (used.has(no)) return toast(`Hai đề cùng số ${no} — hãy đánh số khác nhau`);
+        used.add(no); byName.set(ef[i].name, {no, name: nm});
+      }
+      examOpt = {cat, byName};
+    }
+    m.close(); importSmart(files, labels, wi, onChange, examOpt); };
 }
 
 /* ---- Cắt câu hỏi thủ công từ PDF / ảnh (dùng được cả với PDF scan không có lớp chữ) ----
@@ -1363,6 +1395,38 @@ async function importBankFiles(files, labels, onChange) {
 
 // Đọc chuỗi đáp án nhập nhanh → Map(số thứ tự → đáp án). Mục sai định dạng được trả về trong bad.
 //   tf:    1ĐĐSS;2SĐĐS;3SSSS      mcq:   1A;2B;3C   (hoặc 1A 2B 3C)      short: 1.0,4;2.123;3.-5
+// Hộp thoại phụ: khác modal(), không đóng các hộp thoại đang mở (dùng trong cửa sổ Quản lý ngân hàng để không mất thay đổi chưa lưu)
+function subModal(html) {
+  const o = document.createElement('div'); o.className = 'lb-overlay'; o.dataset.locked = '1'; o.style.zIndex = '1200';
+  o.innerHTML = `<div class="lb-modal"><div class="lb-body">${html}</div></div>`; document.body.append(o);
+  return {b: o.querySelector('.lb-body'), close: () => o.remove()};
+}
+/* Nhập đáp án nhiều đề cùng lúc: "De1.I.01.A;De1.II.01.ĐĐSS;De1.III.01.0,5" = đề 1 · phần I (TN) câu 1 = A · phần II (Đ/S) câu 1 = Đ Đ S S · phần III (TLN) câu 1 = 0,5.
+   pool = các câu đang lọc; "De1" là đề có examNo = 1; số câu tính theo thứ tự trong đề, trong từng phần. */
+function applyExamKey(raw, pool) {
+  const exams = new Map(), PART = {I: 'mcq', II: 'tf', III: 'short'}, res = {ok: 0, over: 0, bad: [], touched: []};
+  pool.forEach(q => { const s = exams.get(q.examNo) || exams.set(q.examNo, new Set()).get(q.examNo); s.add(q.examId); });
+  String(raw || '').split(/[;\n]+/).map(s => s.trim()).filter(Boolean).forEach(it => {
+    const m = /^(?:de|đề)\s*(\d+)\s*[.:\-\/]\s*(III|II|I)\s*[.:\-\/]\s*(\d+)\s*[.:\-\/=]\s*(.+)$/i.exec(it);
+    if (!m) return res.bad.push(`${it} — sai định dạng`);
+    const no = +m[1], part = m[2].toUpperCase(), idx = +m[3], val = m[4].trim(), ids = exams.get(no);
+    if (!ids) return res.bad.push(`${it} — không có đề số ${no}`);
+    if (ids.size > 1) return res.bad.push(`${it} — có nhiều đề cùng số ${no}, hãy lọc theo Nguồn trước`);
+    const id = [...ids][0], qs = pool.filter(x => x.examId === id && x.t === PART[part]), q = qs[idx - 1];
+    if (!q) return res.bad.push(`${it} — đề ${no} phần ${part} chỉ có ${qs.length} câu`);
+    let ans;
+    if (part === 'I') { const L = val.toUpperCase().replace(/\s+/g, ''); if (!/^[A-D]$/.test(L)) return res.bad.push(`${it} — đáp án trắc nghiệm phải là A, B, C hoặc D`); ans = 'ABCD'.indexOf(L); }
+    else if (part === 'II') {
+      const cs = val.toUpperCase().replace(/ĐÚNG/g, 'Đ').replace(/SAI/g, 'S').replace(/D/g, 'Đ').replace(/[^ĐS]/g, '').split('').map(c => c === 'Đ' ? 0 : 1), need = isTfg(q) ? 4 : 1;
+      if (cs.length !== need) return res.bad.push(`${it} — cần ${need} ý Đ/S`);
+      ans = need === 1 ? cs[0] : cs;
+    } else { ans = val.replace(/\s+/g, '').replace(/^(-?\d+)\.(\d+)$/, '$1,$2'); if (!ans) return res.bad.push(`${it} — thiếu đáp án`); }
+    if (hasAns(q)) res.over++;
+    q.ans = ans; res.ok++; res.touched.push(q);
+  });
+  return res;
+}
+
 function parseQuickKey(kind, raw) {
   const map = new Map(), bad = [];
   if (kind === 'short') {
@@ -1473,6 +1537,7 @@ function openBankManager(onChange, opts) {
           <select data-f="lv" title="Mức độ (dùng để xếp bài cá nhân hóa)" style="${SELS}">${LVL.map(([v, l]) => `<option value="${v}" ${(q.lv || 2) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
           <button class="btn btn-outline" data-bk="del" style="font-size:9px;padding:3px 8px">✕ Xóa</button>
           ${q.warn ? '<span style="color:#b45309;font-weight:700" title="Có thể thiếu/sai phương án hoặc công thức — hãy đối chiếu đề gốc và sửa lại.">⚠ Kiểm tra lại</span>' : ''}
+          ${q.examId ? `<span class="pill" style="background:#e0e7ff;color:#3730a3" title="Câu thuộc đề thi — dùng khi nhập đáp án theo đề">${esc(q.examName || 'Đề')} · De${q.examNo}.${q.examPart}.${String(q.examIdx || 0).padStart(2, '0')}</span>` : ''}
           <span style="color:#98a2b3">${esc(q.src || '')}</span>
         </div>
         <details data-solbox="${esc(q.id)}" ${solOpen.has(q.id) ? 'open' : ''} style="margin-top:5px;font-size:10px"><summary style="cursor:pointer;font-weight:700;color:${!q.solImg && solGarbled(q) ? '#b45309' : hasSol(q) ? '#166534' : '#98a2b3'}">📘 Lời giải chi tiết${q.solImg ? ' · có ảnh' : solGarbled(q) ? ' · ⚠ chữ bị vỡ công thức, học sinh không thấy' : q.sol ? '' : ' · chưa có (bấm để thêm)'}</summary>
@@ -1505,6 +1570,8 @@ function openBankManager(onChange, opts) {
         <button class="btn btn-blue" data-bk="quick-mcq" style="font-size:10px;padding:5px 10px" title="Dán chuỗi đáp án, ví dụ: 1A 2B 3C 4D...">✎ Nhập nhanh đáp án TN</button>
         <button class="btn btn-blue" data-bk="quick-tf" style="font-size:10px;padding:5px 10px" title="Ví dụ: 1ĐĐSS;2SĐĐS;3SSSS">✎ Nhập nhanh đáp án Đ/S</button>
         <button class="btn btn-blue" data-bk="quick-short" style="font-size:10px;padding:5px 10px" title="Ví dụ: 1.0,4;2.123;3.-5">✎ Nhập nhanh đáp án TLN</button>
+        <button class="btn btn-blue" data-bk="auto-lv" style="font-size:10px;padding:5px 10px" title="Tự gán Nhận biết / Thông hiểu / Vận dụng / Vận dụng cao cho các câu đang chọn (hoặc đang lọc) dựa vào vị trí trong đề và nội dung câu">🎯 Tự phân mức độ</button>
+        <button class="btn btn-blue" data-bk="quick-exam" style="font-size:10px;padding:5px 10px" title="Dán đáp án nhiều đề cùng lúc, ví dụ: De1.I.01.A;De1.II.01.ĐĐSS;De1.III.01.0,5">✎ Nhập đáp án theo đề</button>
         <button class="btn btn-outline" data-bk="del-noans" style="font-size:10px;padding:5px 10px">Xóa câu chưa có đáp án</button>
         <button class="btn btn-outline" data-bk="del-all" style="font-size:10px;padding:5px 10px;color:#b91c1c">Xóa toàn bộ</button>
       </div>
@@ -1550,7 +1617,7 @@ function openBankManager(onChange, opts) {
     else if (t.dataset.f === 'ans4') { q.ans = Array.isArray(q.ans) ? q.ans.slice() : q.sts.map(() => null); q.ans[+t.dataset.k] = +t.value < 0 ? null : +t.value; }
     else if (t.dataset.f === 'subject' || t.dataset.f === 'grade') q[t.dataset.f] = t.value;
     else if (t.dataset.f === 'topic') q.topic = t.value.trim();
-    else if (t.dataset.f === 'lv') q.lv = +t.value;
+    else if (t.dataset.f === 'lv') { q.lv = +t.value; delete q.lvAuto; }
     else return;
     touched(q); draw();
   });
@@ -1621,7 +1688,7 @@ function openBankManager(onChange, opts) {
       if (!bar.t && !bar.lv && !bar.subject && !bar.grade && !bar.topic) return toast('Hãy chọn ít nhất một thuộc tính cần đổi (dạng, mức độ, môn, khối hoặc chuyên đề)');
       const lose = bar.t ? qs.filter(q => q.t !== bar.t && q.t !== 'essay' && hasAns(q)).length : 0;
       if (lose && !confirm(`Đổi dạng sẽ xóa đáp án đã nhập của ${lose} câu. Tiếp tục?`)) return;
-      qs.forEach(q => { if (bar.t) setQType(q, bar.t); if (bar.lv) q.lv = +bar.lv; if (bar.subject) q.subject = bar.subject; if (bar.grade) q.grade = bar.grade; if (bar.topic) q.topic = bar.topic; pinned.add(q.id); });
+      qs.forEach(q => { if (bar.t) setQType(q, bar.t); if (bar.lv) { q.lv = +bar.lv; delete q.lvAuto; } if (bar.subject) q.subject = bar.subject; if (bar.grade) q.grade = bar.grade; if (bar.topic) q.topic = bar.topic; pinned.add(q.id); });
       save(); onChange && onChange(); toast(`Đã áp dụng cho ${qs.length} câu — nhớ bấm 💾 Lưu thay đổi để ghi lại`);
     }
     else if (a === 'quick-tf' || a === 'quick-mcq' || a === 'quick-short') {
@@ -1647,6 +1714,37 @@ function openBankManager(onChange, opts) {
       if (!confirm(`Xóa CẢ FILE import “${name}”: ${qs.length} câu (kể cả câu đang bị ẩn bởi bộ lọc)?\n\nViệc xóa chỉ được ghi vào cơ sở dữ liệu khi bạn bấm “💾 Lưu thay đổi” (có thể bấm “Hủy thay đổi” để khôi phục).`)) return;
       dropLater(qs); S.bank = S.bank.filter(q => !inB(q)); sel.clear(); pinned.clear(); st.b = 'all'; st.p = 0; save(); onChange && onChange();
       toast(`Đã xóa ${qs.length} câu của “${name}” — nhớ bấm 💾 Lưu thay đổi để ghi lại`);
+    }
+    else if (a === 'quick-exam') {
+      const pool = list().filter(q => q.examId);
+      if (!pool.length) return toast('Không có câu thuộc đề thi nào trong bộ lọc — hãy chọn đúng Nguồn (lần import đề thi)');
+      const nExam = new Set(pool.map(q => q.examId)).size;
+      const mm = subModal(`<h2>✎ Nhập đáp án theo đề</h2>
+        <p style="font-size:12px;color:#475467;margin:4px 0 8px">Áp dụng cho <b>${nExam}</b> đề (${pool.length} câu) trong bộ lọc hiện tại. Mỗi mục cách nhau bằng dấu <b>;</b> hoặc xuống dòng, dạng <b>De[số đề].[phần].[số câu].[đáp án]</b>:<br>
+        • Phần <b>I</b> trắc nghiệm: <code>De1.I.01.A</code><br>• Phần <b>II</b> đúng/sai (4 ý a b c d): <code>De1.II.01.ĐĐSS</code><br>• Phần <b>III</b> trả lời ngắn (số, dấu phẩy thập phân): <code>De1.III.01.0,5</code></p>
+        <textarea id="qe-t" rows="9" placeholder="De1.I.01.A;De1.I.02.C;De1.II.01.ĐĐSS;De1.III.01.0,5&#10;De2.I.01.B;..." style="width:100%;font-family:monospace;font-size:12px;padding:8px;border:1px solid #cbd5e1;border-radius:8px"></textarea>
+        <div class="lb-row" style="margin-top:10px"><button class="btn btn-blue" id="qe-go">Áp dụng đáp án</button><button class="btn btn-outline" id="qe-x">Hủy</button></div>`);
+      $('#qe-x', mm.b).onclick = mm.close;
+      $('#qe-go', mm.b).onclick = () => {
+        const r = applyExamKey($('#qe-t', mm.b).value, pool);
+        if (!r.ok) return toast('Không đọc được mục nào. Ví dụ đúng: De1.I.01.A;De1.II.01.ĐĐSS;De1.III.01.0,5');
+        mm.close(); r.touched.forEach(q => pinned.add(q.id)); save(); onChange && onChange(); draw();
+        const rm = subModal(`<h2>${r.bad.length ? 'Đã áp dụng một phần' : '✓ Đã gán đáp án'}</h2><p style="font-size:13px">Gán được <b>${r.ok}</b> đáp án${r.over ? ` (ghi đè ${r.over} đáp án cũ)` : ''}. Nhớ bấm <b>💾 Lưu thay đổi</b>.</p>${r.bad.length ? `<div class="lb-note" style="background:#fff7ed;border-color:#fed7aa;color:#9a3412;max-height:200px;overflow:auto"><b>${r.bad.length} mục bị bỏ qua:</b><br>${r.bad.slice(0, 40).map(esc).join('<br>')}${r.bad.length > 40 ? '<br>…' : ''}</div>` : ''}<div class="lb-row" style="margin-top:10px"><button class="btn btn-blue" id="qe-ok">OK</button></div>`);
+        $('#qe-ok', rm.b).onclick = rm.close;
+      };
+      return;
+    }
+    else if (a === 'auto-lv') {
+      const ids = sel.size ? sel : new Set(list().map(q => q.id)), qs = (S.bank || []).filter(q => ids.has(q.id) && q.t !== 'essay');
+      if (!qs.length) return toast('Không có câu nào để phân mức');
+      const hand = qs.filter(q => q.lv != null && !q.lvAuto).length;
+      if (!confirm(`Tự phân mức độ cho ${qs.length} câu ${sel.size ? 'đã chọn' : 'đang lọc'}?\n\nDựa vào vị trí trong từng file (dễ → khó) và nội dung câu. ${hand ? `${hand} câu đã được đặt mức tay sẽ được giữ nguyên.` : ''}\nNên lọc theo từng file/lần import trước để thứ tự câu đúng như trong đề.`)) return;
+      const force = hand && confirm(`${hand} câu đã đặt mức tay. Bấm OK để ghi đè luôn, Hủy để giữ nguyên.`);
+      const before = new Map(qs.map(q => [q.id, q.lv]));
+      const t = autoLevels(qs, force);
+      qs.forEach(q => pinned.add(q.id));
+      save(); onChange && onChange();
+      toast(`Đã phân mức: ${t[1]} nhận biết · ${t[2]} thông hiểu · ${t[3]} vận dụng · ${t[4]} vận dụng cao — nhớ bấm 💾 Lưu thay đổi`);
     }
     else if (a === 'del-noans') { const n = S.bank.filter(q => !hasAns(q)).length; if (!n) return toast('Không có câu nào thiếu đáp án'); if (!confirm(`Xóa ${n} câu chưa có đáp án?`)) return; dropLater(S.bank.filter(q => !hasAns(q))); S.bank = S.bank.filter(hasAns); save(); onChange && onChange(); }
     else if (a === 'del-all') { if (!confirm(`Xóa toàn bộ ${S.bank.length} câu trong ngân hàng?`)) return; dropLater(S.bank); S.bank = []; sel.clear(); save(); onChange && onChange(); }
@@ -1815,6 +1913,39 @@ const LV4 = [[1, 'Nhận biết'], [2, 'Thông hiểu'], [3, 'Vận dụng'], [4
 const lvOf = q => Math.min(4, Math.max(1, Math.floor(+q.lv) || 2));
 const matTotal = m => m ? MTYPES.reduce((n, t) => n + LV4.reduce((x, [lv]) => x + (+(m[t] || {})[lv] || 0), 0), 0) : 0;
 const matSummary = m => LV4.map(([lv, nm]) => [nm, MTYPES.reduce((n, t) => n + (+(m[t] || {})[lv] || 0), 0)]).filter(x => x[1]).map(([nm, n]) => `${n} ${nm.toLowerCase()}`).join(' · ') || 'không giao';
+/* Tự phân mức độ cho câu hỏi vừa import (không cần AI):
+   1) Đề có ghi sẵn mức trong câu — (NB) (TH) (VD) (VDC), [NB]…, “Mức độ: vận dụng”… — thì lấy đúng nhãn đó.
+   2) Còn lại dựa vào vị trí trong file: đề/chuyên đề thường xếp từ dễ đến khó trong từng phần (TN → Đ/S → TLN) nên chia theo tỉ lệ vị trí;
+      Đ/S và TLN được đẩy lên mức cao hơn vì khó hơn TN cùng vị trí.
+   3) Tinh chỉnh ±1 mức theo nội dung: câu dài, có tham số, “lớn nhất/nhỏ nhất”, bài toán thực tế… → nâng; câu ngắn dạng “khẳng định nào đúng”, định nghĩa… → hạ.
+   Câu do tự phân mức được gắn lvAuto để lần sau chỉ ghi đè các câu này, không đè mức giáo viên đã chỉnh tay. */
+const LV_TAG = [[/\(\s*VDC\s*\)|\[\s*VDC\s*\]|vận\s*dụng\s*cao/i, 4], [/\(\s*VD\s*\)|\[\s*VD\s*\]|mức\s*độ\s*[:\-–]?\s*vận\s*dụng|\bvận\s*dụng\b\s*[:)\]]/i, 3], [/\(\s*TH\s*\)|\[\s*TH\s*\]|mức\s*độ\s*[:\-–]?\s*thông\s*hiểu/i, 2], [/\(\s*NB\s*\)|\[\s*NB\s*\]|mức\s*độ\s*[:\-–]?\s*nhận\s*biết/i, 1]];
+const LV_CUTS = {mcq: [0.40, 0.75, 0.93], tf: [0.15, 0.55, 0.85], short: [0, 0.40, 0.80], essay: [0, 0.30, 0.75]};   // cận trên (tỉ lệ vị trí) của NB, TH, VD
+const LV_UP = /tham\s*số|giá\s*trị\s*(?:lớn|nhỏ)\s*nhất|(?:lớn|nhỏ)\s*nhất|tất\s*cả\s*các\s*giá\s*trị|bao\s*nhiêu\s*giá\s*trị|thực\s*tế|người\s*ta|biết\s*rằng|chứng\s*minh|nghiệm\s*nguyên|đồng\s*thời|với\s*mọi|làm\s*tròn/i;
+const LV_DOWN = /khẳng\s*định\s*nào|mệnh\s*đề\s*nào|phát\s*biểu\s*nào|định\s*nghĩa|công\s*thức|tính\s*chất|nhận\s*biết|điều\s*kiện\s*xác\s*định|là\s*:?\s*$/i;
+function guessLevel(q, rank, n) {
+  const raw = String(q.q || '').replace(/<[^>]*>/g, ' ');
+  for (const [re, lv] of LV_TAG) if (re.test(raw)) return lv;
+  const cuts = LV_CUTS[q.t] || LV_CUTS.mcq, p = (rank + 0.5) / Math.max(1, n);
+  let lv = p <= cuts[0] ? 1 : p <= cuts[1] ? 2 : p <= cuts[2] ? 3 : 4;
+  if (q.t === 'short' && lv === 1) lv = 2;
+  if (!q.img || raw.replace(/\s/g, '').length > 60) {     // câu dạng ảnh thuần không có chữ để phân tích → chỉ dùng vị trí
+    const len = raw.replace(/\s+/g, ' ').trim().length, up = (raw.match(new RegExp(LV_UP.source, 'gi')) || []).length;
+    const sc = (len > 320 ? 1 : 0) + (up >= 2 ? 1 : 0) - (len < 80 && !up && LV_DOWN.test(raw) ? 1 : 0);
+    lv += Math.max(-1, Math.min(1, sc));
+  }
+  return Math.min(4, Math.max(1, lv));
+}
+// qs: danh sách theo đúng thứ tự trong đề. Nhóm theo (lần import, file, dạng câu). force=true: ghi đè cả mức đã đặt tay. Trả về số câu theo từng mức.
+function autoLevels(qs, force) {
+  const groups = new Map(), tally = [0, 0, 0, 0, 0];
+  qs.forEach(q => { if (q.t === 'essay') return; const k = [q.batch || '', q.src || '', q.t].join('|'); (groups.get(k) || groups.set(k, []).get(k)).push(q); });
+  groups.forEach(g => g.forEach((q, i) => {
+    if (!force && q.lv != null && !q.lvAuto) return;
+    q.lv = guessLevel(q, i, g.length); q.lvAuto = 1; tally[q.lv]++;
+  }));
+  return tally;
+}
 // Lấy đúng số câu theo ma trận {dạng: {mức: số câu}} từ ngân hàng (ưu tiên câu đã có đáp án); thiếu câu thì ghi cảnh báo vào warn
 function pickLeveled(bank, matrix, r, warn) {
   const out = [];
@@ -1917,6 +2048,19 @@ function generateSmartOfflineVariations(c, seed) {
   }
   variations.warn = [...new Set(warns)];
   return variations;
+}
+
+// Lấy nguyên các đề thi đã import: mỗi đề = một mã đề, giữ đúng thứ tự phần I (TN) → II (Đ/S) → III (TLN) và thứ tự câu như đề gốc
+function buildExamVariations(c) {
+  const bank = S.bank || [], out = [];
+  [...new Set(c.examIds)].forEach((id, i) => {
+    const qs = bank.filter(q => q.examId === id);
+    if (!qs.length) return;
+    qs.sort((a, b) => ORD.indexOf(a.t) - ORD.indexOf(b.t) || (a.examIdx || 0) - (b.examIdx || 0));
+    out.push({code: `Mã đề ${101 + i}`, name: String(qs[0].examName || `Đề ${i + 1}`).slice(0, 60), desc: `${qs[0].examCat || 'Đề thi'} · ${qs[0].examName || ''}`.slice(0, 120), questions: qs.map(q => ({...q}))});
+  });
+  out.warn = [];
+  return out;
 }
 
 // Bài tập cá nhân hóa: 3 mức (Củng cố / Tiêu chuẩn / Nâng cao), mỗi mức một bộ câu riêng chọn theo mức độ câu hỏi (lv 1–3).
@@ -2071,7 +2215,7 @@ function initBuilder() {
     $$('[data-count]').forEach(i => { if (MTYPES.includes(i.dataset.count)) { i.disabled = on; if (on) i.value = Object.values(getMatrix()[i.dataset.count]).reduce((a, b) => a + b, 0); } });
     if (on) { const bank = bankPool(cfg()); $$('[data-lav]').forEach(el => { const [t, lv] = el.dataset.lav.split(':'); el.textContent = 'có ' + bank.filter(q => q.t === t && lvOf(q) === +lv).length; }); }
   };
-  const selTopics = new Set();
+  const selTopics = new Set(), selExams = new Set();
   const renderBank = () => {
     const bank = S.bank || [], cnt = t => bank.filter(q => q.t === t).length, noans = bank.filter(q => !hasAns(q)).length;
     const sum = $('#bank-summary');
@@ -2087,6 +2231,16 @@ function initBuilder() {
     if (tp) {
       tp.innerHTML = use && tc.size ? `<div style="font-size:10px;font-weight:700;color:#334155;margin:2px 0 6px">Chọn chuyên đề lấy câu hỏi (tick nhiều chuyên đề; bỏ trống = lấy tất cả):</div><div style="display:flex;flex-wrap:wrap;gap:6px">${[...tc].sort((a, b) => a[0].localeCompare(b[0], 'vi')).map(([t, n]) => `<label style="display:flex;gap:5px;align-items:center;font-size:11px;background:#fff;border:1px solid ${selTopics.has(t) ? '#2563eb' : '#cbd5e1'};padding:4px 10px;border-radius:14px;cursor:pointer"><input type="checkbox" data-tp="${esc(t)}" ${selTopics.has(t) ? 'checked' : ''}> ${esc(t || '(Chưa gắn chuyên đề)')} <b style="color:#2563eb">${n}</b></label>`).join('')}</div>` : '';
       $$('[data-tp]', tp).forEach(cb => cb.onchange = () => { if (cb.checked) selTopics.add(cb.dataset.tp); else selTopics.delete(cb.dataset.tp); renderBank(); });
+    }
+    // đề thi đã import (mỗi file = một đề): tick để lấy nguyên đề, đúng thứ tự câu và đúng số câu như đề gốc
+    const ex = new Map();
+    (S.bank || []).forEach(q => { if (!q.examId || (q.subject && q.subject !== cc.subject) || (q.grade && q.grade !== cc.grade)) return; const e = ex.get(q.examId) || {id: q.examId, cat: q.examCat || 'Đề thi', name: q.examName || q.examId, no: q.examNo || 0, n: 0, miss: 0}; e.n++; if (!hasAns(q)) e.miss++; ex.set(q.examId, e); });
+    [...selExams].forEach(id => { if (!ex.has(id)) selExams.delete(id); });
+    const xp = $('#exam-picks');
+    if (xp) {
+      const cats = new Map(); ex.forEach(e => (cats.get(e.cat) || cats.set(e.cat, []).get(e.cat)).push(e));
+      xp.innerHTML = ex.size ? `<div style="font-size:10px;font-weight:700;color:#334155;margin:2px 0 6px">📑 Đề thi đã import — tick để lấy <u>nguyên đề</u> (mỗi đề tạo thành một mã đề, bỏ qua số câu ở trên):</div>${[...cats].sort((a, b) => a[0].localeCompare(b[0], 'vi')).map(([cat, es]) => `<div style="margin-bottom:6px"><div style="font-size:11px;font-weight:700;color:#1e3a8a;margin-bottom:3px">${esc(cat)}</div><div style="display:flex;flex-wrap:wrap;gap:6px">${es.sort((a, b) => a.no - b.no).map(e => `<label style="display:flex;gap:5px;align-items:center;font-size:11px;background:#fff;border:1px solid ${selExams.has(e.id) ? '#2563eb' : '#cbd5e1'};padding:4px 10px;border-radius:14px;cursor:pointer"><input type="checkbox" data-ex="${esc(e.id)}" ${selExams.has(e.id) ? 'checked' : ''}> ${esc(e.name)} <b style="color:#2563eb">${e.n} câu</b>${e.miss ? `<span style="color:#b91c1c" title="Số câu chưa có đáp án">· ${e.miss} thiếu ĐA</span>` : ''}</label>`).join('')}</div></div>`).join('')}` : '';
+      $$('[data-ex]', xp).forEach(cb => cb.onchange = () => { if (cb.checked) selExams.add(cb.dataset.ex); else selExams.delete(cb.dataset.ex); renderBank(); });
     }
     if (sum && legacyCount()) {
       sum.innerHTML += `<br><button class="btn btn-outline" id="legacy-go" style="margin-top:6px;padding:5px 10px;font-size:10px">⬆ Chuyển ${legacyCount()} câu cũ trên trình duyệt này lên máy chủ</button>`;
@@ -2116,6 +2270,7 @@ function initBuilder() {
     n: Object.values(getCounts()).reduce((a, b) => a + b, 0),
     useBank: $('#cfg-use-bank') ? ($('#cfg-use-bank').checked && !!(S.bank || []).length) : false,
     bankTopics: [...selTopics],
+    examIds: [...selExams],
     sl: +($('.range') ? $('.range').value : 35),
     types: ORD.filter(t => getCounts()[t] > 0),
     useAi: $('#cfg-use-ai') ? $('#cfg-use-ai').checked : false
@@ -2125,17 +2280,18 @@ function initBuilder() {
 
   // Xem trước, duyệt và phân phối nhiều mã đề (Rule-Based mặc định siêu tốc)
   async function preview(c, autoprint) {
-    if (!c.types.length) return toast('Hãy nhập số câu cho ít nhất một dạng câu hỏi');
+    const examMode = !!(c.examIds && c.examIds.length);
+    if (!c.types.length && !examMode) return toast('Hãy nhập số câu cho ít nhất một dạng câu hỏi');
     const seed = Date.now() % 1e6;
 
     // 1. Luôn sinh trước bộ đề Rule-Based đảm bảo 100% mượt mà tức thì
-    let variations = c.kindKey === 'personal' ? buildTierVariations(c, seed) : generateSmartOfflineVariations(c, seed);
+    let variations = examMode ? buildExamVariations(c) : c.kindKey === 'personal' ? buildTierVariations(c, seed) : generateSmartOfflineVariations(c, seed);
     const warns = variations.warn || [];
     if (!variations.length || !variations[0].questions.length) return toast(warns[0] || 'Không tạo được câu hỏi — kiểm tra ngân hàng và số câu');
     let isAiActive = false;
 
     // 2. Chỉ khi người dùng tích chọn Bật AI mới gọi Gemini
-    if (c.useAi) {
+    if (c.useAi && !examMode) {
       const key = getApiKey();
       if (!key) {
         toast('Chưa nhập API Key — Đang tạo đề bằng Thuật toán Rule-Based tiêu chuẩn...');
@@ -2468,17 +2624,51 @@ async function openAssign(title, variations, c) {
       <div style="font-size:10px;color:#1e40af;margin:4px 0">Ngân hàng đang có (đúng môn/khối/chuyên đề đã chọn): ${LV4.map(([lv, n]) => `${n} <b>${MTYPES.reduce((x, t) => x + have(t, lv), 0)}</b>`).join(' · ')}</div>
       <div style="margin-bottom:8px"><button type="button" class="btn btn-outline sm" id="lv-reset">↺ Cho mọi học sinh dùng mặc định lớp</button></div>
       <div style="font-size:12px;font-weight:700;color:#1e3a8a;margin-bottom:4px">2. Chỉnh riêng từng học sinh <span style="font-weight:400;color:#475467">(bấm tên để sửa; để tất cả = 0 thì không giao cho em đó)</span></div>
-      <div style="max-height:260px;overflow:auto">${lvRoster.map(s => { const e = lvEff(s); return `<details data-sid="${s.id}" ${lvOpen.has(s.id) ? 'open' : ''} style="border:1px solid #e2e8f0;border-radius:8px;padding:6px 8px;margin-bottom:4px;background:${lvStu[s.id] ? '#fffbeb' : '#fff'}"><summary style="cursor:pointer;font-size:12px"><b>${esc(s.name)}</b> — ${matTotal(e)} câu · ${esc(matSummary(e))} ${lvStu[s.id] ? '<span class="pill warn">riêng</span>' : '<span style="color:#98a2b3">(mặc định lớp)</span>'}</summary>
+      <div style="max-height:260px;overflow:auto">${lvRoster.map(s => { const e = lvEff(s); return `<details data-sid="${s.id}" ${lvOpen.has(s.id) ? 'open' : ''} style="border:1px solid #e2e8f0;border-radius:8px;padding:6px 8px;margin-bottom:4px;background:${lvStu[s.id] ? '#fffbeb' : '#fff'}"><summary style="cursor:pointer;font-size:12px"><b>${esc(s.name)}</b> — <span data-sum>${matTotal(e)} câu · ${esc(matSummary(e))}</span> <span data-tag></span></summary>
         <div data-grid="${s.id}" style="margin-top:6px">${lvGrid('ls', (t, lv) => e[t][lv])}</div>
-        ${lvStu[s.id] ? `<button type="button" class="btn btn-outline sm" data-back="${s.id}" style="margin-top:4px">↺ Dùng mặc định lớp</button>` : ''}</details>`; }).join('')}</div>
-      <div style="font-size:11px;color:#475467;margin-top:6px">Mỗi học sinh nhận một đề riêng (câu chọn ngẫu nhiên đúng số lượng theo mức). Em có đề dài nhất cần khoảng <b>${mins}</b> phút (trắc nghiệm 2' · đúng/sai 7' · trả lời ngắn 8' mỗi câu) — hãy đặt “Phút làm bài” phù hợp hoặc để 0 (tự do).</div>
-      <label style="display:flex;gap:6px;align-items:center;font-size:11px;margin-top:6px;cursor:pointer"><input type="checkbox" id="lv-save" ${lvBox.dataset.nosave ? '' : 'checked'}> Lưu thiết lập này làm mặc định (cho lần giao sau và gợi ý sẵn khi học sinh tự luyện)</label></div>`;
-    $$('details', lvBox).forEach(d => d.ontoggle = () => { d.open ? lvOpen.add(+d.dataset.sid) : lvOpen.delete(+d.dataset.sid); });
-    $('#lv-save', lvBox).onchange = e => { lvBox.dataset.nosave = e.target.checked ? '' : '1'; };
-    $$('[data-ld]', lvBox).forEach(i => i.onchange = () => { lvDef = readGrid($('#lv-def', lvBox)); drawLv(); });
-    $$('[data-grid]', lvBox).forEach(g => $$('[data-ls]', g).forEach(i => i.onchange = () => { lvStu[+g.dataset.grid] = readGrid(g); lvOpen.add(+g.dataset.grid); drawLv(); }));
-    $$('[data-back]', lvBox).forEach(b => b.onclick = () => { delete lvStu[+b.dataset.back]; drawLv(); });
-    $('#lv-reset', lvBox).onclick = () => { lvStu = {}; drawLv(); };
+        <button type="button" class="btn btn-outline sm" data-back="${s.id}" style="margin-top:4px" ${lvStu[s.id] ? '' : 'hidden'}>↺ Dùng mặc định lớp</button></details>`; }).join('')}</div>
+      <div style="font-size:11px;color:#475467;margin-top:6px">Mỗi học sinh nhận một đề riêng (câu chọn ngẫu nhiên đúng số lượng theo mức). Em có đề dài nhất cần khoảng <b id="lv-mins">${mins}</b> phút (trắc nghiệm 2' · đúng/sai 7' · trả lời ngắn 8' mỗi câu) — hãy đặt “Phút làm bài” phù hợp hoặc để 0 (tự do).</div>
+      <label style="display:flex;gap:6px;align-items:center;font-size:11px;margin-top:6px;cursor:pointer"><input type="checkbox" id="lv-save" ${lvBox.dataset.nosave ? '' : 'checked'}> Tự lưu thiết lập này làm mặc định (cho lần giao sau và gợi ý sẵn khi học sinh tự luyện) <span id="lv-st" style="color:#16a34a;font-weight:700"></span></label></div>`;
+    // Mọi chỉnh sửa chỉ cập nhật tại chỗ (không vẽ lại cả danh sách) nên ô đang nhập và vị trí cuộn được giữ nguyên
+    const scrollBox = lvBox.querySelector('[style*="max-height:260px"]');
+    const sIds = lvRoster.map(s => s.id);
+    const setGrid = (g, mat) => $$('input', g).forEach(i => { const [t, lv] = i.dataset[Object.keys(i.dataset)[0]].split(':'); i.value = mat[t][lv]; });
+    const stat = () => {
+      const mins = Math.max(0, ...lvRoster.map(s => { const e = lvEff(s); return MTYPES.reduce((n, t) => n + MIN_PER[t] * LV4.reduce((x, [lv]) => x + (+e[t][lv] || 0), 0), 0); }));
+      const el = $('#lv-mins', lvBox); if (el) el.textContent = mins;
+    };
+    const refreshStu = id => {
+      const d = lvBox.querySelector(`details[data-sid="${id}"]`); if (!d) return;
+      const e = lvEff({id});
+      $('[data-sum]', d).textContent = `${matTotal(e)} câu · ${matSummary(e)}`;
+      $('[data-tag]', d).innerHTML = lvStu[id] ? '<span class="pill warn">riêng</span>' : '<span style="color:#98a2b3">(mặc định lớp)</span>';
+      d.style.background = lvStu[id] ? '#fffbeb' : '#fff';
+      $('[data-back]', d).hidden = !lvStu[id];
+    };
+    let saveT = null;
+    const saveNow = async () => {
+      clearTimeout(saveT); const st = $('#lv-st', lvBox);
+      if (!$('#lv-save', lvBox) || !$('#lv-save', lvBox).checked) return;
+      try { await LB.api.post(`/api/classes/${$('#as-c', m.b).value}/matrix`, {default: lvDef, students: Object.fromEntries(lvRoster.map(s => [s.id, lvStu[s.id] || null]))}); if (st) st.textContent = '✓ Đã lưu'; }
+      catch (er) { if (st) st.textContent = ''; toast('Không lưu được thiết lập: ' + er.message); }
+    };
+    const later = () => { const st = $('#lv-st', lvBox); if (st) st.textContent = ''; clearTimeout(saveT); saveT = setTimeout(saveNow, 900); };
+    lvBox.flushSave = saveNow;
+    sIds.forEach(refreshStu); stat();
+    $$('details', lvBox).forEach(d => d.ontoggle = () => {      // chỉ mở một học sinh một lúc: mở em khác thì em đang mở tự thu lại
+      if (!d.open) return;
+      $$('details[open]', lvBox).forEach(o => { if (o !== d) o.open = false; });
+    });
+    $('#lv-save', lvBox).onchange = e => { lvBox.dataset.nosave = e.target.checked ? '' : '1'; if (e.target.checked) later(); };
+    $$('[data-ld]', lvBox).forEach(i => i.oninput = () => {
+      lvDef = readGrid($('#lv-def', lvBox));
+      sIds.forEach(id => { if (!lvStu[id]) { setGrid(lvBox.querySelector(`[data-grid="${id}"]`), lvDef); refreshStu(id); } });
+      stat(); later();
+    });
+    $$('[data-grid]', lvBox).forEach(g => $$('[data-ls]', g).forEach(i => i.oninput = () => { const id = +g.dataset.grid; lvStu[id] = readGrid(g); refreshStu(id); stat(); later(); }));
+    $$('[data-back]', lvBox).forEach(b => b.onclick = () => { const id = +b.dataset.back; delete lvStu[id]; setGrid(lvBox.querySelector(`[data-grid="${id}"]`), lvDef); refreshStu(id); stat(); later(); });
+    $('#lv-reset', lvBox).onclick = () => { lvStu = {}; sIds.forEach(id => { setGrid(lvBox.querySelector(`[data-grid="${id}"]`), lvDef); refreshStu(id); }); stat(); later(); };
+    if (scrollBox && lvBox._scroll) scrollBox.scrollTop = lvBox._scroll;
   };
   const loadLevels = async () => {
     lvBox.hidden = false; lvBox.innerHTML = '<div class="lb-note" style="margin:0 0 10px">Đang tải danh sách học sinh...</div>';

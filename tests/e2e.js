@@ -131,7 +131,8 @@ process.on('exit', cleanup);
     await setv('[data-ld="tf:2"]', '0'); await setv('[data-ld="short:2"]', '0');
     await waitFor("document.querySelectorAll('details[data-sid]').length===4", 5);
     // sửa riêng học sinh đầu: 2 nhận biết + 2 vận dụng cao (3 câu mặc định của lớp đã đổi → em này khác)
-    await ev("(()=>{const g=document.querySelector('[data-grid]');const set=(k,v)=>{const i=g.querySelector('[data-ls=\"'+k+'\"]');i.value=v;i.dispatchEvent(new Event('change',{bubbles:true}));};set('mcq:1','2');set('mcq:4','2');})()");
+    await ev("(()=>{const g=document.querySelector('[data-grid]');const set=(k,v)=>{const i=g.querySelector('[data-ls=\"'+k+'\"]');i.value=v;i.dispatchEvent(new Event('input',{bubbles:true}));};set('mcq:1','2');set('mcq:4','2');})()");
+    check('sửa ô của học sinh: danh sách không bị vẽ lại (ô vẫn còn trong trang, giữ giá trị)', await ev("document.querySelector('[data-grid] [data-ls=\"mcq:4\"]').value") === '2' && await ev("document.querySelector('details[data-sid] summary [data-sum]').textContent.includes('6 câu')"));
     await sleep(300);
     check('học sinh được chỉnh riêng hiển thị nhãn “riêng”', await ev("document.querySelectorAll('details[data-sid] .pill.warn').length") === 1);
     await click('#as-go');
@@ -142,6 +143,37 @@ process.on('exit', cleanup);
     check('đã lưu ma trận mặc định của lớp và ma trận riêng của 1 học sinh', cm.default && cm.default.mcq['1'] === 3 && cm.students.filter(s => s.matrix).length === 1 && cm.students.find(s => s.matrix).matrix.mcq['4'] === 2, JSON.stringify(cm.default));
 
     await api('del', `/api/assignments/${asg.id}`);   // bỏ bài thử để không lẫn vào các kiểm tra sau
+
+    // 3-ex. đề thi đã import (mỗi file một đề): chọn nguyên đề để tạo mã đề + nhập đáp án theo đề De1.I.01.A…
+    const exb = (id, no, name, i, o) => ({id, subject: 'Toán', grade: '9', topic: 'Đề thử', src: 'de' + no + '.pdf', lv: 2, sol: '', examId: 'ex-' + no, examCat: 'Đề giữa kì 1', examName: name, examNo: no, ...o});
+    const exq = [
+      exb('exq1', 1, 'Đề 1', 1, {t: 'mcq', q: 'Đề1 TN một', opts: ['a', 'b', 'c', 'd'], examPart: 'I', examIdx: 1}),
+      exb('exq2', 1, 'Đề 1', 2, {t: 'mcq', q: 'Đề1 TN hai', opts: ['a', 'b', 'c', 'd'], examPart: 'I', examIdx: 2}),
+      exb('exq3', 1, 'Đề 1', 1, {t: 'tf', q: 'Đề1 ĐS một', sts: ['a', 'b', 'c', 'd'], examPart: 'II', examIdx: 1}),
+      exb('exq4', 1, 'Đề 1', 1, {t: 'short', q: 'Đề1 TLN một', examPart: 'III', examIdx: 1}),
+      exb('exq5', 2, 'Đề 2', 1, {t: 'mcq', q: 'Đề2 TN một', opts: ['a', 'b', 'c', 'd'], examPart: 'I', examIdx: 1}),
+      exb('exq6', 2, 'Đề 2', 2, {t: 'mcq', q: 'Đề2 TN hai', opts: ['a', 'b', 'c', 'd'], examPart: 'I', examIdx: 2})];
+    await api('post', '/api/bank/sync', {upsert: exq});
+    await nav('teacher-builder.html');
+    await waitFor("document.querySelectorAll('[data-ex]').length===2", 10, 'danh sách đề thi đã import');
+    check('hiện 2 đề thi đã import theo nhóm “Đề giữa kì 1”', /Đề giữa kì 1/.test(await ev("document.getElementById('exam-picks').innerText")));
+    await ev("document.querySelector('[data-ex=\"ex-1\"]').click()"); await sleep(300);
+    await ev("document.querySelector('[data-act=gen]').click()");
+    await waitFor("document.querySelectorAll('.lb-exam .lb-q').length>0", 10, 'xem trước nguyên đề');
+    check('lấy nguyên Đề 1: 1 mã đề, đủ 4 câu đúng thứ tự TN → Đ/S → TLN', await ev("document.querySelectorAll('.lb-tabs button').length") <= 1 && await ev("document.querySelectorAll('.lb-exam .lb-q').length") === 4 && /Đề1 TN một[\s\S]*Đề1 TN hai[\s\S]*Đề1 ĐS một[\s\S]*Đề1 TLN một/.test(await ev("document.querySelector('.lb-exam').innerText")));
+    await nav('teacher-builder.html');
+    await waitFor("document.querySelector('[data-act=bank-manage]')", 8);
+    await click('[data-act=bank-manage]');
+    await waitFor("document.querySelector('[data-bk=quick-exam]')", 8, 'quản lý ngân hàng');
+    await click('[data-bk=quick-exam]');
+    await waitFor("document.getElementById('qe-t')", 6, 'ô nhập đáp án theo đề');
+    await setv('#qe-t', 'De1.I.01.A;De1.I.02.C;De1.II.01.ĐĐSS\nDe1.III.01.0.5;De2.I.01.B;De2.I.02.D;De3.I.01.A;De1.I.09.A;De1.II.01.ĐĐ');
+    await click('#qe-go'); await sleep(500);
+    check('báo mục sai: đề không tồn tại, vượt số câu, thiếu ý Đ/S', /3 mục bị bỏ qua/.test(await ev("document.body.innerText")), (await ev("document.body.innerText")).match(/\d+ mục bị bỏ qua/) + '');
+    await click('[data-bk=save]'); await sleep(1500);
+    const kb = (await api('get', '/api/bank')).questions, ans = id => kb.find(q => q.id === id).ans;
+    check('đáp án theo đề được gán đúng và lưu vào DB (TN, Đ/S, TLN, nhiều đề)', ans('exq1') === 0 && ans('exq2') === 2 && JSON.stringify(ans('exq3')) === '[0,0,1,1]' && ans('exq4') === '0,5' && ans('exq5') === 1 && ans('exq6') === 3, JSON.stringify([ans('exq1'), ans('exq2'), ans('exq3'), ans('exq4'), ans('exq5'), ans('exq6')]));
+    await api('post', '/api/bank/sync', {delete: exq.map(q => q.id)});
     // 3a. giáo viên mở chuyên đề "Hệ phương trình" cho lớp luyện tập tự do
     const cid = (await api('get', '/api/classes')).classes[0].id;
     const op = await api('post', `/api/classes/${cid}/practice`, {open: [{subject: 'Toán', grade: '9', topic: 'Hệ phương trình'}]});
