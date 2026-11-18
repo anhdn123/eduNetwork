@@ -282,8 +282,8 @@ class ApiTest(unittest.TestCase):
         key = {"subject": "Toán", "grade": "9", "topic": "Theo mức"}
         base = {"subject": "Toán", "grade": "9", "topic": "Theo mức"}
         bank = []
-        for lv in (1, 2, 3):
-            for i in range(3):
+        for lv in (1, 2, 3, 4):
+            for i in range(3 if lv < 4 else 2):
                 bank.append({**base, "id": f"lm{lv}{i}", "t": "mcq", "lv": lv, "q": f"TN {lv}{i}", "opts": ["a", "b", "c", "d"], "ans": 0})
         for i in range(2):
             bank.append({**base, "id": f"lg{i}", "t": "tf", "lv": 3, "q": f"ĐS {i}", "sts": ["a", "b", "c", "d"], "ans": [0, 1, 0, 1]})
@@ -291,7 +291,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(lan.post("/api/bank/sync", {"upsert": bank})[0], 200)
         lan.post(f"/api/classes/{cid}/practice", {"open": [key]})
         grp = [g for g in an.get("/api/practice/topics")[1]["groups"] if g["topic"] == "Theo mức"][0]
-        self.assertEqual(grp["levels"], {"mcq": [3, 3, 3], "tf": [0, 0, 2], "short": [0, 2, 0]})        # số câu theo mức độ
+        self.assertEqual(grp["levels"], {"mcq": [3, 3, 3, 2], "tf": [0, 0, 2, 0], "short": [0, 2, 0, 0]})        # số câu theo mức độ
         rules = an.get("/api/practice/topics")[1]["rules"]
         self.assertEqual((rules["points"]["mcq"], rules["minutes"], rules["tf_steps"]), (0.25, {"mcq": 2, "tf": 7, "short": 8}, [0, 0.1, 0.25, 0.5, 1]))
 
@@ -330,6 +330,25 @@ class ApiTest(unittest.TestCase):
         h = [x for x in an.get("/api/practice")[1]["sessions"] if x["id"] == r["id"]][0]
         self.assertEqual((h["points"], h["score"], h["max"], h["duration_min"]), (True, 1.75, 2.75, 21))
         self.assertGreaterEqual(h["spent_sec"], 0)
+        # vận dụng cao (mức 4); mức > 4 trong ngân hàng cũng gộp vào mức 4
+        st, r4 = an.post("/api/practice/start", {"groups": [key], "matrix": {"mcq": {"4": 2}}})
+        self.assertEqual((st, sorted(q["lv"] for q in r4["questions"])), (200, [4, 4]))
+        # ma trận mặc định của lớp + riêng từng học sinh: giáo viên lưu, học sinh thấy gợi ý sẵn khi tự luyện
+        mx = lan.get(f"/api/classes/{cid}/matrix")[1]
+        self.assertIsNone(mx["default"])
+        an_id = [s for s in mx["students"] if s["name"] and s["id"]][0]["id"]
+        dflt = {"mcq": {"1": 3, "2": 2}, "tf": {"3": 1}, "short": {}}
+        mine = {"mcq": {"1": 8, "3": 2}}
+        st, _ = lan.post(f"/api/classes/{cid}/matrix", {"default": dflt, "students": {str(an_id): mine, "999999": mine}})
+        self.assertEqual(st, 200)
+        mx = lan.get(f"/api/classes/{cid}/matrix")[1]
+        self.assertEqual(mx["default"]["mcq"], {"1": 3, "2": 2, "3": 0, "4": 0})
+        self.assertEqual([s["matrix"]["mcq"]["1"] for s in mx["students"] if s["matrix"]], [8])
+        eff = an.get("/api/practice/topics")[1]["matrix"]
+        self.assertTrue(eff is not None and eff["mcq"]["1"] in (3, 8))                                   # riêng nếu em này được đặt, không thì mặc định lớp
+        self.assertEqual(an.post(f"/api/classes/{cid}/matrix", {"default": dflt})[0], 403)               # học sinh không được sửa
+        lan.post(f"/api/classes/{cid}/matrix", {"default": None, "students": {str(an_id): None}})
+        self.assertIsNone(lan.get(f"/api/classes/{cid}/matrix")[1]["default"])
         # thiếu câu theo mức: vẫn tạo đề với số câu có sẵn và báo rõ
         st, r3 = an.post("/api/practice/start", {"groups": [key], "matrix": {"mcq": {"1": 5}}})
         self.assertEqual((st, len(r3["questions"])), (200, 3))

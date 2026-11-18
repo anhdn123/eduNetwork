@@ -1408,7 +1408,7 @@ function setQType(q, t) {
 const latestBatch = () => { let best = null; (S.bank || []).forEach(q => { if (q.batch && (!best || (q.at || 0) >= best.at)) best = {id: q.batch, at: q.at || 0}; }); return best && best.id; };
 function openBankManager(onChange, opts) {
   opts = opts || {};
-  const TYL = {mcq: 'Trắc nghiệm', tf: 'Đúng/Sai', short: 'Trả lời ngắn', essay: 'Tự luận'}, LVL = [[1, 'Nhận biết'], [2, 'Thông hiểu'], [3, 'Vận dụng']];
+  const TYL = {mcq: 'Trắc nghiệm', tf: 'Đúng/Sai', short: 'Trả lời ngắn', essay: 'Tự luận'}, LVL = [[1, 'Nhận biết'], [2, 'Thông hiểu'], [3, 'Vận dụng'], [4, 'Vận dụng cao']];
   const st = {f: 'all', q: '', p: 0, s: 'all', g: 'all', tp: 'all', b: opts.batch || 'all'}, PER = 15;
   const sel = new Set(), pinned = new Set(), solOpen = new Set(), bar = {t: '', lv: '', subject: '', grade: '', topic: ''};
   let lastSel = null;
@@ -1810,6 +1810,25 @@ function sampleN(arr, n, r, repeat) {
   const out = []; for (let i = 0; i < n; i++) out.push({...a[i % a.length]}); return out;
 }
 
+// Mức độ câu hỏi 1–4 (nhận biết · thông hiểu · vận dụng · vận dụng cao); chưa gắn mức = thông hiểu; mức cao hơn gộp vào vận dụng cao
+const LV4 = [[1, 'Nhận biết'], [2, 'Thông hiểu'], [3, 'Vận dụng'], [4, 'Vận dụng cao']], MTYPES = ['mcq', 'tf', 'short'];
+const lvOf = q => Math.min(4, Math.max(1, Math.floor(+q.lv) || 2));
+const matTotal = m => m ? MTYPES.reduce((n, t) => n + LV4.reduce((x, [lv]) => x + (+(m[t] || {})[lv] || 0), 0), 0) : 0;
+const matSummary = m => LV4.map(([lv, nm]) => [nm, MTYPES.reduce((n, t) => n + (+(m[t] || {})[lv] || 0), 0)]).filter(x => x[1]).map(([nm, n]) => `${n} ${nm.toLowerCase()}`).join(' · ') || 'không giao';
+// Lấy đúng số câu theo ma trận {dạng: {mức: số câu}} từ ngân hàng (ưu tiên câu đã có đáp án); thiếu câu thì ghi cảnh báo vào warn
+function pickLeveled(bank, matrix, r, warn) {
+  const out = [];
+  MTYPES.forEach(t => LV4.forEach(([lv, nm]) => {
+    const n = Math.max(0, Math.floor(+(matrix[t] || {})[lv]) || 0); if (!n) return;
+    const pool = bank.filter(q => q.t === t && lvOf(q) === lv);
+    let pick = sampleN(pool.filter(hasAns), n, r);
+    if (pick.length < n) pick = pick.concat(sampleN(pool.filter(q => !hasAns(q)), n - pick.length, r));
+    if (pick.length < n) warn.push(`Ngân hàng chỉ có ${pick.length}/${n} câu ${TYN[t]} · ${nm.toLowerCase()}`);
+    out.push(...pick.map(q => ({...q})));
+  }));
+  return out;
+}
+
 // Bộ sinh đề: lấy đúng số câu của từng dạng (c.counts) từ ngân hàng import PDF, hoặc ngân hàng mẫu/sinh tham số
 function buildSmartOfflineExam(c, seed) {
   const r = rng(seed), s = c.subject, g = c.grade, out = [], warn = [];
@@ -1819,7 +1838,9 @@ function buildSmartOfflineExam(c, seed) {
 
   if (c.useBank) {
     if (!bank.length) warn.push(`Ngân hàng chưa có câu nào cho ${s} khối ${g}${c.bankTopics && c.bankTopics.length ? ' · ' + c.bankTopics.join(', ') : ''} — hãy import đề đúng môn/khối hoặc sửa nhãn trong “Quản lý & sửa đáp án”`);
-    want.forEach(t => {
+    const lvMode = !!(c.matrix && matTotal(c.matrix));
+    if (lvMode) out.push(...pickLeveled(bank, c.matrix, r, warn));
+    want.filter(t => !(lvMode && MTYPES.includes(t))).forEach(t => {
       const pool = bank.filter(q => q.t === t), ok = pool.filter(hasAns), bad = pool.filter(q => !hasAns(q));
       let pick = sampleN(ok, counts[t], r);
       if (pick.length < counts[t]) pick = pick.concat(sampleN(bad, counts[t] - pick.length, r));
@@ -2025,7 +2046,31 @@ function initBuilder() {
     return t && t.value.trim() ? t.value.trim() : 'Tổng hợp';
   };
 
-  const getCounts = () => { const o = {mcq: 0, tf: 0, short: 0, essay: 0}; $$('[data-count]').forEach(i => { o[i.dataset.count] = Math.max(0, Math.min(100, Math.floor(+i.value || 0))); }); return o; };
+  const lvOn = () => !!($('#cfg-by-level') && $('#cfg-by-level').checked);
+  const getMatrix = () => {
+    if (!lvOn()) return null;
+    const m = {mcq: {}, tf: {}, short: {}};
+    $$('[data-lm]').forEach(i => { const [t, lv] = i.dataset.lm.split(':'); m[t][lv] = Math.max(0, Math.min(50, Math.floor(+i.value || 0))); });
+    return m;
+  };
+  const getCounts = () => {
+    const o = {mcq: 0, tf: 0, short: 0, essay: 0}; $$('[data-count]').forEach(i => { o[i.dataset.count] = Math.max(0, Math.min(100, Math.floor(+i.value || 0))); });
+    const m = getMatrix(); if (m) MTYPES.forEach(t => { o[t] = Object.values(m[t]).reduce((a, b) => a + b, 0); });
+    return o;
+  };
+  const LV_DEF = {mcq: [3, 2, 1, 0], tf: [1, 1, 0, 0], short: [0, 1, 1, 0]};
+  const drawLvGrid = () => {
+    const g = $('#lv-grid'); if (!g) return;
+    g.innerHTML = `<table class="tbl" style="font-size:11px;width:auto"><tr><th>Dạng câu</th>${LV4.map(([, n]) => `<th>${n}</th>`).join('')}</tr>
+      ${MTYPES.map(t => `<tr><td><b>${TYN[t]}</b></td>${LV4.map(([lv], j) => `<td><input type="number" min="0" max="50" value="${LV_DEF[t][j]}" data-lm="${t}:${lv}" style="width:52px;padding:5px;border:1px solid var(--line);border-radius:6px"><div data-lav="${t}:${lv}" style="font-size:9px;color:#1e40af;margin-top:2px"></div></td>`).join('')}</tr>`).join('')}</table>
+      <div class="muted" style="font-size:10px;margin-top:4px">Số câu mỗi dạng sẽ bằng tổng các mức. Câu chưa gắn mức độ được tính là “Thông hiểu” — vào “Quản lý & sửa đáp án” để gắn mức cho câu hỏi.</div>`;
+    $$('[data-lm]', g).forEach(i => i.oninput = renderBank);
+  };
+  const syncLv = () => {
+    const on = lvOn(), g = $('#lv-grid'); if (g) g.hidden = !on;
+    $$('[data-count]').forEach(i => { if (MTYPES.includes(i.dataset.count)) { i.disabled = on; if (on) i.value = Object.values(getMatrix()[i.dataset.count]).reduce((a, b) => a + b, 0); } });
+    if (on) { const bank = bankPool(cfg()); $$('[data-lav]').forEach(el => { const [t, lv] = el.dataset.lav.split(':'); el.textContent = 'có ' + bank.filter(q => q.t === t && lvOf(q) === +lv).length; }); }
+  };
   const selTopics = new Set();
   const renderBank = () => {
     const bank = S.bank || [], cnt = t => bank.filter(q => q.t === t).length, noans = bank.filter(q => !hasAns(q)).length;
@@ -2047,8 +2092,10 @@ function initBuilder() {
       sum.innerHTML += `<br><button class="btn btn-outline" id="legacy-go" style="margin-top:6px;padding:5px 10px;font-size:10px">⬆ Chuyển ${legacyCount()} câu cũ trên trình duyệt này lên máy chủ</button>`;
       $('#legacy-go').onclick = async () => { toast('Đang chuyển ngân hàng cũ lên máy chủ...'); try { const n = await migrateLegacy(); toast(`Đã chuyển ${n} câu lên máy chủ`); renderBank(); } catch (e) { toast(e.message); } };
     }
+    syncLv();
     const tot = $('#cfg-total'); if (tot) tot.textContent = Object.values(getCounts()).reduce((a, b) => a + b, 0);
   };
+  drawLvGrid(); if ($('#cfg-by-level')) $('#cfg-by-level').onchange = renderBank;
   $$('[data-count]').forEach(i => i.oninput = renderBank);
   if ($('#cfg-use-bank')) $('#cfg-use-bank').onchange = renderBank;
   if ($('#bank-file')) $('#bank-file').onchange = e => { const f = [...e.target.files]; e.target.value = ''; if (f.length) askLabels(f, {subject: $('#cfg-subject').value, grade: $('#cfg-grade').value, topic: getActiveTopic()}, renderBank); };
@@ -2065,6 +2112,7 @@ function initBuilder() {
     examCount: ($('.option.active') || {dataset: {}}).dataset.kind === 'topic' ? 1 : Math.max(1, Math.min(30, Math.floor(+($('#cfg-exam-count') ? $('#cfg-exam-count').value : 3) || 3))),
     examMode: ($('.option.active') || {dataset: {}}).dataset.kind === 'exam' && $('#cfg-exam-mode') ? $('#cfg-exam-mode').value : 'shuffle',
     counts: getCounts(),
+    matrix: getMatrix(),
     n: Object.values(getCounts()).reduce((a, b) => a + b, 0),
     useBank: $('#cfg-use-bank') ? ($('#cfg-use-bank').checked && !!(S.bank || []).length) : false,
     bankTopics: [...selTopics],
@@ -2379,8 +2427,10 @@ async function openAssign(title, variations, c) {
       ${c.kindKey === 'personal' ? '<option value="adaptive">Cá nhân hóa — tự xếp mức theo điểm trung bình của từng học sinh</option>' : ''}
       ${variations.length > 1 ? `<option value="alt">Xen kẽ — học sinh liền kề làm mã đề khác nhau (chống nhìn bài)</option>
       <option value="random">Ngẫu nhiên — chia đều số học sinh cho các mã đề</option><option value="free">Học sinh tự chọn mã đề</option>` : '<option value="alt">Giao cho cả lớp</option>'}
-      <option value="manual">Chỉ định — chọn mã đề (hoặc không giao) cho từng học sinh</option></select></label>
+      <option value="manual">Chỉ định — chọn mã đề (hoặc không giao) cho từng học sinh</option>
+      ${c.useBank ? '<option value="levels">Theo mức độ — đặt mặc định cho lớp, chỉnh riêng từng học sinh (mỗi em một đề)</option>' : ''}</select></label>
     <div id="as-man" hidden></div>
+    <div id="as-lv" hidden></div>
     <div class="lb-row" style="align-items:flex-end">
       <label class="lb-field" style="flex:1;min-width:190px"><span>HẠN NỘP (TUỲ CHỌN)</span><input id="as-due" type="datetime-local"></label>
       <label class="lb-field" style="width:150px"><span>PHÚT LÀM BÀI (0 = TỰ DO)</span><input id="as-min" type="number" min="0" max="300" value="45"></label>
@@ -2402,8 +2452,49 @@ async function openAssign(title, variations, c) {
       : '<div class="lb-note" style="margin:0 0 10px">Lớp này chưa có học sinh đang hoạt động.</div>';
     bindVarPicker(man, variations, roster, pick, 'mp', drawMan);
   };
+  // --- Giao theo mức độ: ma trận mặc định của lớp + ma trận riêng từng học sinh (mỗi học sinh một đề riêng lấy từ ngân hàng) ---
+  const lvBox = $('#as-lv', m.b), MIN_PER = {mcq: 2, tf: 7, short: 8};
+  let lvDef = null, lvStu = {}, lvRoster = [];     // lvStu[id] = ma trận riêng | undefined (dùng mặc định lớp)
+  const lvOpen = new Set();
+  const lvEff = s => lvStu[s.id] || lvDef;
+  const lvGrid = (ns, get) => `<table class="tbl" style="font-size:11px;width:auto"><tr><th></th>${LV4.map(([, n]) => `<th>${n}</th>`).join('')}</tr>${MTYPES.map(t => `<tr><td>${TYN[t]}</td>${LV4.map(([lv]) => `<td><input type="number" min="0" max="50" value="${get(t, lv)}" data-${ns}="${t}:${lv}" style="width:46px;padding:4px;border:1px solid var(--line);border-radius:6px"></td>`).join('')}</tr>`).join('')}</table>`;
+  const readGrid = root => { const o = {mcq: {}, tf: {}, short: {}}; $$('input', root).forEach(i => { const k = Object.keys(i.dataset)[0], [t, lv] = i.dataset[k].split(':'); o[t][lv] = Math.max(0, Math.min(50, Math.floor(+i.value || 0))); }); return o; };
+  const drawLv = () => {
+    const pool = bankPool(c), have = (t, lv) => pool.filter(q => q.t === t && lvOf(q) === lv).length;
+    const mins = Math.max(0, ...lvRoster.map(s => { const e = lvEff(s); return e ? MTYPES.reduce((n, t) => n + MIN_PER[t] * LV4.reduce((x, [lv]) => x + (+e[t][lv] || 0), 0), 0) : 0; }));
+    lvBox.innerHTML = `<div class="dist-matrix-box" style="margin:0 0 10px">
+      <div style="font-size:12px;font-weight:700;color:#1e3a8a;margin-bottom:4px">1. Mặc định cho cả lớp (số câu mỗi em)</div>
+      <div id="lv-def">${lvGrid('ld', (t, lv) => lvDef[t][lv])}</div>
+      <div style="font-size:10px;color:#1e40af;margin:4px 0">Ngân hàng đang có (đúng môn/khối/chuyên đề đã chọn): ${LV4.map(([lv, n]) => `${n} <b>${MTYPES.reduce((x, t) => x + have(t, lv), 0)}</b>`).join(' · ')}</div>
+      <div style="margin-bottom:8px"><button type="button" class="btn btn-outline sm" id="lv-reset">↺ Cho mọi học sinh dùng mặc định lớp</button></div>
+      <div style="font-size:12px;font-weight:700;color:#1e3a8a;margin-bottom:4px">2. Chỉnh riêng từng học sinh <span style="font-weight:400;color:#475467">(bấm tên để sửa; để tất cả = 0 thì không giao cho em đó)</span></div>
+      <div style="max-height:260px;overflow:auto">${lvRoster.map(s => { const e = lvEff(s); return `<details data-sid="${s.id}" ${lvOpen.has(s.id) ? 'open' : ''} style="border:1px solid #e2e8f0;border-radius:8px;padding:6px 8px;margin-bottom:4px;background:${lvStu[s.id] ? '#fffbeb' : '#fff'}"><summary style="cursor:pointer;font-size:12px"><b>${esc(s.name)}</b> — ${matTotal(e)} câu · ${esc(matSummary(e))} ${lvStu[s.id] ? '<span class="pill warn">riêng</span>' : '<span style="color:#98a2b3">(mặc định lớp)</span>'}</summary>
+        <div data-grid="${s.id}" style="margin-top:6px">${lvGrid('ls', (t, lv) => e[t][lv])}</div>
+        ${lvStu[s.id] ? `<button type="button" class="btn btn-outline sm" data-back="${s.id}" style="margin-top:4px">↺ Dùng mặc định lớp</button>` : ''}</details>`; }).join('')}</div>
+      <div style="font-size:11px;color:#475467;margin-top:6px">Mỗi học sinh nhận một đề riêng (câu chọn ngẫu nhiên đúng số lượng theo mức). Em có đề dài nhất cần khoảng <b>${mins}</b> phút (trắc nghiệm 2' · đúng/sai 7' · trả lời ngắn 8' mỗi câu) — hãy đặt “Phút làm bài” phù hợp hoặc để 0 (tự do).</div>
+      <label style="display:flex;gap:6px;align-items:center;font-size:11px;margin-top:6px;cursor:pointer"><input type="checkbox" id="lv-save" ${lvBox.dataset.nosave ? '' : 'checked'}> Lưu thiết lập này làm mặc định (cho lần giao sau và gợi ý sẵn khi học sinh tự luyện)</label></div>`;
+    $$('details', lvBox).forEach(d => d.ontoggle = () => { d.open ? lvOpen.add(+d.dataset.sid) : lvOpen.delete(+d.dataset.sid); });
+    $('#lv-save', lvBox).onchange = e => { lvBox.dataset.nosave = e.target.checked ? '' : '1'; };
+    $$('[data-ld]', lvBox).forEach(i => i.onchange = () => { lvDef = readGrid($('#lv-def', lvBox)); drawLv(); });
+    $$('[data-grid]', lvBox).forEach(g => $$('[data-ls]', g).forEach(i => i.onchange = () => { lvStu[+g.dataset.grid] = readGrid(g); lvOpen.add(+g.dataset.grid); drawLv(); }));
+    $$('[data-back]', lvBox).forEach(b => b.onclick = () => { delete lvStu[+b.dataset.back]; drawLv(); });
+    $('#lv-reset', lvBox).onclick = () => { lvStu = {}; drawLv(); };
+  };
+  const loadLevels = async () => {
+    lvBox.hidden = false; lvBox.innerHTML = '<div class="lb-note" style="margin:0 0 10px">Đang tải danh sách học sinh...</div>';
+    try {
+      const r = await LB.api.get(`/api/classes/${$('#as-c', m.b).value}/matrix`);
+      lvRoster = r.students; lvStu = {}; lvRoster.forEach(s => { if (s.matrix) lvStu[s.id] = s.matrix; });
+      lvDef = r.default || {mcq: {1: 4, 2: 4, 3: 2, 4: 0}, tf: {1: 0, 2: 1, 3: 1, 4: 0}, short: {1: 0, 2: 1, 3: 1, 4: 0}};
+    } catch (e) { lvBox.innerHTML = ''; return toast(e.message); }
+    if (!lvRoster.length) { lvBox.innerHTML = '<div class="lb-note" style="margin:0 0 10px">Lớp này chưa có học sinh đang hoạt động.</div>'; return; }
+    drawLv();
+  };
   const loadRoster = async () => {
-    if ($('#as-d', m.b).value !== 'manual') { man.hidden = true; return; }
+    const dv = $('#as-d', m.b).value;
+    if (dv === 'levels') { man.hidden = true; return loadLevels(); }
+    lvBox.hidden = true;
+    if (dv !== 'manual') { man.hidden = true; return; }
     man.hidden = false; man.innerHTML = '<div class="lb-note" style="margin:0 0 10px">Đang tải danh sách học sinh...</div>';
     try { roster = (await LB.api.get('/api/students?class_id=' + $('#as-c', m.b).value)).students.filter(s => s.active); }
     catch (e) { man.innerHTML = ''; return toast(e.message); }
@@ -2414,16 +2505,36 @@ async function openAssign(title, variations, c) {
     const t = $('#as-t', m.b).value.trim(); if (!t) return toast('Hãy nhập tên bài');
     const mode = $('#as-d', m.b).value;
     if (mode === 'manual' && !roster.some(s => pick[s.id] !== 'none')) return toast('Hãy chọn mã đề cho ít nhất một học sinh');
+    let sendVars = variations, sendMode = mode, sendMap = mode === 'manual' ? Object.fromEntries(roster.map(s => [s.id, pick[s.id]])) : null;
+    if (mode === 'levels') {   // mỗi học sinh một đề riêng theo ma trận của em đó
+      if (!lvRoster.length || !lvDef) return toast('Chưa tải được danh sách học sinh');
+      const seed = Date.now() % 1e6, warns = [], vs = [], map = {}, pool = bankPool(c);
+      lvRoster.forEach((s, i) => {
+        const e = lvEff(s), r = rng(seed + i * 131 + 7);
+        if (!matTotal(e)) { map[s.id] = 'none'; return; }
+        const w = [], qs = pickLeveled(pool, e, r, w).map(q => shuffleOpts(q, r));
+        warns.push(...w.map(x => `${s.name}: ${x}`));
+        if (!qs.length) { map[s.id] = 'none'; return; }
+        map[s.id] = vs.length; vs.push({code: `Đề riêng ${vs.length + 1}`, name: s.name.slice(0, 60), desc: matSummary(e), questions: qs});
+      });
+      if (!vs.length) return toast(warns[0] || 'Không tạo được đề nào — kiểm tra ma trận và ngân hàng câu hỏi');
+      if (warns.length && !confirm(`Ngân hàng không đủ câu cho ${warns.length} mục:\n${warns.slice(0, 6).join('\n')}${warns.length > 6 ? '\n…' : ''}\n\nVẫn giao với số câu hiện có?`)) return;
+      sendVars = vs; sendMode = 'manual'; sendMap = map;
+      if ($('#lv-save', m.b) && $('#lv-save', m.b).checked) {
+        try { await LB.api.post(`/api/classes/${$('#as-c', m.b).value}/matrix`, {default: lvDef, students: Object.fromEntries(lvRoster.map(s => [s.id, lvStu[s.id] || null]))}); }
+        catch (er) { toast('Không lưu được thiết lập mặc định: ' + er.message); }
+      }
+    }
     const dv = $('#as-due', m.b).value, btn = $('#as-go', m.b), show = +$('#as-show', m.b).value;
     if (show === 2 && !dv && !confirm('Chưa đặt hạn nộp: học sinh chỉ xem được đáp án khi bạn bấm “Đóng” bài ở trang quản lý. Tiếp tục?')) return;
     btn.disabled = true;
     try {
       const r = await LB.api.post('/api/assignments', {
-        title: t, class_id: +$('#as-c', m.b).value, dist_mode: mode,
-        ...(mode === 'manual' ? {variation_map: Object.fromEntries(roster.map(s => [s.id, pick[s.id]]))} : {}),
+        title: t, class_id: +$('#as-c', m.b).value, dist_mode: sendMode,
+        ...(sendMap ? {variation_map: sendMap} : {}),
         due_at: dv ? Math.floor(new Date(dv).getTime() / 1000) : null, duration_min: +$('#as-min', m.b).value || 0,
         max_attempts: +$('#as-try', m.b).value || 1, show_result: show,
-        exam: {title: t, subject: c.subject, grade: c.grade, topic: c.topic, variations: variations.map(v => ({code: v.code, name: v.name, desc: v.desc, questions: v.questions}))}
+        exam: {title: t, subject: c.subject, grade: c.grade, topic: c.topic, variations: sendVars.map(v => ({code: v.code, name: v.name, desc: v.desc, questions: v.questions}))}
       });
       const tiers = r.tiers ? `<p style="font-size:12px;color:#475467">Phân mức: ${r.tiers.map((n, i) => `<b>${esc(variations[i] ? variations[i].code : 'Mức ' + (i + 1))}</b> ${n} HS`).join(' · ')}</p>` : '';
       modal(`<h2>✓ Đã giao bài</h2><p style="font-size:13px">“${esc(t)}” đã được giao cho <b>${r.students}</b> học sinh. Học sinh đăng nhập sẽ thấy bài ở mục <b>Bài của tôi</b>.</p>${tiers}<p style="font-size:12px;color:#475467">Muốn đổi mã đề cho học sinh nào: vào <b>Lớp & học sinh → Bài đã giao → 🔀 Mã đề</b>.</p><div class="lb-row"><a class="btn btn-blue" href="manage.html">Xem kết quả & quản lý</a></div>`);

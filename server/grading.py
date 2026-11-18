@@ -8,7 +8,7 @@ TFG_SCORE = [0, 0.1, 0.25, 0.5, 1]   # đúng 0/1/2/3/4 ý của câu đúng-sai
 # Thời gian làm mỗi câu (phút): trắc nghiệm 2, đúng/sai 7, trả lời ngắn 8.
 PRACTICE_POINTS = {"mcq": 0.25, "tf": 1.0, "short": 1.0}
 PRACTICE_MINUTES = {"mcq": 2, "tf": 7, "short": 8}
-LEVELS = (1, 2, 3)   # 1 nhận biết · 2 thông hiểu · 3 vận dụng
+LEVELS = (1, 2, 3, 4)   # 1 nhận biết · 2 thông hiểu · 3 vận dụng · 4 vận dụng cao
 
 
 def has_key(q: dict) -> bool:
@@ -86,12 +86,12 @@ def practice_type(q: dict):
 
 
 def question_level(q: dict) -> int:
-    """Mức độ 1–3 của câu (nhận biết / thông hiểu / vận dụng; mức cao hơn gộp vào vận dụng; chưa gắn mức thì coi là thông hiểu)."""
+    """Mức độ 1–4 của câu (nhận biết / thông hiểu / vận dụng / vận dụng cao; mức cao hơn gộp vào vận dụng cao; chưa gắn mức thì coi là thông hiểu)."""
     try:
         lv = int(q.get("lv"))
     except (TypeError, ValueError):
         return 2
-    return min(max(lv, 1), 3)
+    return min(max(lv, 1), 4)
 
 
 def grade_points(questions: list, answers: list, reveal: bool):

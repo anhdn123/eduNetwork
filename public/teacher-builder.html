@@ -78,7 +78,9 @@
     <label style="display:block"><span class="muted" style="font-size:10px">Trả lời ngắn</span><input type="number" min="0" max="100" value="2" data-count="short" style="width:100%;padding:7px;border:1px solid var(--line);border-radius:6px;font-size:12px;margin-top:3px"><small data-avail="short" style="font-size:9px;color:#1e40af"></small></label>
     <label style="display:block"><span class="muted" style="font-size:10px">Tự luận</span><input type="number" min="0" max="100" value="0" data-count="essay" style="width:100%;padding:7px;border:1px solid var(--line);border-radius:6px;font-size:12px;margin-top:3px"><small data-avail="essay" style="font-size:9px;color:#1e40af"></small></label>
   </div>
-  <div style="font-size:11px;margin-bottom:8px">Tổng cộng: <b id="cfg-total">10</b> câu / mã đề</div>
+  <div style="font-size:11px;margin-bottom:6px">Tổng cộng: <b id="cfg-total">10</b> câu / mã đề</div>
+  <label style="display:flex;gap:6px;align-items:center;font-size:11px;margin:2px 0 6px;cursor:pointer"><input type="checkbox" id="cfg-by-level"> <b>Chia số câu theo mức độ</b> <span class="muted">(nhận biết · thông hiểu · vận dụng · vận dụng cao — chỉ áp dụng khi lấy câu từ ngân hàng)</span></label>
+  <div id="lv-grid" hidden style="margin-bottom:10px"></div>
 
   <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
     <div style="flex:1;min-width:180px">

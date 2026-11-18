@@ -104,6 +104,44 @@ process.on('exit', cleanup);
     await waitFor("/Đã giao bài/.test(document.body.innerText)", 8, 'giao bài thành công');
     check('giao bài cho lớp thành công', true, await ev("document.querySelector('.lb-modal p').innerText"));
 
+    // 3-lv. chia số câu theo 4 mức độ + giao mỗi học sinh một đề riêng theo ma trận (mặc định lớp, chỉnh riêng một em)
+    const lvq = [];
+    for (let i = 0; i < 4; i++) lvq.push({id: 'nb' + i, t: 'mcq', lv: 1, q: 'Nhận biết ' + i, opts: ['A1', 'B1', 'C1', 'D1'], ans: 0, sol: '', src: 'x.pdf', subject: 'Toán', grade: '9', topic: 'Hệ phương trình'});
+    for (let i = 0; i < 4; i++) lvq.push({id: 'vd' + i, t: 'mcq', lv: 3, q: 'Vận dụng ' + i, opts: ['A1', 'B1', 'C1', 'D1'], ans: 1, sol: '', src: 'x.pdf', subject: 'Toán', grade: '9', topic: 'Hệ phương trình'});
+    for (let i = 0; i < 3; i++) lvq.push({id: 'vc' + i, t: 'mcq', lv: 4, q: 'Vận dụng cao ' + i, opts: ['A1', 'B1', 'C1', 'D1'], ans: 2, sol: '', src: 'x.pdf', subject: 'Toán', grade: '9', topic: 'Hệ phương trình'});
+    await api('post', '/api/bank/sync', {upsert: lvq});
+    await nav('teacher-builder.html');
+    await waitFor("document.querySelectorAll('[data-tp]').length>=1", 10, 'ngân hàng cho ma trận mức độ');
+    await ev("document.querySelector('[data-tp=\"Hệ phương trình\"]').click()"); await sleep(300);
+    await click('#cfg-by-level'); await sleep(300);
+    check('bật “Chia theo mức độ”: hiện bảng 3 dạng × 4 mức', await ev("document.querySelectorAll('[data-lm]').length") === 12);
+    for (const [k, v] of [['mcq:1', 2], ['mcq:2', 2], ['mcq:3', 1], ['mcq:4', 1], ['tf:1', 0], ['tf:2', 1], ['tf:3', 0], ['tf:4', 0], ['short:1', 0], ['short:2', 1], ['short:3', 0], ['short:4', 0]]) await setv(`[data-lm="${k}"]`, String(v));
+    await sleep(200);
+    check('tổng số câu = tổng ma trận (6 TN + 1 Đ/S + 1 TLN = 8)', await ev("document.getElementById('cfg-total').textContent") === '8');
+    await setv('#cfg-exam-count', '2');
+    await ev("document.querySelector('[data-act=gen]').click()");
+    await waitFor("document.querySelectorAll('.lb-exam .lb-q').length>0", 10, 'xem trước đề theo mức');
+    const lvTxt = await ev("document.querySelector('.lb-exam').innerText");
+    check('đề theo mức có đúng 8 câu và có câu nhận biết, vận dụng, vận dụng cao', await ev("document.querySelectorAll('.lb-exam .lb-q').length") === 8 && /Nhận biết/.test(lvTxt) && /Vận dụng \d/.test(lvTxt) && /Vận dụng cao/.test(lvTxt), lvTxt.slice(0, 160).replace(/\s+/g, ' '));
+    await click('#btn-confirm-distribute');
+    await waitFor("document.getElementById('as-go')", 8, 'form giao bài theo mức');
+    await setv('#as-t', 'Bài theo mức độ'); await setv('#as-d', 'levels');
+    await waitFor("document.getElementById('lv-def') && document.querySelectorAll('details[data-sid]').length===4", 8, 'ma trận mặc định + 4 học sinh');
+    await setv('[data-ld="mcq:1"]', '3'); await setv('[data-ld="mcq:2"]', '0'); await setv('[data-ld="mcq:3"]', '0'); await setv('[data-ld="mcq:4"]', '0');
+    await setv('[data-ld="tf:2"]', '0'); await setv('[data-ld="short:2"]', '0');
+    await waitFor("document.querySelectorAll('details[data-sid]').length===4", 5);
+    // sửa riêng học sinh đầu: 2 nhận biết + 2 vận dụng cao (3 câu mặc định của lớp đã đổi → em này khác)
+    await ev("(()=>{const g=document.querySelector('[data-grid]');const set=(k,v)=>{const i=g.querySelector('[data-ls=\"'+k+'\"]');i.value=v;i.dispatchEvent(new Event('change',{bubbles:true}));};set('mcq:1','2');set('mcq:4','2');})()");
+    await sleep(300);
+    check('học sinh được chỉnh riêng hiển thị nhãn “riêng”', await ev("document.querySelectorAll('details[data-sid] .pill.warn').length") === 1);
+    await click('#as-go');
+    await waitFor("/Đã giao bài/.test(document.body.innerText)", 10, 'giao bài theo mức thành công');
+    const asg = (await api('get', '/api/assignments')).assignments.find(a => a.title === 'Bài theo mức độ');
+    check('giao theo mức: đủ 4 học sinh', asg && asg.total === 4, JSON.stringify(asg));
+    const cm = await api('get', `/api/classes/${(await api('get', '/api/classes')).classes[0].id}/matrix`);
+    check('đã lưu ma trận mặc định của lớp và ma trận riêng của 1 học sinh', cm.default && cm.default.mcq['1'] === 3 && cm.students.filter(s => s.matrix).length === 1 && cm.students.find(s => s.matrix).matrix.mcq['4'] === 2, JSON.stringify(cm.default));
+
+    await api('del', `/api/assignments/${asg.id}`);   // bỏ bài thử để không lẫn vào các kiểm tra sau
     // 3a. giáo viên mở chuyên đề "Hệ phương trình" cho lớp luyện tập tự do
     const cid = (await api('get', '/api/classes')).classes[0].id;
     const op = await api('post', `/api/classes/${cid}/practice`, {open: [{subject: 'Toán', grade: '9', topic: 'Hệ phương trình'}]});

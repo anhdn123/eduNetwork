@@ -61,7 +61,7 @@ async function start(a) {
 }
 /* ---------- Tự luyện tập: học sinh tự tạo đề từ các chuyên đề giáo viên đã mở cho lớp ---------- */
 const TYPE_VN = {mcq: 'Trắc nghiệm', tf: 'Đúng/Sai', short: 'Trả lời ngắn'};
-const LVS = [[1, 'Nhận biết'], [2, 'Thông hiểu'], [3, 'Vận dụng']], DEF = {mcq: [4, 4, 2], tf: [0, 1, 1], short: [0, 1, 1]};
+const LVS = [[1, 'Nhận biết'], [2, 'Thông hiểu'], [3, 'Vận dụng'], [4, 'Vận dụng cao']], DEF = {mcq: [4, 4, 2, 0], tf: [0, 1, 1, 0], short: [0, 1, 1, 0]};
 const mmss = sec => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
 async function drawPractice() {
   const host = $('#v-practice');
@@ -85,9 +85,9 @@ async function drawPractice() {
         <div id="pf" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px"></div>
         <div id="pg" style="display:flex;flex-direction:column;gap:6px;max-height:240px;overflow:auto"></div>
         <div id="pcount" style="font-size:11px;color:#475467;margin-top:4px"></div>
-        <div style="font-size:11px;font-weight:700;margin:14px 0 6px">2. Số câu theo dạng và mức độ</div>
+        <div style="font-size:11px;font-weight:700;margin:14px 0 6px">2. Số câu theo dạng và mức độ${tp.matrix ? ' <span style="font-weight:400;color:#667085">(giáo viên đã gợi ý sẵn, bạn có thể sửa)</span>' : ''}</div>
         <table class="tbl" style="font-size:12px"><tr><th>Dạng câu</th>${LVS.map(([, n]) => `<th>${n}</th>`).join('')}<th>Điểm · giờ</th></tr>
-          ${['mcq', 'tf', 'short'].map(t => `<tr><td><b>${TYPE_VN[t]}</b></td>${LVS.map(([lv], j) => `<td><input type="number" min="0" max="50" value="${DEF[t][j]}" data-m="${t}:${lv}" style="width:50px;padding:6px;border:1px solid var(--line);border-radius:8px"><div data-a="${t}:${lv}" style="font-size:10px;color:#667085;margin-top:2px"></div></td>`).join('')}
+          ${['mcq', 'tf', 'short'].map(t => `<tr><td><b>${TYPE_VN[t]}</b></td>${LVS.map(([lv], j) => `<td><input type="number" min="0" max="50" value="${(tp.matrix && tp.matrix[t] && tp.matrix[t][lv] != null ? tp.matrix[t][lv] : DEF[t][j])}" data-m="${t}:${lv}" style="width:50px;padding:6px;border:1px solid var(--line);border-radius:8px"><div data-a="${t}:${lv}" style="font-size:10px;color:#667085;margin-top:2px"></div></td>`).join('')}
             <td style="white-space:nowrap;font-size:11px;line-height:1.4">${t === 'tf' ? 'tối đa 1' : fmtScore(R.points[t])} điểm<br>${R.minutes[t]} phút</td></tr>`).join('')}</table>
         <div id="psum" style="font-size:12px;font-weight:700;color:#1e3a8a;margin:8px 0 4px"></div>
         <div id="avail" style="font-size:11px;color:#1e40af;margin:2px 0"></div>

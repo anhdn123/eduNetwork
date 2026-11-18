@@ -266,6 +266,10 @@ def init():
     # bài tự luyện tính điểm theo thang mới (scheme=1: điểm thật theo dạng câu) khác bài cũ (scheme=0: số câu đúng)
     if "scheme" not in [r[1] for r in con.execute("PRAGMA table_info(practice)").fetchall()]:
         con.execute("ALTER TABLE practice ADD COLUMN scheme INTEGER NOT NULL DEFAULT 0")
+    # ma trận số câu theo dạng × mức độ: mặc định của lớp và riêng từng học sinh (JSON, NULL = chưa đặt)
+    for tbl in ("classes", "users"):
+        if "level_matrix" not in [r[1] for r in con.execute(f"PRAGMA table_info({tbl})").fetchall()]:
+            con.execute(f"ALTER TABLE {tbl} ADD COLUMN level_matrix TEXT")
     con.execute("PRAGMA journal_mode=WAL")
     con.commit()
     con.close()

@@ -610,8 +610,8 @@ def r_img_get(c):
 
 # ---------- đề & giao bài ----------
 def check_variations(vs):
-    if not isinstance(vs, list) or not 1 <= len(vs) <= 30:
-        raise ApiError(400, "Đề cần 1–30 mã đề")
+    if not isinstance(vs, list) or not 1 <= len(vs) <= 100:
+        raise ApiError(400, "Đề cần 1–100 mã đề")
     out = []
     for i, v in enumerate(vs):
         qs = v.get("questions") if isinstance(v, dict) else None
@@ -1120,7 +1120,7 @@ PRACTICE_TYPES = ("mcq", "tf", "short")
 
 def bank_groups(con, owner_id, levels=None):
     """Nhóm (môn, khối, chuyên đề) trong ngân hàng của giáo viên, chỉ đếm câu có đáp án chấm được (không tính tự luận).
-    Truyền dict vào `levels` để nhận thêm số câu theo mức độ: levels[nhóm][dạng] = [nhận biết, thông hiểu, vận dụng]."""
+    Truyền dict vào `levels` để nhận thêm số câu theo mức độ: levels[nhóm][dạng] = [nhận biết, thông hiểu, vận dụng, vận dụng cao]."""
     groups = {}
     for r in con.execute("SELECT subject, grade, topic, data FROM bank WHERE owner_id=?", (owner_id,)).fetchall():
         q = json.loads(r["data"])
@@ -1130,7 +1130,7 @@ def bank_groups(con, owner_id, levels=None):
         g = groups.setdefault(key, {"mcq": 0, "tf": 0, "short": 0})
         g[q["t"]] += 1
         if levels is not None:
-            levels.setdefault(key, {t: [0, 0, 0] for t in PRACTICE_TYPES})[q["t"]][grading.question_level(q) - 1] += 1
+            levels.setdefault(key, {t: [0, 0, 0, 0] for t in PRACTICE_TYPES})[q["t"]][grading.question_level(q) - 1] += 1
     return groups
 
 
@@ -1173,6 +1173,54 @@ def r_class_practice_set(c):
     return {"ok": True, "open": n}
 
 
+def clean_matrix(m):
+    """Ma trận {dạng: {mức 1–4: số câu}} đã làm sạch; None nếu rỗng hoặc không hợp lệ."""
+    if not isinstance(m, dict):
+        return None
+    out, tot = {}, 0
+    for t in PRACTICE_TYPES:
+        row = m.get(t) if isinstance(m.get(t), dict) else {}
+        out[t] = {str(lv): need_int(row, str(lv), 0, 50, 0) for lv in grading.LEVELS}
+        tot += sum(out[t].values())
+    return out if tot else None
+
+
+def load_matrix(raw):
+    try:
+        return clean_matrix(json.loads(raw)) if raw else None
+    except (ValueError, TypeError, ApiError):
+        return None
+
+
+@route("GET", r"/api/classes/(\d+)/matrix", TEACHER_ROLES)
+def r_class_matrix(c):
+    cls = get_class(c.con, c.user, int(c.p[0]))
+    rows = c.con.execute("SELECT id, name, level_matrix FROM users WHERE class_id=? AND role='student' AND active=1 ORDER BY name", (cls["id"],)).fetchall()
+    return {"default": load_matrix(cls["level_matrix"]),
+            "students": [{"id": r["id"], "name": r["name"], "matrix": load_matrix(r["level_matrix"])} for r in rows]}
+
+
+@route("POST", r"/api/classes/(\d+)/matrix", TEACHER_ROLES)
+def r_class_matrix_set(c):
+    """Lưu ma trận mặc định của lớp (`default`) và ma trận riêng từng học sinh (`students`: {id: ma trận | null = dùng mặc định lớp})."""
+    cls = get_class(c.con, c.user, int(c.p[0]))
+    b = c.body
+    if "default" in b:
+        c.con.execute("UPDATE classes SET level_matrix=? WHERE id=?", (json.dumps(clean_matrix(b["default"])) if clean_matrix(b["default"]) else None, cls["id"]))
+    st = b.get("students")
+    n = 0
+    if isinstance(st, dict):
+        ids = {r["id"] for r in c.con.execute("SELECT id FROM users WHERE class_id=? AND role='student'", (cls["id"],)).fetchall()}
+        for k, m in st.items():
+            if not str(k).isdigit() or int(k) not in ids:
+                continue
+            cm = clean_matrix(m)
+            c.con.execute("UPDATE users SET level_matrix=? WHERE id=?", (json.dumps(cm) if cm else None, int(k)))
+            n += 1
+    audit(c.con, c.user["id"], "level_matrix", f"lớp {cls['name']}: mặc định + {n} học sinh")
+    return {"ok": True, "students": n}
+
+
 def my_class(c):
     if not c.user["class_id"]:
         raise ApiError(400, "Tài khoản của bạn chưa thuộc lớp nào — hãy báo giáo viên")
@@ -1188,7 +1236,9 @@ def r_practice_topics(c):
     opened = open_groups(c.con, cls["id"])
     lv = {}
     groups = bank_groups(c.con, cls["owner_id"], lv)
+    me = c.con.execute("SELECT level_matrix FROM users WHERE id=?", (c.user["id"],)).fetchone()
     return {"groups": [group_dict(k, v, None, lv.get(k)) for k, v in sorted(groups.items()) if k in opened],
+            "matrix": load_matrix(me and me["level_matrix"]) or load_matrix(cls["level_matrix"]),
             "rules": {"points": grading.PRACTICE_POINTS, "tf_steps": grading.TFG_SCORE, "minutes": grading.PRACTICE_MINUTES}}
 
 
@@ -1236,7 +1286,7 @@ def r_practice_start(c):
             if q.get("t") in pool and grading.has_key(q):
                 pool[q["t"]].append(q)
     TV = {"mcq": "trắc nghiệm", "tf": "đúng/sai", "short": "trả lời ngắn"}
-    LVN = {1: "nhận biết", 2: "thông hiểu", 3: "vận dụng"}
+    LVN = {1: "nhận biết", 2: "thông hiểu", 3: "vận dụng", 4: "vận dụng cao"}
     qs, short = [], []
     for t, lv, n in plan:
         if not n:
