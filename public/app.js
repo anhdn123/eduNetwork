@@ -484,6 +484,11 @@ function extractAns0(seg) {
   return null;
 }
 
+// Câu hỏi được in lại nguyên văn (có đủ phương án A. B. C. D.; đáp án đúng có thể bị khoanh tròn nên mất dấu chấm) và dòng “Lời giải” tách riêng
+const RESTATED_RE = /(?:^|\s)A\.\s[\s\S]*?\sB\.?\s[\s\S]*?\sC\.?\s[\s\S]*?\sD\.?\s/;
+const SOLMARK_RE = /\n[ \t]*Lời\s*giải[ \t]*(?:\n|$)/i;
+const solAfterMarker = seg => { const m = SOLMARK_RE.exec(seg); return m ? seg.slice(m.index + m[0].length) : null; };
+
 // Đọc bảng đáp án cuối đề: "Câu 1. Chọn A", "1.A 2.B", hoặc bảng 2 dòng
 function parseKey(key) {
   if (!key.trim()) return [];
@@ -491,18 +496,33 @@ function parseKey(key) {
   // Bảng đáp án dạng hàng ngang: "Câu 1 2 3 ... 12" rồi "Đáp án D D D ..." (trắc nghiệm) hoặc "Đáp án 27 22,5% 20,3 ..." (trả lời ngắn).
   // Đọc riêng rồi bỏ khỏi chuỗi để dòng "Câu 1 2 3..." không bị nhận nhầm là câu số 1.
   const tabled = [];
+  // Bảng đáp án đúng/sai: "Câu a) b) c) d)" rồi mỗi dòng "1 Đ S Đ Đ" (số câu + 4 ý a–d)
+  key = key.replace(/(?:^|\n)[ \t]*Câu[ \t]+a\)[ \t]+b\)[ \t]+c\)[ \t]+d\)[ \t]*\n((?:[ \t]*\d{1,3}(?:[ \t]+[ĐÐS]){4}[ \t]*(?:\n|$))+)/g, (all, rows) => {
+    const id = tabled.length;
+    tabled.push(rows.trim().split('\n').map(r => r.trim().split(/\s+/)).map(r => ({n: +r[0], tbl: 'tf', a: {tfg: {a: r[1] !== 'S', b: r[2] !== 'S', c: r[3] !== 'S', d: r[4] !== 'S'}}})));
+    return `\n§T${id}§\n`;
+  });
   key = key.replace(/Đáp[ \t]*\n[ \t]*án/g, 'Đáp án').replace(/(?:^|\n)[ \t]*(?:Câu|STT)((?:[ \t]+\d{1,3}){2,})[ \t]*\n[ \t]*(?:Đáp\s*án|ĐA)[ \t]*:?[ \t]*\n?[ \t]*([^\n]+)/g, (all, nums, vals) => {
     const ns = nums.trim().split(/\s+/), vs = vals.trim().split(/\s+/);
     if (ns.length !== vs.length) return all;
     const letters = vs.every(v => /^[A-D]$/.test(v)), id = tabled.length;
-    tabled.push(ns.map((n, k) => ({n: +n, a: letters ? {l: vs[k]} : {val: vs[k].replace(/%$/, '')}})));
+    tabled.push(ns.map((n, k) => ({n: +n, tbl: letters ? 'mcq' : 'short', a: letters ? {l: vs[k]} : {val: vs[k].replace(/%$/, '')}})));
     return `\n§T${id}§\n`;   // giữ nguyên vị trí của bảng trong chuỗi để sắp xếp đúng thứ tự phần
   });
   tabled.forEach((rows, id) => { const p = key.indexOf(`§T${id}§`); rows.forEach((r, k) => list.push({...r, pos: p + k / 100})); });
   const marks = [...key.matchAll(/(?:^|\n)[ \t]*(?:Câu|Bài|Question)\s*(\d{1,3})\s*[:.)]?/gi)];
   marks.forEach((mk, i) => {
     const seg = key.slice(mk.index + mk[0].length, i + 1 < marks.length ? marks[i + 1].index : undefined).split(/\n[ \t]*PH[ẦÀẪẲẢẤA]N\s+/)[0].trim();
-    const a = extractAns(seg); if (a) list.push({n: +mk[1], pos: mk.index, a});
+    const sm = solAfterMarker(seg);
+    let a = extractAns(seg);
+    // phần đáp án in lại cả đề: đoạn nào không nhận ra đáp án (đáp án lấy từ bảng cuối đề) vẫn phải có mục để giữ lời giải và để số phần (run) khớp với phần đề
+    if (!a && ((sm != null && sm.trim()) || RESTATED_RE.test(seg))) a = {sol: ''};
+    if (a) {
+      // Phần đáp án trình bày lại cả đề: lời giải chỉ là phần sau dòng “Lời giải”; câu trắc nghiệm chỉ in lại câu hỏi (đáp án khoanh tròn) thì không có lời giải
+      if (sm != null) { a.sol = cleanSol(sm.split(MATHMARK).join('')); if (sm.split(MATHMARK).length > 3) a.solBad = true; else delete a.solBad; }
+      else if (RESTATED_RE.test(seg)) { a.sol = ''; delete a.solBad; }
+      list.push({n: +mk[1], pos: mk.index, a});
+    }
   });
   if (!tabled.length) for (const m of key.matchAll(new RegExp('(?:^|[\\s,;|])(\\d{1,3})\\s*[.\\-–:)]?\\s*([A-D])(?![' + NOLET + '0-9])', 'g'))) {
     if (!list.some(e => e.n === +m[1] && Math.abs(e.pos - m.index) < 15)) list.push({n: +m[1], pos: m.index, a: {l: m[2]}});
@@ -526,7 +546,7 @@ function parseKey(key) {
 
 // Tìm dãy phương án theo thứ tự (A,B,C,D hoặc a,b,c,d) trong chuỗi đã gộp dòng
 function findSeq(flat, letters, closer) {
-  const rx = L => new RegExp('(?:^|\\s)' + L + '\\s*' + closer + '\\s*', 'g');
+  const rx = L => new RegExp('(?:^|\\s|(?<=[.;]))' + L + '\\s*' + closer + '\\s*', 'g');   // phương án có thể dính liền dấu chấm của phương án trước: “…(O).B. không có…”
   const r0 = rx(letters[0]); let m0, best = null;
   while ((m0 = r0.exec(flat))) {
     const pos = [{i: m0.index + (/^\s/.test(m0[0]) ? 1 : 0), e: m0.index + m0[0].length}];
@@ -555,17 +575,19 @@ function parseBlock(raw, sec, ke, infer) {
   const sm = /(?:Lời\s*giải|LỜI\s*GIẢI|Hướng\s*dẫn(?:\s*giải)?|Giải\s*thích)\s*[:.]?\s*([\s\S]*)/.exec(tail);
   const solRaw = sm ? sm[1] : ((info && info.sol) || (ke && ke.a && ke.a.sol) || '');
   const sol = esc(solRaw.replace(/\s+/g, ' ').trim().slice(0, SOL_MAX));
-  const mk = o => ({lv: 2, sol, ...o});
+  const mk = o => ({sol, ...o});   // chưa gắn mức độ (lv) — import tự phân mức, các nơi khác coi câu chưa gắn mức là “thông hiểu”
 
   // chữ C hay bị OCR đọc thành e / € / c nên chấp nhận khi đủ cả 4 phương án theo đúng thứ tự
-  const up = findSeq(flat, ['A', 'B', '(?:C|c|e|E|€)', 'D'], '[.)]');
+  // trong phần ĐÚNG–SAI mà đủ 4 ý a) b) c) d) thì đó là câu đúng/sai (chữ “A)”, “B)” trong ngoặc ở đề bài, ví dụ “(điểm A)”, không phải phương án)
+  const lowFirst = sec === 'tf' && !!findSeq(flat, ['a', 'b', '[ce]', 'd'], '[)]');
+  const up = lowFirst ? null : findSeq(flat, ['A', 'B', '(?:C|c|e|E|€)', 'D'], '[.)]');
   if (up) {
     const opts = up.map((p, k) => flat.slice(p.e, k < 3 ? up[k + 1].i : undefined).trim());
     return [mk({t: 'mcq', q: esc(flat.slice(0, up[0].i).trim()), opts, ans: info && info.l ? 'ABCD'.indexOf(info.l) : null})];
   }
   // công thức làm hỏng phương án D: thấy đủ A, B, C vẫn là trắc nghiệm (phương án D để trống cho giáo viên sửa)
   const up3 = findSeq(flat, ['A', 'B', '(?:C|c|e|E|€)'], '[.)]');
-  if (up3 && sec !== 'short' && sec !== 'essay') {
+  if (up3 && !lowFirst && sec !== 'short' && sec !== 'essay') {
     const o3 = up3.map((p, k) => flat.slice(p.e, k < 2 ? up3[k + 1].i : undefined).trim());
     return [mk({t: 'mcq', q: esc(flat.slice(0, up3[0].i).trim()), opts: [...o3, '…'], ans: info && info.l ? 'ABCD'.indexOf(info.l) : null, warn: true})];
   }
@@ -616,14 +638,17 @@ function parseQuestionBank(raw, src, hasLines) {
   let marks = [...body.matchAll(/(?:^|\n)[ \t]*(?:Câu|Bài|Question)\s*(\d{1,3})\s*[:.)]/gi)];
   if (!marks.length) marks = [...body.matchAll(/(?:^|\n)[ \t]*(\d{1,3})\s*[.)]\s+(?=\S)/g)];
 
-  const keyEntries = parseKey(key), byRun = new Map(), byNum = new Map();
+  // Bảng đáp án cuối đề (TN · Đ/S · TLN) là đáp án chuẩn: ưu tiên hơn đáp án suy ra từ phần lời giải. Mỗi loại chỉ dùng khi có đúng một bảng.
+  const allKey = parseKey(key), keyEntries = allKey.filter(e => !e.tbl), byRun = new Map(), byNum = new Map(), tbl = {mcq: new Map(), tf: new Map(), short: new Map()};
+  ['mcq', 'tf', 'short'].forEach(k => { const es = allKey.filter(e => e.tbl === k); if (es.length && new Set(es.map(e => e.run)).size === 1) es.forEach(e => tbl[k].set(e.n, e.a)); });
+  { let rr = 0, pp = 0; keyEntries.forEach((e, i) => { if (i && e.n <= pp) rr++; e.run = rr; pp = e.n; }); }   // đánh số lại phần (run) khi bỏ các bảng đáp án ra
   keyEntries.forEach(e => { byRun.set(e.run + ':' + e.n, e); if (!byNum.has(e.n)) byNum.set(e.n, e); });
   const kRuns = keyEntries.length ? keyEntries[keyEntries.length - 1].run + 1 : 0;
   let r0 = -1, p0 = Infinity; marks.forEach(m => { const n = +m[1]; if (n <= p0) r0++; p0 = n; });
   const useRun = kRuns === r0 + 1;
   // Khoảng dòng của lời giải chi tiết (để cắt ảnh lời giải, giữ nguyên công thức / hình vẽ)
   const endLine = (a, b) => b > a ? lineOf(b - 1) + 1 : lineOf(a) + 1;   // dòng kết thúc (không gồm) của đoạn [a,b)
-  const solRun = new Map(), solNum = new Map(); let sRuns = 0;
+  const solRun = new Map(), solNum = new Map(), solTxtRun = new Map(), solTxtNum = new Map(); let sRuns = 0;
   if (hasLines && key) {   // mục "Câu N." trong phần đáp án / hướng dẫn giải cuối đề (hoặc file đáp án riêng)
     const keyOff = text.length - key.length, km = [...key.matchAll(/(?:^|\n)[ \t]*(?:Câu|Bài|Question)\s*(\d{1,3})\s*[:.)]/gi)];
     let kr = -1, kp = Infinity;
@@ -632,7 +657,24 @@ function parseQuestionBank(raw, src, hasLines) {
       const st = m.index + (key[m.index] === '\n' ? 1 : 0);
       let en = i + 1 < km.length ? km[i + 1].index : key.length;
       const ph = key.slice(st, en).search(/\n[ \t]*PH[ẦÀẪẲẢẤA]N\s+/); if (ph >= 0) en = st + ph;
-      const rg = [lineOf(keyOff + st), endLine(keyOff + st, keyOff + en)];
+      // phần đáp án in lại cả câu hỏi: ảnh lời giải chỉ lấy từ dòng “Lời giải” trở xuống; câu chỉ in lại đề (không có “Lời giải”) thì không có ảnh lời giải
+      const bt = key.slice(st, en), lm = SOLMARK_RE.exec(bt);
+      let from = keyOff + st;
+      if (lm) {
+        from = keyOff + st + lm.index + 1;
+        const tx = bt.slice(lm.index + lm[0].length), o = {text: cleanSol(tx.split(MATHMARK).join('')), bad: tx.split(MATHMARK).length > 3};   // lời giải chữ (đọc được cả khi không nhận ra đáp án trong đoạn này)
+        solTxtRun.set(kr + ':' + n, o); if (!solTxtNum.has(n)) solTxtNum.set(n, o);
+      } else if (RESTATED_RE.test(bt)) return;
+      else {
+        // không thấy dòng “Lời giải” (nhãn đỏ bị mất khi đọc chữ) nhưng câu đúng/sai được in lại a) b) c) d) rồi lời giải cũng bắt đầu bằng a) b) c) d) → lời giải bắt đầu ở “a)” thứ hai
+        const as = [...bt.matchAll(/\n[ \t]*a\)/g)];
+        if (as.length >= 2) {
+          from = keyOff + st + as[1].index + 1;
+          const tx = bt.slice(as[1].index + 1), o = {text: cleanSol(tx.split(MATHMARK).join('')), bad: tx.split(MATHMARK).length > 3};
+          solTxtRun.set(kr + ':' + n, o); if (!solTxtNum.has(n)) solTxtNum.set(n, o);
+        }
+      }
+      const rg = [lineOf(from), endLine(from, keyOff + en)];
       solRun.set(kr + ':' + n, rg); if (!solNum.has(n)) solNum.set(n, rg);
     });
     sRuns = kr + 1;
@@ -667,6 +709,14 @@ function parseQuestionBank(raw, src, hasLines) {
     // không có tiêu đề chữ: "Bài N." → tự luận; "Câu N." không phương án đứng sau câu trắc nghiệm/đúng-sai → trả lời ngắn
     const infer = /^\s*Bài/i.test(mk[0]) ? 'essay' : (seenStruct ? 'short' : '');
     const parsed = parseBlock(blk, sec, ke, infer);
+    const stx = useSolRun ? solTxtRun.get(run + ':' + n) : solTxtNum.get(n);
+    if (stx && stx.text) parsed.forEach(q => { if (!q.sol) { q.sol = stx.text; if (stx.bad) q.solBad = true; } });
+    parsed.forEach(q => {
+      // chỉ áp bảng đáp án đúng loại với phần chứa câu (câu số 3 của phần Đ/S không được nhận đáp án câu 3 của phần trắc nghiệm)
+      if (q.t === 'mcq' && (!sec || sec === 'mcq') && tbl.mcq.has(n) && tbl.mcq.get(n).l) q.ans = 'ABCD'.indexOf(tbl.mcq.get(n).l);
+      else if (isTfg(q) && (!sec || sec === 'tf') && tbl.tf.has(n)) { const g = tbl.tf.get(n).tfg; q.ans = ['a', 'b', 'c', 'd'].map(c => g[c] ? 0 : 1); }
+      else if (q.t === 'short' && (!sec || sec === 'short') && tbl.short.has(n) && tbl.short.get(n).val != null) q.ans = tbl.short.get(n).val;
+    });
     if (parsed.some(q => q.t === 'mcq' || isTfg(q))) seenStruct = true;
     // nhóm đúng/sai a) b) c) d): tìm dòng bắt đầu từng ý để mỗi ý có ảnh riêng (kèm phần dẫn)
     let aLines = null;
@@ -855,20 +905,31 @@ async function extractPdfText(file, onProgress, ocr, pdfOverride) {
   const keyOf = (l, H) => { const t = l.text.replace(/\d+/g, '#').replace(/\s+/g, ' ').trim().toLowerCase(), up = l.top > H / 2; return t + '|' + (up ? 'T' : 'B') + (PAGENUM_RE.test(l.text.trim()) ? Math.round((up ? H - l.top : l.bot) / 6) : ''); };
   // Dòng chữ đầu/chân trang: đủ dài (≥ 10 chữ cái), không phải nhãn "Câu N." hay dòng phương án A./B. — tránh loại nhầm nội dung đề ở cuối trang
   const hfText = l => { const t = l.text.trim(); return t.length >= 4 && !PAGENUM_RE.test(t) && !LAB_RE.test(t) && !/^[A-Da-d][.)]/.test(t) && (t.match(/\p{L}/gu) || []).length >= 10; };
-  const rep = new Map();
-  pdata.forEach(({pl, H}) => new Set(pl.filter(l => zone(l, H) && (hfText(l) || PAGENUM_RE.test(l.text.trim()))).map(l => keyOf(l, H))).forEach(k => rep.set(k, (rep.get(k) || 0) + 1)));
+  // Lớp chữ ẩn: một số PDF chèn dưới MỌI trang cùng một khối chữ (vd. trang đề của file khác, không nhìn thấy nhưng vẫn nằm trong văn bản) → câu bị trùng,
+  // lẫn đáp án. Khối chữ lặp y hệt cùng vị trí trên ≥ 3 trang (và ≥ 25% số trang) với ≥ 8 dòng mỗi trang thì bỏ cả khối.
+  const okey = l => l.text.replace(/\s+/g, ' ').trim() + '|' + Math.round(l.top / 3) + '|' + Math.round(l.l / 4);
+  const orep = new Map(), overlay = new Set(), minOv = Math.max(3, Math.ceil(pdata.length * 0.25));
+  if (pdata.length >= 3) {
+    pdata.forEach(({pl}) => new Set(pl.filter(l => l.text.trim().length >= 1).map(okey)).forEach(k => orep.set(k, (orep.get(k) || 0) + 1)));
+    pdata.forEach(({pl}) => { const hit = pl.filter(l => l.text.trim().length >= 1 && orep.get(okey(l)) >= minOv); if (hit.length >= 8) hit.forEach(l => overlay.add(l)); });
+  }
+  const rep = new Map();   // không đếm dòng của lớp chữ ẩn: chữ số lẻ / dòng nội dung lặp ở sát mép trang không phải số trang hay đầu/chân trang
+  pdata.forEach(({pl, H}) => new Set(pl.filter(l => !overlay.has(l) && zone(l, H) && (hfText(l) || PAGENUM_RE.test(l.text.trim()))).map(l => keyOf(l, H))).forEach(k => rep.set(k, (rep.get(k) || 0) + 1)));
   const many = pdata.length >= 4, minTxt = Math.max(3, Math.ceil(pdata.length * 0.04)), minNum = Math.max(3, Math.ceil(pdata.length * 0.1));
   pdata.forEach(({p, pl, H, W}) => {
     pl.forEach(l => {
       const t = l.text.trim(), n = zone(l, H) ? (rep.get(keyOf(l, H)) || 0) : 0;
-      l.skip = PAGENUM_RE.test(t) ? (many ? n >= (/^(?:Trang|Page)/i.test(t) ? minTxt : minNum) : (l.top > H * 0.94 || l.bot < H * 0.06))
+      l.skip = overlay.has(l) ? true : PAGENUM_RE.test(t) ? (many ? n >= (/^(?:Trang|Page)/i.test(t) ? minTxt : minNum) && (/^(?:Trang|Page)/i.test(t) || l.top > H * 0.92 || l.bot < H * 0.08) : (l.top > H * 0.94 || l.bot < H * 0.06))   // số trang trần phải nằm sát mép (8%): chữ số lẻ (mẫu số phân số) ở cao hơn không phải số trang
         : many ? (hfText(l) && n >= minTxt)   // nhiều trang: chỉ coi là đầu/chân trang khi lặp lại (nội dung đề có thể bắt đầu sát mép trang)
         : t.length <= 40 && (l.top > H * 0.96 || l.bot < H * 0.04) && !LAB_RE.test(t) && !/^[A-Da-d][.)]/.test(t);   // file ngắn không so được các trang với nhau: chỉ bỏ dòng ngắn sát mép, nhưng KHÔNG bao giờ bỏ nhãn “Câu N.” hay dòng phương án
     });
-    const real = pl.filter(l => !l.skip), hdr = pl.filter(l => l.skip && l.top > H / 2), ftr = pl.filter(l => l.skip && l.bot <= H / 2);
+    // đầu/chân trang thật = dòng bị bỏ có chữ (≥ 3 ký tự) nằm sát mép trang; các dòng của lớp chữ ẩn ở giữa trang hoặc ký tự lẻ không được tính (kẻo đẩy lề cắt vào giữa trang)
+    // dòng của lớp chữ ẩn chỉ tính là đầu/chân trang khi là dòng chữ dài nằm sát mép (5% trên/dưới trang): nội dung ẩn lặp ở các vị trí khác không được làm lề cắt nhích vào nội dung thật
+    const hf = l => l.skip && (!overlay.has(l) || ((l.top > H * 0.95 || l.bot < H * 0.05) && hfText(l)));
+    const real = pl.filter(l => !l.skip), hdr = pl.filter(l => hf(l) && l.top > H / 2), ftr = pl.filter(l => hf(l) && l.bot <= H / 2);
     pages[p] = {h: H, l: real.length ? Math.min(...real.map(l => l.l)) : 0, r: real.length ? Math.max(...real.map(l => l.r)) : W,
       ct: hdr.length ? Math.min(...hdr.map(l => l.bot)) : H * 0.97, cb: ftr.length ? Math.max(...ftr.map(l => l.top)) : H * 0.03};
-    pl.forEach(l => lines.push({p: l.p, top: l.top, bot: l.bot, l: l.l, r: l.r, lab: l.lab, skip: l.skip, text: l.skip ? '' : l.text}));
+    pl.forEach(l => lines.push({p: l.p, top: l.top, bot: l.bot, l: l.l, r: l.r, lab: l.lab, skip: l.skip, ov: overlay.has(l), raw: l.skip ? l.text : undefined, text: l.skip ? '' : l.text}));
     lines.push(null);   // ngắt trang
   });
   return {text: lines.map(l => l ? l.text : '').join('\n'), lines, pages, pdf, ocrPages};
@@ -1086,12 +1147,40 @@ async function smartRead(f, log, seg) {
 }
 // Đoán chuyên đề từ nội dung câu (hiện có bộ từ khóa cho Toán 9; các môn/khối khác để trống để giáo viên gắn sau)
 const TOPIC_KW = {'Toán|9': [
-  ['Phương trình bậc hai & Định lý Viète', /viète|viet\b|tổng hai nghiệm|tích hai nghiệm|hai nghiệm phân biệt|\bx²|\bx2\b|bậc hai.*ẩn/i],
-  ['Hệ hai phương trình bậc nhất hai ẩn', /hệ phương trình|hệ pt|giải hệ/i],
-  ['Căn bậc hai & căn bậc ba', /căn|√|điều kiện xác định|rút gọn biểu thức/i],
-  ['Đường tròn & góc với đường tròn', /đường tròn|nội tiếp|ngoại tiếp|tiếp tuyến|dây cung|\bcung\b|lục giác đều/i],
-  ['Hệ thức lượng trong tam giác vuông', /vuông tại|\bsin\b|\bcos\b|\btan\b|\bcot\b|hệ thức lượng/i]]};
-const guessTopic = (s, g, q) => { const t = (q.q || '') + ' ' + (q.sts || []).join(' ') + ' ' + (q.opts || []).join(' '); const hit = (TOPIC_KW[s + '|' + g] || []).find(([, rx]) => rx.test(t)); return hit ? hit[0] : ''; };
+  ['Phương trình bậc hai & Định lý Viète', /viète|viet\b|tổng hai nghiệm|tích hai nghiệm|hai nghiệm phân biệt|phương trình bậc hai|\bx²|\bx2\b|biệt thức|\bnghiệm\b/i],
+  ['Hệ hai phương trình bậc nhất hai ẩn', /hệ phương trình|hệ pt|giải hệ|phương trình bậc nhất hai ẩn|cặp số/i],
+  ['Căn bậc hai & căn bậc ba', /\bcăn\b|căn bậc|điều kiện xác định|rút gọn biểu thức|trục căn|biểu thức chứa căn/i],
+  ['Đường tròn & góc với đường tròn', /đường tròn|nội tiếp|ngoại tiếp|tiếp tuyến|dây cung|\bcung\b(?!\s+cấp)|lục giác đều|góc ở tâm|tiếp xúc|bán kính|\btâm\b/i],
+  ['Hệ thức lượng trong tam giác vuông', /vuông tại|\bsin\b|\bcos\b|\btan\b|\bcot\b|hệ thức lượng|tỉ số lượng giác|góc nhọn|đường cao/i]]};
+// Đoán theo từ khóa có tính điểm: chuyên đề nào khớp nhiều từ khóa nhất (hòa thì lấy chuyên đề đứng trước). Ký hiệu √ lẻ không đủ để kết luận “Căn bậc hai”.
+const guessTopic = (s, g, q) => {
+  const t = (q.q || '') + ' ' + (q.sts || []).join(' ') + ' ' + (q.opts || []).join(' '); let best = '', bs = 0;
+  (TOPIC_KW[s + '|' + g] || []).forEach(([name, rx]) => { const n = (t.match(new RegExp(rx.source, 'gi')) || []).length; if (n > bs) { bs = n; best = name; } });
+  return bs >= 2 ? best : '';   // chỉ 1 từ khóa khớp thì chưa đủ chắc → để trống cho giáo viên gắn
+};
+// Đoán chuyên đề bằng cách so với các câu ĐÃ có chuyên đề trong ngân hàng (cùng môn, khối): lấy chuyên đề của các câu giống nhất về từ ngữ (TF-IDF + cosine).
+// Ngân hàng chưa đủ câu có chuyên đề thì trả về '' để dùng bộ từ khóa.
+const topicTokens = q => ([q.q, ...(q.opts || []), ...(q.sts || [])].join(' ')).replace(/<[^>]*>/g, ' ').toLowerCase().match(/[a-zà-ỹ]{2,}|[√π∑∫]/g) || [];
+function buildTopicIndex(labels, skipBatch) {
+  const pool = (S.bank || []).filter(x => x.topic && x.batch !== skipBatch && (!x.subject || x.subject === labels.subject) && (!x.grade || x.grade === labels.grade));
+  if (pool.length < 15 || new Set(pool.map(x => x.topic)).size < 2) return () => '';
+  const df = new Map(), toks = pool.map(topicTokens);
+  toks.forEach(t => new Set(t).forEach(w => df.set(w, (df.get(w) || 0) + 1)));
+  const N = pool.length, idf = w => Math.log((N + 1) / ((df.get(w) || 0) + 1)) + 0.1;
+  const vec = t => { const tf = new Map(); t.forEach(w => tf.set(w, (tf.get(w) || 0) + 1)); const v = new Map(); tf.forEach((c, w) => { if (df.has(w)) v.set(w, (1 + Math.log(c)) * idf(w)); }); return v; };
+  const norm = v => Math.sqrt([...v.values()].reduce((a, x) => a + x * x, 0)) || 1;
+  const inv = new Map(), dn = [];
+  toks.forEach((t, i) => { const v = vec(t); dn[i] = norm(v); v.forEach((wt, w) => (inv.get(w) || inv.set(w, []).get(w)).push([i, wt])); });
+  return q => {
+    const v = vec(topicTokens(q)), qn = norm(v), sc = new Map();
+    v.forEach((wq, w) => (inv.get(w) || []).forEach(([i, wd]) => sc.set(i, (sc.get(i) || 0) + wq * wd)));
+    const top = [...sc].map(([i, d]) => [i, d / (qn * dn[i])]).sort((a, b) => b[1] - a[1]).slice(0, 7);
+    if (!top.length || top[0][1] < 0.22) return '';
+    const vote = new Map(); top.forEach(([i, c]) => vote.set(pool[i].topic, (vote.get(pool[i].topic) || 0) + c * c));
+    const tot = [...vote.values()].reduce((a, b) => a + b, 0), [bt, bv] = [...vote].sort((a, b) => b[1] - a[1])[0];
+    return bv / tot >= 0.45 ? bt : '';
+  };
+}
 const KEY_NAME = /đ[aá]p\s*[aá]n|dap[\s_.-]*an|l[oờ]i\s*gi[aả]i|loi[\s_.-]*giai|huong[\s_.-]*dan|hdc|\bkey\b/i;
 
 async function importSmart(files, labels, withImg, onChange, examOpt) {
@@ -1119,7 +1208,8 @@ async function importSmart(files, labels, withImg, onChange, examOpt) {
       PARSE_DEFAULT = labels.subject === 'Ngữ văn' ? 'essay' : 'short';
       const res = parseQuestionBank(text, f.name, !!((ext || kExt) && withImg));
       if (!res.questions.length) { log('✗ Không nhận diện được câu hỏi nào (cần dạng "Câu 1. ... A. ... B. ..." hoặc có nhãn Câu/Bài).', 'err'); continue; }
-      res.questions.forEach(q => { Object.assign(q, labels); q.batch = batchId; q.at = batchAt; if (!q.topic) q.topic = guessTopic(labels.subject, labels.grade, q); });
+      const topicOf = buildTopicIndex(labels, batchId);
+      res.questions.forEach(q => { Object.assign(q, labels); q.batch = batchId; q.at = batchAt; if (!q.topic) q.topic = topicOf(q) || guessTopic(labels.subject, labels.grade, q); });
       const eo = examOpt && examOpt.byName.get(f.name);
       if (eo) {   // đề thi: mỗi file là một đề — lưu kèm nhóm đề, tên đề, số đề, phần (I TN · II Đ/S · III TLN) và số câu trong phần
         const cnt = {};

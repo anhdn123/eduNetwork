@@ -174,6 +174,23 @@ process.on('exit', cleanup);
     const kb = (await api('get', '/api/bank')).questions, ans = id => kb.find(q => q.id === id).ans;
     check('đáp án theo đề được gán đúng và lưu vào DB (TN, Đ/S, TLN, nhiều đề)', ans('exq1') === 0 && ans('exq2') === 2 && JSON.stringify(ans('exq3')) === '[0,0,1,1]' && ans('exq4') === '0,5' && ans('exq5') === 1 && ans('exq6') === 3, JSON.stringify([ans('exq1'), ans('exq2'), ans('exq3'), ans('exq4'), ans('exq5'), ans('exq6')]));
     await api('post', '/api/bank/sync', {delete: exq.map(q => q.id)});
+
+    // 3-key. đề có phần “ĐÁP ÁN VÀ LỜI GIẢI” in lại cả đề + bảng đáp án cuối (TN · Đ/S · TLN): bảng cuối là đáp án chuẩn
+    const keyDoc = ['PHẦN I. CÂU TRẮC NGHIỆM NHIỀU PHƯƠNG ÁN LỰA CHỌN', 'Câu 1. Hai cộng hai bằng?', 'A. 3 B. 4 C. 5 D. 6', 'Câu 2. Ba nhân ba bằng?', 'A. 6 B. 9 C. 12 D. 3',
+      'PHẦN II. CÂU TRẮC NGHIỆM ĐÚNG – SAI', 'Câu 1. Xét các mệnh đề sau:', 'a) Một cộng một bằng hai.', 'b) Hai cộng hai bằng năm.', 'c) Ba nhân hai bằng sáu.', 'd) Bốn chia hai bằng ba.',
+      'Câu 2. Xét tiếp:', 'a) Một nhân một bằng một.', 'b) Hai trừ một bằng một.', 'c) Ba trừ ba bằng ba.', 'd) Bốn trừ bốn bằng không.',
+      'PHẦN III. CÂU TRẮC NGHIỆM TRẢ LỜI NGẮN', 'Câu 1. Tính 10 chia 4.', 'Câu 2. Tính 7 chia 2.',
+      'ĐÁP ÁN VÀ LỜI GIẢI CHI TIẾT', 'Câu 1. Hai cộng hai bằng?', 'A. 3 B 4 C. 5 D. 6', 'Câu 2. Ba nhân ba bằng?', 'A. 6 B 9 C. 12 D. 3',
+      'Câu 1. Xét các mệnh đề sau:', 'a) Một cộng một bằng hai.', 'b) Hai cộng hai bằng năm.', 'c) Ba nhân hai bằng sáu.', 'd) Bốn chia hai bằng ba.', 'Lời giải', 'a) 1 + 1 = 2. ⇒ Đúng', 'b) 2 + 2 = 4. ⇒ Sai', 'c) 3 · 2 = 6. ⇒ Đúng', 'd) 4 : 2 = 2. ⇒ Sai',
+      'Câu 2. Xét tiếp:', 'a) Một nhân một bằng một.', 'b) Hai trừ một bằng một.', 'c) Ba trừ ba bằng ba.', 'd) Bốn trừ bốn bằng không.', 'Lời giải', 'a) 1 · 1 = 1. ⇒ Đúng', 'b) 2 − 1 = 1. ⇒ Đúng', 'c) 3 − 3 = 0. ⇒ Sai', 'd) 4 − 4 = 0. ⇒ Đúng',
+      'Câu 1. Tính 10 chia 4.', 'Lời giải', '10 : 4 = 2,5. ⇒ Đáp số: 2,5', 'Câu 2. Tính 7 chia 2.', 'Lời giải', '7 : 2 = 3,5. ⇒ Đáp số: 3,5',
+      'HỌC SINH ĐIỀN NHANH ĐÁP ÁN VÀO BẢNG SAU', 'PHẦN I. Mỗi câu trả lời đúng được 0,25 điểm.', 'Câu 1 2', 'Đáp án B B', 'PHẦN II.', 'Câu a) b) c) d)', '1 Đ S Đ S', '2 Đ Đ S Đ', 'PHẦN III.', 'Câu 1 2', 'Đáp án 2,5 3,5'].join('\n');
+    const kp = await ev(`(async () => { const src = await (await fetch('/app.js')).text(), sc = document.createElement('script');   // app.js nằm trong IIFE: nạp thêm bản có xuất hàm đọc đề để gọi trực tiếp
+      sc.textContent = src.replace(/\\}\\)\\(\\);\\s*$/, 'window.__pq = parseQuestionBank;})();'); document.head.append(sc);
+      return window.__pq(${JSON.stringify(keyDoc)}, 'k.pdf', false).questions.map(q => ({t: q.t, ans: q.ans, sol: (q.sol || '').slice(0, 14)})); })()`);
+    await nav('teacher-builder.html');   // tải lại trang để bỏ bản app.js nạp thêm
+    check('đề lặp lại ở phần lời giải: đúng 2 TN + 2 Đ/S + 2 TLN, đáp án lấy từ bảng cuối', kp.length === 6 && kp[0].ans === 1 && kp[1].ans === 1 && JSON.stringify(kp[2].ans) === '[0,1,0,1]' && JSON.stringify(kp[3].ans) === '[0,0,1,0]' && kp[4].ans === '2,5' && kp[5].ans === '3,5', JSON.stringify(kp.map(q => q.ans)));
+    check('lời giải chỉ là phần sau “Lời giải” (câu TN in lại đề thì không có lời giải)', !kp[0].sol && kp[2].sol.startsWith('a) 1 + 1') && kp[4].sol.startsWith('10 : 4'), JSON.stringify(kp.map(q => q.sol)));
     // 3a. giáo viên mở chuyên đề "Hệ phương trình" cho lớp luyện tập tự do
     const cid = (await api('get', '/api/classes')).classes[0].id;
     const op = await api('post', `/api/classes/${cid}/practice`, {open: [{subject: 'Toán', grade: '9', topic: 'Hệ phương trình'}]});
