@@ -212,6 +212,23 @@ process.on('exit', cleanup);
     check('đã xác nhận: không còn cờ AI, đáp án vẫn giữ', !aq('ai1').aiAns && aq('ai1').ans === 1 && aq('ai3').ans === '3,5');
     await api('post', '/api/bank/sync', {delete: ['ai1', 'ai2', 'ai3']});
 
+    // 3-qk. nhập nhanh đáp án theo SỐ CÂU in trong đề (vd. đề có Câu 61–92 thì gõ 61…, không phải 1…)
+    const qkb = {subject: 'Toán', grade: '9', topic: 'Nhập nhanh', src: 'qk.pdf', lv: 2, sol: ''};
+    await api('post', '/api/bank/sync', {upsert: [{...qkb, id: 'qk1', t: 'tf', q: 'tf 61', sts: ['a', 'b', 'c', 'd'], num: 61}, {...qkb, id: 'qk2', t: 'tf', q: 'tf 62', sts: ['a', 'b', 'c', 'd'], num: 62}, {...qkb, id: 'qk3', t: 'tf', q: 'tf 70', sts: ['a', 'b', 'c', 'd'], num: 70},
+      {...qkb, id: 'qk4', t: 'short', q: 'tln 1', num: 1}, {...qkb, id: 'qk5', t: 'short', q: 'tln 2', num: 2}]});
+    await nav('teacher-builder.html');
+    await waitFor("document.querySelector('[data-act=bank-manage]')", 8);
+    await click('[data-act=bank-manage]');
+    await waitFor("document.querySelector('[data-bk=quick-tf]')", 8, 'quản lý ngân hàng (nhập nhanh)');
+    await ev("(() => { const s = document.getElementById('bk-tp'); s.value = 'Nhập nhanh'; s.dispatchEvent(new Event('change', {bubbles: true})); })()"); await sleep(300);
+    await ev("window.prompt = () => '61SSSĐ;62ĐĐSĐ;70?S??;99ĐĐĐĐ'"); await click('[data-bk=quick-tf]'); await sleep(400);
+    await ev("window.prompt = () => '1.127;2.?'"); await click('[data-bk=quick-short]'); await sleep(400);
+    await click('[data-bk=save]'); await sleep(1500);
+    const qkq = (await api('get', '/api/bank')).questions, qa = id => qkq.find(q => q.id === id).ans;
+    check('nhập nhanh theo số câu in trong đề: 61SSSĐ, 62ĐĐSĐ gán đúng; câu 70 chỉ ý b biết (? giữ trống); số 99 không tồn tại bị bỏ qua', JSON.stringify(qa('qk1')) === '[1,1,1,0]' && JSON.stringify(qa('qk2')) === '[0,0,1,0]' && JSON.stringify(qa('qk3')) === '[null,1,null,null]', JSON.stringify([qa('qk1'), qa('qk2'), qa('qk3')]));
+    check('nhập nhanh trả lời ngắn theo số câu: 1.127 gán, 2.? bỏ qua', qa('qk4') === '127' && (qa('qk5') == null || qa('qk5') === ''), JSON.stringify([qa('qk4'), qa('qk5')]));
+    await api('post', '/api/bank/sync', {delete: ['qk1', 'qk2', 'qk3', 'qk4', 'qk5']});
+
     // 3-key. đề có phần “ĐÁP ÁN VÀ LỜI GIẢI” in lại cả đề + bảng đáp án cuối (TN · Đ/S · TLN): bảng cuối là đáp án chuẩn
     const keyDoc = ['PHẦN I. CÂU TRẮC NGHIỆM NHIỀU PHƯƠNG ÁN LỰA CHỌN', 'Câu 1. Hai cộng hai bằng?', 'A. 3 B. 4 C. 5 D. 6', 'Câu 2. Ba nhân ba bằng?', 'A. 6 B. 9 C. 12 D. 3',
       'PHẦN II. CÂU TRẮC NGHIỆM ĐÚNG – SAI', 'Câu 1. Xét các mệnh đề sau:', 'a) Một cộng một bằng hai.', 'b) Hai cộng hai bằng năm.', 'c) Ba nhân hai bằng sáu.', 'd) Bốn chia hai bằng ba.',
@@ -230,10 +247,15 @@ process.on('exit', cleanup);
       'PHẦN II. Câu trắc nghiệm đúng sai.', 'Câu 1: Xét các mệnh đề:', 'a) 1 + 1 = 2.', 'b) 2 + 2 = 5.', 'c) 3 · 2 = 6.', 'd) 4 : 2 = 3.', 'Lời giải', 'a) Đúng b) Sai c) Đúng d) Sai', 'a) Đúng. 1 + 1 = 2.', 'b) Sai. 2 + 2 = 4.', 'c) Đúng. 3 · 2 = 6.', 'd) Sai. 4 : 2 = 2.',
       'PHẦN III. Thí sinh trả lời từ câu 1 đến câu 2.', 'Câu 1: Tính 10 chia 4.', 'Lời giải', 'Trả lời: 2,5', '10 : 4 = 2,5.', 'Câu 2: Tính 7 chia 2.', 'Lời giải', 'Trả lời: 3,5', '7 : 2 = 3,5.'].join('\n');
     const kpAll = await ev(`(async () => { const src = await (await fetch('/app.js')).text(), sc = document.createElement('script');   // app.js nằm trong IIFE: nạp thêm bản có xuất hàm đọc đề để gọi trực tiếp
-      sc.textContent = src.replace(/\\}\\)\\(\\);\\s*$/, 'window.__pq = parseQuestionBank;})();'); document.head.append(sc);
-      const one = d => window.__pq(d, 'k.pdf', false).questions.map(q => ({t: q.t, ans: q.ans, sol: (q.sol || '').slice(0, 14)}));
-      return {a: one(${JSON.stringify(keyDoc)}), b: one(${JSON.stringify(keyDoc2)})}; })()`);
+      sc.textContent = src.replace(/\\}\\)\\(\\);\\s*$/, 'window.__pq = parseQuestionBank; window.__pk = parseQuickKey;})();'); document.head.append(sc);
+      const one = d => window.__pq(d, 'k.pdf', false).questions.map(q => ({t: q.t, ans: q.ans, num: q.num, sol: (q.sol || '').slice(0, 14)}));
+      const qk = (k, t) => [...window.__pk(k, t).map];
+      return {a: one(${JSON.stringify(keyDoc)}), b: one(${JSON.stringify(keyDoc2)}), tf: qk('tf', '61SSSĐ;68?SĐĐ;86Đ???;70????'), sh: qk('short', '1.127;20.?;3.106,2')}; })()`);
     const kp = kpAll.a, kp2 = kpAll.b;
+    check('mỗi câu lưu số câu in trong đề (Câu N) để nhập nhanh đáp án theo đúng số câu', kp[0].num === 1 && kp[1].num === 2 && kp[2].num === 1 && kp[4].num === 1 && kp[5].num === 2, JSON.stringify(kp.map(q => q.num)));
+    const tfm = new Map(kpAll.tf), shm = new Map(kpAll.sh);
+    check('nhập nhanh: dấu ? = chưa biết (68?SĐĐ → [null,1,0,0]; 86Đ??? → [0,null,null,null]); toàn dấu ? thì bỏ qua cả câu', JSON.stringify(tfm.get(61)) === '[1,1,1,0]' && JSON.stringify(tfm.get(68)) === '[null,1,0,0]' && JSON.stringify(tfm.get(86)) === '[0,null,null,null]' && !tfm.has(70), JSON.stringify([...tfm]));
+    check('nhập nhanh trả lời ngắn: “20.?” bị bỏ qua, số thập phân dấu phẩy giữ nguyên', shm.get(1) === '127' && shm.get(3) === '106,2' && !shm.has(20), JSON.stringify([...shm]));
     await nav('teacher-builder.html');   // tải lại trang để bỏ bản app.js nạp thêm
     check('đề lặp lại ở phần lời giải: đúng 2 TN + 2 Đ/S + 2 TLN, đáp án lấy từ bảng cuối', kp.length === 6 && kp[0].ans === 1 && kp[1].ans === 1 && JSON.stringify(kp[2].ans) === '[0,1,0,1]' && JSON.stringify(kp[3].ans) === '[0,0,1,0]' && kp[4].ans === '2,5' && kp[5].ans === '3,5', JSON.stringify(kp.map(q => q.ans)));
     check('lời giải chỉ là phần sau “Lời giải” (câu TN in lại đề thì không có lời giải)', !kp[0].sol && kp[2].sol.startsWith('a) 1 + 1') && kp[4].sol.startsWith('10 : 4'), JSON.stringify(kp.map(q => q.sol)));

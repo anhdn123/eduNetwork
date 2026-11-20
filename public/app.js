@@ -741,6 +741,7 @@ function parseQuestionBank(raw, src, hasLines) {
       if (ss && String(q.sol || '').replace(/<[^>]*>|&nbsp;|\s/g, '').length) q._ss = ss;   // chỉ cắt khi đoạn đó thực sự có lời giải
       if (q.sol && (solMathy || (ke && ke.a && ke.a.solBad) || solGarbled(q))) q.solBad = true;
       delete q.grp;
+      q.num = n;   // số câu in trong đề (“Câu 61.”): để nhập nhanh đáp án theo đúng số câu thay vì thứ tự trong danh sách
       const k = bankKey(q); if (seen.has(k)) return; seen.add(k);
       out.push({id: 'b' + Date.now().toString(36) + (BID++), src, ...q});
     });
@@ -1645,6 +1646,7 @@ function parseQuickKey(kind, raw) {
     raw.split(/[;\n]+/).map(s => s.trim()).filter(Boolean).forEach(it => {
       const m = /^(\d+)\s*[.:)=]\s*(.+)$/.exec(it);
       if (!m) return bad.push(it);
+      if (/^[?？\s]*$/.test(m[2])) return;   // “20.?” = chưa biết đáp án câu này → bỏ qua, không ghi
       map.set(+m[1], m[2].trim());
     });
     return {map, bad};
@@ -1659,13 +1661,14 @@ function parseQuickKey(kind, raw) {
     return {map, bad};
   }
   let items = txt.split(/[;\n]+/).map(s => s.trim()).filter(Boolean);
-  if (items.length === 1) items = [...txt.replace(/\s+/g, '').matchAll(/\d+[.:)\-]?[ĐS]{4}/g)].map(m => m[0]);
+  if (items.length === 1) items = [...txt.replace(/\s+/g, '').matchAll(/\d+[.:)\-]?[ĐS?]{4}/g)].map(m => m[0]);
   items.forEach(it => {
     const m = /^(\d+)\s*[.:)\-]?\s*(.*)$/.exec(it);
     if (!m) return bad.push(it);
-    const cs = m[2].replace(/(^|[^A-ZÀ-Ỵ])[A-D]\s*[)\-:.]/g, '$1').match(/[ĐS]/g) || [];
+    const cs = m[2].replace(/(^|[^A-ZÀ-Ỵ])[A-D]\s*[)\-:.]/g, '$1').match(/[ĐS?]/g) || [];   // ? = chưa biết ý đó (giữ nguyên đáp án cũ nếu có)
     if (cs.length !== 4) return bad.push(it);
-    map.set(+m[1], cs.map(c => c === 'Đ' ? 0 : 1));
+    if (cs.every(c => c === '?')) return;
+    map.set(+m[1], cs.map(c => c === 'Đ' ? 0 : c === 'S' ? 1 : null));
   });
   return {map, bad};
 }
@@ -1912,16 +1915,33 @@ function openBankManager(onChange, opts) {
       const pool = list().filter(q => kind === 'tf' ? isTfg(q) : kind === 'mcq' ? q.t === 'mcq' : q.t === 'short');
       if (!pool.length) return toast(`Không có câu ${NAME} nào trong bộ lọc hiện tại`);
       const eg = {tf: '1ĐĐSS;2SĐĐS;3SSSS', mcq: '1A;2B;3C;4D', short: '1.0,4;2.123;3.-5'}[kind];
-      const txt = prompt(`Nhập nhanh đáp án cho ${pool.length} câu ${NAME} đang lọc.\nSố thứ tự 1–${pool.length} tính theo danh sách đang lọc (hãy lọc theo file / chuyên đề / dạng câu trước).\nĐịnh dạng, các câu cách nhau bằng dấu ; :\n${eg}`);
+      // số câu in trong đề (Câu N) của từng câu; trùng số (nhiều file cùng lọc) thì không dùng để ánh xạ
+      const numOf = new Map(), dup = new Set();
+      pool.forEach(q => { if (q.num != null) { if (numOf.has(q.num)) dup.add(q.num); else numOf.set(q.num, q); } });
+      dup.forEach(n => numOf.delete(n));
+      const rng = numOf.size ? `${Math.min(...numOf.keys())}–${Math.max(...numOf.keys())}` : `1–${pool.length}`;
+      const txt = prompt(`Nhập nhanh đáp án cho ${pool.length} câu ${NAME} đang lọc.\n${numOf.size ? `Số thứ tự là SỐ CÂU in trong đề (Câu ${rng}).` : `Số thứ tự 1–${pool.length} tính theo danh sách đang lọc (hãy lọc theo file / chuyên đề / dạng câu trước).`}\nĐịnh dạng, các câu cách nhau bằng dấu ; (dấu ? = chưa biết):\n${eg}`);
       if (!txt) return;
       const {map, bad} = parseQuickKey(kind, txt);
-      const todo = [...map].filter(([n]) => { if (n >= 1 && n <= pool.length) return true; bad.push(`câu ${n} (ngoài 1–${pool.length})`); return false; });
-      if (!todo.length) return toast('Không đọc được đáp án nào. Ví dụ đúng: ' + eg);
-      const over = todo.filter(([n]) => hasAns(pool[n - 1])).length;
+      const byPrinted = numOf.size > 0 && [...map.keys()].filter(n => numOf.has(n)).length >= Math.max(1, map.size * 0.5);
+      const find = n => byPrinted ? numOf.get(n) : (n >= 1 && n <= pool.length ? pool[n - 1] : null);
+      const todo = [];
+      map.forEach((v, n) => {
+        const q = find(n);
+        if (q) todo.push([q, v]);
+        else bad.push(byPrinted ? `câu ${n} (không có trong các câu ${NAME} đang lọc — có thể đề nhận sai dạng câu này, hãy kiểm tra)` : `câu ${n} (ngoài 1–${pool.length}${numOf.size ? '' : '; các câu này được import trước khi hệ thống lưu số câu in trong đề — hãy nhập theo thứ tự trong danh sách hoặc import lại'})`);
+      });
+      if (!todo.length) return toast('Không đọc được đáp án nào. Ví dụ đúng: ' + eg + (bad.length ? ' · ' + bad.slice(0, 2).join(' | ') : ''));
+      const over = todo.filter(([q]) => hasAns(q)).length;
       if (over && !confirm(`${over} câu đã có đáp án sẽ bị ghi đè. Tiếp tục?`)) return;
-      todo.forEach(([n, v]) => { const q = pool[n - 1]; q.ans = kind === 'mcq' ? 'ABCD'.indexOf(v) : v; pinned.add(q.id); });
+      todo.forEach(([q, v]) => {
+        if (kind === 'mcq') q.ans = 'ABCD'.indexOf(v);
+        else if (Array.isArray(v)) q.ans = v.map((x, i) => x == null ? (Array.isArray(q.ans) && q.ans[i] != null ? q.ans[i] : null) : x);   // ý ghi ? giữ đáp án cũ
+        else q.ans = v;
+        delete q.aiAns; pinned.add(q.id);
+      });
       save(); onChange && onChange();
-      toast(`Đã gán đáp án cho ${todo.length}/${pool.length} câu ${NAME}` + (bad.length ? `; bỏ qua ${bad.length} mục lỗi: ${bad.slice(0, 3).join(' | ')}` : ''));
+      toast(`Đã gán đáp án cho ${todo.length}/${pool.length} câu ${NAME} (theo ${byPrinted ? 'số câu in trong đề' : 'thứ tự trong danh sách lọc'})` + (bad.length ? `; bỏ qua ${bad.length} mục: ${bad.slice(0, 3).join(' | ')}` : ''));
     }
     else if (a === 'del-batch') {
       const inB = q => st.b === 'none' ? !q.batch : q.batch === st.b, qs = (S.bank || []).filter(inB);
