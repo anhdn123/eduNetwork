@@ -7,7 +7,7 @@ services:
     runtime: python
     plan: starter                # gói free không gắn được đĩa lưu bền; từ gói trả phí trở lên mới có đĩa và không bị "ngủ"
     region: singapore            # gần Việt Nam nhất
-    buildCommand: python --version   # ứng dụng chỉ dùng thư viện chuẩn của Python, không cần cài gói
+    buildCommand: python --version   # ứng dụng chỉ dùng thư viện chuẩn của Python, không cần cài gói (kể cả AI Gemini; chỉ AI Claude tùy chọn mới cần `pip install -r requirements.txt`)
     startCommand: python -m server
     healthCheckPath: /api/status
     disk:
@@ -27,6 +27,8 @@ services:
         value: "1"
       - key: LBAI_QUIET
         value: "1"
+      - key: GEMINI_API_KEY       # khóa Google Gemini (BÍ MẬT, có gói miễn phí tại Google AI Studio) để bật AI giải đáp án khi import đề — bạn tự nhập trong bảng điều khiển Render, KHÔNG ghi vào file này; để trống = tắt tính năng AI
+        sync: false
       - key: LBAI_SETUP_CODE     # mã bí mật tạo quản trị viên lần đầu — tự nhập trong bảng điều khiển Render, KHÔNG ghi vào file này
         sync: false
       - key: LBAI_BACKUP_URL      # (không bắt buộc) sao lưu thêm ra Supabase Storage để có bản dự phòng ngoài Render

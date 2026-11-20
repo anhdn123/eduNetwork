@@ -7,6 +7,7 @@ import secrets
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 # Mật khẩu thử nghiệm sinh ngẫu nhiên mỗi lần chạy (không ghi cứng trong mã)
@@ -505,6 +506,250 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(an.get(f"/api/img/{iid}", raw=True)[0], 200)
         lan.post("/api/bank/sync", {"delete": ["imgq1"]})                                      # xóa câu hỏi → ảnh được dọn
         self.assertEqual(an.get(f"/api/img/{iid}", raw=True)[0], 404)
+
+    def test_zz_ai_solve(self):
+        """AI giải câu hỏi: gọi dịch vụ Anthropic GIẢ (không tốn tiền, không cần khóa thật); kiểm tra quyền, giới hạn, định dạng đáp án và xử lý lỗi."""
+        import http.server
+        from server import ai
+        seen = []
+        script = {"mode": "ok"}
+
+        class Fake(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+                seen.append(body)
+                if script["mode"] == "500":
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"type":"error","error":{"type":"api_error","message":"boom"}}')
+                    return
+                texts = [b["text"] for b in body["messages"][0]["content"] if b["type"] == "text"]
+                ids = [t.split("id=")[1].split(" ")[0] for t in texts if "id=" in t]
+                kinds = [t.split("dạng: ")[1].split(" ")[0] for t in texts if "dạng: " in t]
+                table = {"mcq": ("b", "high", "Chọn B"), "tf": ("ĐSSĐ", "medium", "Ý b, c sai"), "short": ("3.5", "high", "= 3,5")}
+                ans = [{"id": i, "answer": table[k][0], "confidence": table[k][1], "note": table[k][2]} for i, k in zip(ids, kinds)]
+                if script["mode"] == "bad":
+                    ans = [{"id": i, "answer": "E", "confidence": "high", "note": "lạ"} for i in ids]
+                if script["mode"] == "partial":
+                    ans = ans[:1]
+                msg = {"id": "msg_test", "type": "message", "role": "assistant", "model": body["model"], "content": [{"type": "text", "text": json.dumps({"answers": ans}, ensure_ascii=False)}],
+                       "stop_reason": "refusal" if script["mode"] == "refuse" else "end_turn", "stop_sequence": None, "usage": {"input_tokens": 1, "output_tokens": 1}}
+                out = json.dumps(msg).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+
+        fake = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fake)
+        threading.Thread(target=fake.serve_forever, daemon=True).start()
+        keep = {k: os.environ.get(k) for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "GEMINI_API_KEY", "LBAI_AI_PROVIDER")}
+        lan, an = self.C(), self.C()
+        lan.post("/api/login", {"username": "lan", "password": LAN_PW})
+        an.post("/api/login", {"username": "an.nv", "password": AN_PW})
+        try:
+            for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GEMINI_API_KEY"):
+                os.environ.pop(k, None)
+            os.environ["LBAI_AI_PROVIDER"] = "claude"                                               # test này kiểm tra nhánh Claude (nhánh Gemini ở test_zz_ai_gemini)
+            st, r = lan.get("/api/ai/status")                                                       # chưa đặt khóa → báo chưa bật
+            self.assertEqual((st, r["configured"], r["ready"]), (200, False, False))
+            self.assertEqual(an.get("/api/ai/status")[0], 403)                                       # học sinh không dùng được
+            import struct
+            import zlib
+
+            def chunk(t, d):
+                return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+            raw_png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(b"\x00\xff\xff\xff")) + chunk(b"IEND", b"")
+            png = "data:image/png;base64," + base64.b64encode(raw_png).decode()
+            iid = lan.post("/api/img", {"data": png})[1]["id"]
+            body = {"items": [{"id": "q1", "t": "mcq", "img": iid}]}
+            st, r = lan.post("/api/ai/solve", body)
+            self.assertEqual(st, 503)                                                                # chưa có khóa → 503 kèm hướng dẫn
+            self.assertIn("ANTHROPIC_API_KEY", json.dumps(r, ensure_ascii=False))
+
+            os.environ["ANTHROPIC_API_KEY"] = "k-" + secrets.token_hex(16)                          # khóa GIẢ sinh lúc chạy, chỉ dùng với server giả
+            os.environ["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{fake.server_address[1]}"
+            st, r = lan.get("/api/ai/status")
+            self.assertEqual((r["configured"], r["ready"], r["model"], r["provider"]), (True, True, ai.CLAUDE_MODEL, "claude"))
+            self.assertNotIn(os.environ["ANTHROPIC_API_KEY"], json.dumps(r))                         # không bao giờ trả khóa ra ngoài
+            self.assertEqual(an.post("/api/ai/solve", body)[0], 403)
+
+            items = [{"id": "q1", "t": "mcq", "img": iid}, {"id": "q2", "t": "tf", "img": iid}, {"id": "q3", "t": "short", "text": "Tính 7 chia 2"}]
+            st, r = lan.post("/api/ai/solve", {"items": items})
+            self.assertEqual(st, 200, r)
+            res = {x["id"]: x for x in r["results"]}
+            self.assertEqual((res["q1"]["ans"], res["q1"]["conf"]), (1, "high"))                    # B → chỉ số 1
+            self.assertEqual((res["q2"]["ans"], res["q2"]["conf"]), ([0, 1, 1, 0], "medium"))        # ĐSSĐ → 0 là Đúng
+            self.assertEqual(res["q3"]["ans"], "3,5")                                                # dấu chấm → dấu phẩy
+            req = seen[-1]                                                                            # yêu cầu gửi đi đúng chuẩn
+            self.assertEqual(req["model"], ai.CLAUDE_MODEL)
+            self.assertEqual(req["output_config"]["format"]["type"], "json_schema")
+            blocks = req["messages"][0]["content"]
+            self.assertEqual(sum(1 for b in blocks if b["type"] == "image"), 2)                      # q1, q2 gửi ảnh; q3 gửi chữ
+            self.assertTrue(any("Tính 7 chia 2" in b.get("text", "") for b in blocks))
+            self.assertNotIn("lan", json.dumps(req))                                                  # không kèm thông tin người dùng
+
+            script["mode"] = "bad"                                                                    # đáp án sai định dạng → từ chối, không ghi bừa
+            res = lan.post("/api/ai/solve", {"items": items[:2]})[1]["results"]
+            self.assertTrue(all(not x["ok"] for x in res))
+            script["mode"] = "partial"                                                                # AI bỏ sót một câu → báo lỗi riêng câu đó
+            res = lan.post("/api/ai/solve", {"items": items[:2]})[1]["results"]
+            self.assertEqual([x["ok"] for x in res], [True, False])
+            script["mode"] = "refuse"
+            self.assertEqual(lan.post("/api/ai/solve", {"items": items[:1]})[0], 502)
+            script["mode"] = "500"
+            st, r = lan.post("/api/ai/solve", {"items": items[:1]})
+            self.assertEqual(st, 502)
+            self.assertNotIn(os.environ["ANTHROPIC_API_KEY"], json.dumps(r))
+            script["mode"] = "ok"
+
+            self.assertEqual(lan.post("/api/ai/solve", {"items": []})[0], 400)                       # 0 câu
+            self.assertEqual(lan.post("/api/ai/solve", {"items": [{"id": "q%d" % i, "t": "mcq", "text": "x"} for i in range(ai.MAX_ITEMS + 1)]})[0], 400)
+            self.assertEqual(lan.post("/api/ai/solve", {"items": [{"id": "q1", "t": "essay", "text": "x"}]})[0], 400)   # tự luận không giải
+            self.assertEqual(lan.post("/api/ai/solve", {"items": [{"id": "q1", "t": "mcq", "img": "0" * 24}]})[0], 404)  # ảnh không tồn tại
+            old = ai.HOURLY_LIMIT
+            ai.HOURLY_LIMIT = 1                                                                       # hết hạn mức giờ → 429
+            try:
+                ai._usage.clear()
+                self.assertEqual(lan.post("/api/ai/solve", {"items": items[:1]})[0], 200)
+                self.assertEqual(lan.post("/api/ai/solve", {"items": items[:1]})[0], 429)
+            finally:
+                ai.HOURLY_LIMIT = old
+                ai._usage.clear()
+        finally:
+            fake.shutdown()
+            for k, v in keep.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_zz_ai_gemini(self):
+        """AI giải đáp án bằng Gemini (gói miễn phí): gọi REST tới máy chủ Gemini GIẢ; kiểm tra yêu cầu gửi đi, đọc kết quả, giới hạn miễn phí và lỗi."""
+        import http.server
+        import struct
+        import zlib
+        from server import ai
+        seen = []
+        script = {"mode": "ok", "calls": 0}
+
+        class Fake(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def reply(self, code, obj):
+                out = json.dumps(obj).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+                seen.append({"path": self.path, "key": self.headers.get("x-goog-api-key"), "body": body})
+                script["calls"] += 1
+                mode = script["mode"]
+                if mode == "429":
+                    return self.reply(429, {"error": {"code": 429, "message": "quota", "status": "RESOURCE_EXHAUSTED"}})
+                if mode == "429once" and script["calls"] == 1:
+                    return self.reply(429, {"error": {"code": 429, "message": "quota"}})
+                if mode == "403":
+                    return self.reply(403, {"error": {"code": 403, "message": "bad key"}})
+                if mode == "404":
+                    return self.reply(404, {"error": {"code": 404, "message": "no model"}})
+                if mode == "block":
+                    return self.reply(200, {"promptFeedback": {"blockReason": "SAFETY"}})
+                parts = body["contents"][0]["parts"]
+                texts = [x["text"] for x in parts if "text" in x]
+                ids = [t.split("id=")[1].split(" ")[0] for t in texts if "id=" in t]
+                kinds = [t.split("dạng: ")[1].split(" ")[0] for t in texts if "dạng: " in t]
+                table = {"mcq": ("c", "high", "Chọn C"), "tf": ("Đ S S Đ", "medium", "Ý b, c sai"), "short": ("2.5", "high", "= 2,5")}
+                ans = [{"id": i, "answer": table[k][0], "confidence": table[k][1], "note": table[k][2]} for i, k in zip(ids, kinds)]
+                if mode == "bad":
+                    ans = [{"id": i, "answer": "xyz", "confidence": "high", "note": ""} for i in ids]
+                txt = json.dumps({"answers": ans}, ensure_ascii=False)
+                if mode == "fence":
+                    txt = "```json\n" + txt + "\n```"
+                self.reply(200, {"candidates": [{"content": {"role": "model", "parts": [{"text": txt}]}, "finishReason": "STOP"}]})
+
+        fake = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fake)
+        threading.Thread(target=fake.serve_forever, daemon=True).start()
+        names = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GEMINI_API_KEY", "LBAI_AI_PROVIDER")
+        keep = {k: os.environ.get(k) for k in names}
+        keep_base, keep_sleep = ai.GEMINI_BASE, time.sleep
+        lan, an = self.C(), self.C()
+        lan.post("/api/login", {"username": "lan", "password": LAN_PW})
+        an.post("/api/login", {"username": "an.nv", "password": AN_PW})
+        try:
+            for k in names:
+                os.environ.pop(k, None)
+            ai.GEMINI_BASE = f"http://127.0.0.1:{fake.server_address[1]}"
+            ai.time.sleep = lambda s: None                                                            # không chờ thật khi thử lại
+            self.assertEqual(lan.get("/api/ai/status")[1]["ready"], False)
+            key = "g-" + secrets.token_hex(16)                                                        # khóa GIẢ sinh lúc chạy
+            os.environ["GEMINI_API_KEY"] = key
+            st, r = lan.get("/api/ai/status")
+            self.assertEqual((r["provider"], r["ready"], r["free"], r["model"], r["concurrency"]), ("gemini", True, True, ai.GEMINI_MODEL, 1))
+            self.assertNotIn(key, json.dumps(r))
+            raw_png = b"\x89PNG\r\n\x1a\n" + b"".join(struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF) for t, d in [(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)), (b"IDAT", zlib.compress(b"\x00\xff\xff\xff")), (b"IEND", b"")])
+            iid = lan.post("/api/img", {"data": "data:image/png;base64," + base64.b64encode(raw_png).decode()})[1]["id"]
+            items = [{"id": "g1", "t": "mcq", "img": iid}, {"id": "g2", "t": "tf", "img": iid}, {"id": "g3", "t": "short", "text": "Tính 5 chia 2"}]
+            st, r = lan.post("/api/ai/solve", {"items": items})
+            self.assertEqual(st, 200, r)
+            res = {x["id"]: x for x in r["results"]}
+            self.assertEqual((res["g1"]["ans"], res["g1"]["conf"]), (2, "high"))                      # C → chỉ số 2
+            self.assertEqual(res["g2"]["ans"], [0, 1, 1, 0])                                          # "Đ S S Đ" có dấu cách vẫn đọc được
+            self.assertEqual(res["g3"]["ans"], "2,5")
+            self.assertEqual(r["provider"], "gemini")
+            req = seen[-1]
+            self.assertEqual(req["path"], f"/v1beta/models/{ai.GEMINI_MODEL}:generateContent")
+            self.assertEqual(req["key"], key)                                                         # khóa gửi bằng header, không nằm trong URL hay nội dung
+            self.assertNotIn(key, json.dumps(req["body"]) + req["path"])
+            parts = req["body"]["contents"][0]["parts"]
+            self.assertEqual(sum(1 for x in parts if "inline_data" in x), 2)                          # q1, q2 gửi ảnh; q3 gửi chữ
+            self.assertEqual(parts[1]["inline_data"]["mime_type"], "image/png")
+            self.assertTrue(any("Tính 5 chia 2" in x.get("text", "") for x in parts))
+            self.assertIn("system_instruction", req["body"])
+            self.assertNotIn("lan", json.dumps(req["body"]))
+
+            script["mode"] = "fence"                                                                  # JSON bọc trong ```json … ``` vẫn đọc được
+            self.assertEqual(lan.post("/api/ai/solve", {"items": items[:1]})[1]["results"][0]["ans"], 2)
+            script["mode"] = "bad"                                                                    # đáp án sai định dạng → từ chối
+            self.assertFalse(lan.post("/api/ai/solve", {"items": items[:1]})[1]["results"][0]["ok"])
+            script["mode"], script["calls"] = "429once", 0                                            # chạm giới hạn miễn phí một lần → tự thử lại và thành công
+            self.assertEqual(lan.post("/api/ai/solve", {"items": items[:1]})[0], 200)
+            script["mode"] = "429"
+            st, r = lan.post("/api/ai/solve", {"items": items[:1]})
+            self.assertEqual(st, 429)
+            self.assertIn("miễn phí", json.dumps(r, ensure_ascii=False))
+            script["mode"] = "403"
+            st, r = lan.post("/api/ai/solve", {"items": items[:1]})
+            self.assertEqual(st, 502)
+            self.assertNotIn(key, json.dumps(r))
+            script["mode"] = "404"
+            st, r = lan.post("/api/ai/solve", {"items": items[:1]})
+            self.assertEqual(st, 502)
+            self.assertIn("LBAI_AI_MODEL_GEMINI", json.dumps(r, ensure_ascii=False))
+            script["mode"] = "block"
+            self.assertEqual(lan.post("/api/ai/solve", {"items": items[:1]})[0], 502)
+            self.assertEqual(an.post("/api/ai/solve", {"items": items[:1]})[0], 403)                  # học sinh không dùng được
+            os.environ["LBAI_AI_PROVIDER"] = "claude"                                                 # chọn Claude khi chưa có khóa Claude → báo chưa bật, không gọi Gemini
+            self.assertEqual(lan.get("/api/ai/status")[1]["ready"], False)
+            self.assertEqual(lan.post("/api/ai/solve", {"items": items[:1]})[0], 503)
+        finally:
+            fake.shutdown()
+            ai.GEMINI_BASE = keep_base
+            ai.time.sleep = keep_sleep
+            for k, v in keep.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
 
     def test_rate_limit(self):
         c = self.C()

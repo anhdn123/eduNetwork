@@ -458,6 +458,8 @@ function extractAns(seg) {
 }
 function extractAns0(seg) {
   seg = seg.split(MATHMARK).join('');
+  const tl = /(?:^|\n)[ \t]*Trả\s*lời\s*:\s*([^\n]{1,40})/i.exec(seg);   // “Trả lời: 7,35” ngay sau dòng “Lời giải” (câu trả lời ngắn)
+  if (tl) return {val: tl[1].trim().replace(/[.;]$/, ''), sol: cleanSol(seg.slice(tl.index + tl[0].length))};
   const sol = cleanSol(seg.replace(/^\s*(?:Chọn|Đáp\s*án)[^\n.]*[.\n]?/, ''));
   const after = m => cleanSol(seg.slice(m.index + m[0].length).replace(/^\s*[.;,]/, ''));   // phần lời giải viết sau dòng đáp án
   // "Đáp án: Đ - S - Đ - S" (4 ý a–d của câu đúng/sai, viết liền theo thứ tự)
@@ -524,7 +526,8 @@ function parseKey(key) {
       list.push({n: +mk[1], pos: mk.index, a});
     }
   });
-  if (!tabled.length) for (const m of key.matchAll(new RegExp('(?:^|[\\s,;|])(\\d{1,3})\\s*[.\\-–:)]?\\s*([A-D])(?![' + NOLET + '0-9])', 'g'))) {
+  // chỉ khi phần đáp án không có các mục “Câu N” đọc được (khóa kiểu “1.A 2.B 3.C”): nếu không, “4. B” nằm rải rác trong lời giải bị nhặt nhầm thành đáp án
+  if (!tabled.length && (marks.length < 3 || list.length < marks.length * 0.5)) for (const m of key.matchAll(new RegExp('(?:^|[\\s,;|])(\\d{1,3})\\s*[.\\-–:)]?\\s*([A-D])(?![' + NOLET + '0-9])', 'g'))) {
     if (!list.some(e => e.n === +m[1] && Math.abs(e.pos - m.index) < 15)) list.push({n: +m[1], pos: m.index, a: {l: m[2]}});
   }
   if (list.length < 3) {
@@ -648,7 +651,7 @@ function parseQuestionBank(raw, src, hasLines) {
   const useRun = kRuns === r0 + 1;
   // Khoảng dòng của lời giải chi tiết (để cắt ảnh lời giải, giữ nguyên công thức / hình vẽ)
   const endLine = (a, b) => b > a ? lineOf(b - 1) + 1 : lineOf(a) + 1;   // dòng kết thúc (không gồm) của đoạn [a,b)
-  const solRun = new Map(), solNum = new Map(), solTxtRun = new Map(), solTxtNum = new Map(); let sRuns = 0;
+  const solRun = new Map(), solNum = new Map(), solTxtRun = new Map(), solTxtNum = new Map(), optRun = new Map(), optNum = new Map(); let sRuns = 0;
   if (hasLines && key) {   // mục "Câu N." trong phần đáp án / hướng dẫn giải cuối đề (hoặc file đáp án riêng)
     const keyOff = text.length - key.length, km = [...key.matchAll(/(?:^|\n)[ \t]*(?:Câu|Bài|Question)\s*(\d{1,3})\s*[:.)]/gi)];
     let kr = -1, kp = Infinity;
@@ -662,6 +665,8 @@ function parseQuestionBank(raw, src, hasLines) {
       let from = keyOff + st;
       if (lm) {
         from = keyOff + st + lm.index + 1;
+        const orng = [lineOf(keyOff + st), lineOf(from)];   // đề in lại + các phương án (phương án đúng được gạch chân)
+        optRun.set(kr + ':' + n, orng); if (!optNum.has(n)) optNum.set(n, orng);
         const tx = bt.slice(lm.index + lm[0].length), o = {text: cleanSol(tx.split(MATHMARK).join('')), bad: tx.split(MATHMARK).length > 3};   // lời giải chữ (đọc được cả khi không nhận ra đáp án trong đoạn này)
         solTxtRun.set(kr + ':' + n, o); if (!solTxtNum.has(n)) solTxtNum.set(n, o);
       } else if (RESTATED_RE.test(bt)) return;
@@ -732,6 +737,7 @@ function parseQuestionBank(raw, src, hasLines) {
       if (!q.q) return;
       if (mathy) q.warn = true;
       if (hasLines) q._rs = aLines ? [[ra, aLines[0]], [aLines[q.grp], q.grp < 3 ? aLines[q.grp + 1] : rb]] : [[ra, rb]];
+      if (q.t === 'mcq') { const og = useSolRun ? optRun.get(run + ':' + n) : optNum.get(n); if (og) q._os = og; }   // vùng phương án trong phần lời giải (dò phương án gạch chân)
       if (ss && String(q.sol || '').replace(/<[^>]*>|&nbsp;|\s/g, '').length) q._ss = ss;   // chỉ cắt khi đoạn đó thực sự có lời giải
       if (q.sol && (solMathy || (ke && ke.a && ke.a.solBad) || solGarbled(q))) q.solBad = true;
       delete q.grp;
@@ -752,6 +758,7 @@ function addToBank(list) {
   S.bank = S.bank || [];
   const idx = new Map(S.bank.map(q => [bankKey(q), q])); let n = 0; SOL_MERGED = 0;
   list.forEach(q => {
+    delete q._os;
     const k = bankKey(q), old = idx.get(k);
     if (!old) { idx.set(k, q); S.bank.push(q); n++; return; }
     let got = false;
@@ -876,6 +883,14 @@ async function extractPdfText(file, onProgress, ocr, pdfOverride) {
         const it = cur.items.find(i => idx - 1 >= i.a && idx - 1 < i.b);
         if (it) cur.lab = it.x + it.w * ((idx - it.a) / Math.max(1, it.b - it.a));
       }
+      if (/[A-D]\./.test(plain)) {   // vị trí các chữ cái phương án: dùng dò phương án được gạch chân trong phần lời giải
+        const opt = [];
+        for (const mm of cur.text.matchAll(/(?:^|[\s\u2063])([A-D])\.(?=[\s\u2063]|$)/g)) {
+          const idx = mm.index + mm[0].indexOf(mm[1]), it = cur.items.find(i => idx >= i.a && idx < i.b);
+          if (it) { const cw = it.w / Math.max(1, it.b - it.a), x0 = it.x + cw * (idx - it.a); opt.push({c: mm[1], x0, x1: x0 + cw * 1.2, y: it.y}); }
+        }
+        if (opt.length) cur.opt = opt;
+      }
       pl.push(cur); cur = null;
     };
     for (const it of tc.items) {
@@ -889,7 +904,7 @@ async function extractPdfText(file, onProgress, ocr, pdfOverride) {
         const a = cur.text.length; cur.text += s; cur.prevEnd = x + w;
         cur.top = Math.max(cur.top, y + h * 0.95); cur.bot = Math.min(cur.bot, y - h * 0.3);
         cur.l = Math.min(cur.l, x); cur.r = Math.max(cur.r, x + w);
-        cur.items.push({x, w, a, b: cur.text.length});
+        cur.items.push({x, w, a, b: cur.text.length, y});
       }
       if (it.hasEOL) flush();
     }
@@ -929,7 +944,7 @@ async function extractPdfText(file, onProgress, ocr, pdfOverride) {
     const real = pl.filter(l => !l.skip), hdr = pl.filter(l => hf(l) && l.top > H / 2), ftr = pl.filter(l => hf(l) && l.bot <= H / 2);
     pages[p] = {h: H, l: real.length ? Math.min(...real.map(l => l.l)) : 0, r: real.length ? Math.max(...real.map(l => l.r)) : W,
       ct: hdr.length ? Math.min(...hdr.map(l => l.bot)) : H * 0.97, cb: ftr.length ? Math.max(...ftr.map(l => l.top)) : H * 0.03};
-    pl.forEach(l => lines.push({p: l.p, top: l.top, bot: l.bot, l: l.l, r: l.r, lab: l.lab, skip: l.skip, ov: overlay.has(l), raw: l.skip ? l.text : undefined, text: l.skip ? '' : l.text}));
+    pl.forEach(l => lines.push({p: l.p, top: l.top, bot: l.bot, l: l.l, r: l.r, lab: l.lab, opt: l.skip ? undefined : l.opt, skip: l.skip, ov: overlay.has(l), raw: l.skip ? l.text : undefined, text: l.skip ? '' : l.text}));
     lines.push(null);   // ngắt trang
   });
   return {text: lines.map(l => l ? l.text : '').join('\n'), lines, pages, pdf, ocrPages};
@@ -1039,8 +1054,15 @@ function segPixels(g0, pg, sg, SC, W, H) {
 function trimBottom(c) {
   const w = c.width, h = c.height; if (w < 4 || h < 24) return c;
   const d = c.getContext('2d').getImageData(0, 0, w, h).data;
-  let last = -1;
-  for (let y = h - 1; y >= 0 && last < 0; y--) for (let x = 0, o = y * w * 4; x < w; x += 2, o += 8) if (d[o] < 225 || d[o + 1] < 225 || d[o + 2] < 225) { last = y; break; }
+  const dark = y => { let n = 0, t = 0; for (let x = 0, o = y * w * 4; x < w; x += 2, o += 8) { t++; if (d[o] < 225 || d[o + 1] < 225 || d[o + 2] < 225) n++; } return n / t; };
+  const findLast = from => { for (let y = from; y >= 0; y--) if (dark(y) > 0) return y; return -1; };
+  let last = findLast(h - 1);
+  if (last >= 0 && dark(last) >= 0.85) {   // vạch kẻ ngang suốt bề rộng ở đáy (đường kẻ trang trí chân trang) tách khỏi nội dung bằng khoảng trắng → bỏ vạch, giữ nội dung
+    let top = last, gap = 0;
+    for (let y = last - 1; y >= 0 && last - y < 20; y--) { const f = dark(y); if (f >= 0.85) { top = y; gap = 0; } else if (f === 0 && gap < 3) gap++; else break; }
+    let white = 0; for (let y = top - 1; y >= 0 && white < 4 && dark(y) === 0; y--) white++;
+    if (white >= 4 && top > 8) last = findLast(top - 1);
+  }
   const nh = Math.min(h, last + 10);
   if (last < 0 || nh >= h - 4) return c;
   const t = document.createElement('canvas'); t.width = w; t.height = nh;
@@ -1183,13 +1205,92 @@ function buildTopicIndex(labels, skipBatch) {
 }
 const KEY_NAME = /đ[aá]p\s*[aá]n|dap[\s_.-]*an|l[oờ]i\s*gi[aả]i|loi[\s_.-]*giai|huong[\s_.-]*dan|hdc|\bkey\b/i;
 
-async function importSmart(files, labels, withImg, onChange, examOpt) {
+/* ---- Nhờ AI (Claude) giải đáp án cho các câu chưa có đáp án ----
+   Ảnh/chữ của câu hỏi được máy chủ gửi tới dịch vụ AI; kết quả gắn nhãn q.aiAns = {c: mức tin cậy, n: ghi chú} cho tới khi giáo viên xác nhận hoặc tự sửa đáp án. */
+let AI_ST = null;
+async function aiStatus() { if (!AI_ST) { try { AI_ST = await LB.api.get('/api/ai/status'); } catch (e) { AI_ST = {ready: false}; } } return AI_ST; }
+const aiOffMsg = st => st.configured && !st.sdk ? 'Máy chủ chưa cài thư viện AI cho Claude — quản trị viên chạy “pip install -r requirements.txt” rồi khởi động lại.' : 'AI chưa bật — quản trị viên cần đặt khóa GEMINI_API_KEY (miễn phí, lấy ở Google AI Studio) trên máy chủ.';
+const IMG_ID = /^[a-f0-9]{16,40}$/, AI_CONF = {high: 'cao', medium: 'trung bình', low: 'thấp'};
+const plainText = h => String(h || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+const aiCandidates = qs => qs.filter(q => (q.t === 'mcq' || q.t === 'short' || (q.t === 'tf' && isTfg(q))) && !hasAns(q) && ((q.img && IMG_ID.test(q.img)) || plainText(q.q)));
+// Giải từng câu một (số luồng song song do máy chủ quyết định: Gemini miễn phí 1, Claude 3). Ảnh phải đã lưu lên máy chủ (q.img là mã ảnh). Trả về {ok, fail, errors}
+async function aiFill(qs, onProgress) {
+  const todo = aiCandidates(qs), out = {ok: 0, fail: 0, errors: [], total: todo.length};
+  let i = 0, done = 0, bad = 0;
+  const item = q => q.img && IMG_ID.test(q.img) ? {id: q.id, t: q.t, img: q.img}
+    : {id: q.id, t: q.t, text: [plainText(q.q), ...(q.opts || []).map((o, k) => 'ABCD'[k] + '. ' + plainText(o)), ...(q.sts || []).map((s, k) => 'abcd'[k] + ') ' + plainText(s))].join('\n')};
+  const worker = async () => {
+    while (i < todo.length && bad < 3) {
+      const q = todo[i++];
+      try {
+        const x = (await LB.api.post('/api/ai/solve', {items: [item(q)]})).results[0];
+        if (x && x.ok) { q.ans = x.ans; q.aiAns = {c: x.conf, n: x.note || ''}; out.ok++; bad = 0; }
+        else { out.fail++; out.errors.push(`${(x && x.error) || 'AI không trả lời'}`); }
+      } catch (e) { out.fail++; bad++; out.errors.push(e.message); }
+      done++; onProgress && onProgress(done, todo.length);
+    }
+  };
+  await Promise.all(Array.from({length: Math.max(1, (AI_ST && AI_ST.concurrency) || 1)}, worker));   // gói miễn phí giới hạn số yêu cầu mỗi phút → máy chủ báo số luồng phù hợp
+  out.stopped = bad >= 3;
+  return out;
+}
+const aiConsent = st => (st && st.free
+  ? 'Gửi ảnh/nội dung các câu hỏi chưa có đáp án tới Google Gemini (gói MIỄN PHÍ) để giải?\n\nLưu ý: ở gói miễn phí, Google ghi rõ nội dung gửi lên có thể được dùng để cải thiện sản phẩm của Google. Chỉ gửi nội dung đề, không kèm thông tin học sinh — đừng gửi đề còn mật.'
+  : 'Gửi ảnh/nội dung các câu hỏi chưa có đáp án tới dịch vụ AI (Claude của Anthropic) để giải?\n\nChỉ gửi nội dung đề, không kèm thông tin học sinh.')
+  + '\n\nĐáp án AI có thể SAI — hãy xem lại (câu AI giải được đánh dấu 🤖 cho tới khi bạn xác nhận) trước khi giao cho học sinh.';
+
+/* Phương án đúng được GẠCH CHÂN trong phần “hướng dẫn giải” (đề được in lại, chữ cái đáp án đúng có nét gạch dưới). Nét gạch là hình vẽ, không có trong lớp chữ
+   nên dò bằng điểm ảnh: vẽ trang ra canvas rồi so mức “đậm” của dải ngay dưới chữ cái A. B. C. D.; chỉ nhận khi có đúng một phương án nổi bật rõ rệt. */
+const UL_SC = 3;
+function underlineScore(g, H, o) {   // tỉ lệ điểm tối lớn nhất trên một hàng điểm ảnh nằm ngay dưới chân chữ (0–1)
+  const base = o.y != null ? o.y : o.bot + (o.top - o.bot) * 0.24, x0 = Math.max(0, Math.floor((o.x0 - 0.5) * UL_SC)), w = Math.max(4, Math.ceil((o.x1 - o.x0 + 1) * UL_SC));
+  const yTop = Math.floor((H - (base - 0.6)) * UL_SC), yBot = Math.ceil((H - (base - 6)) * UL_SC), h = yBot - yTop + 1;
+  if (h < 2 || w < 4) return 0;
+  const d = g.getImageData(x0, yTop, w, h).data; let best = 0;
+  for (let r = 0; r < h; r++) { let dark = 0; for (let c = 0; c < w; c++) { const i = (r * w + c) * 4; if (d[i] < 170 && d[i + 1] < 170 && d[i + 2] < 170) dark++; } best = Math.max(best, dark / w); }
+  return best;
+}
+// Trả về số câu đã gán đáp án; dbg (mảng) nếu truyền vào sẽ nhận điểm từng phương án để hiệu chỉnh
+async function detectUnderlined(ext, qs, kExt, kOff, dbg) {
+  const todo = qs.filter(q => q.t === 'mcq' && q._os && q.ans == null), cands = [], byPage = new Map();
+  qs.forEach(q => { if (!todo.includes(q)) delete q._os; });
+  todo.forEach(q => {
+    const [a, b] = q._os, inK = kOff != null && a >= kOff, x = inK ? kExt : ext, off = inK ? kOff : 0;
+    delete q._os;
+    if (!x || !x.pdf) return;
+    const opts = [];
+    for (let i = a - off; i < b - off && i < x.lines.length; i++) { const l = x.lines[i]; if (l && !l.skip && l.opt) l.opt.forEach(o => opts.push({...o, p: l.p, top: l.top, bot: l.bot})); }
+    const pick = ['A', 'B', 'C', 'D'].map(c => opts.find(o => o.c === c));
+    if (pick.some(o => !o)) return;   // không thấy đủ 4 chữ cái phương án → không dò
+    cands.push({q, x, pick});
+    const key = cands.length - 1;
+    pick.forEach(o => { const k = (inK ? 'k' : 'e') + o.p; if (!byPage.has(k)) byPage.set(k, {x, p: o.p, list: []}); byPage.get(k).list.push({o, key}); });
+  });
+  for (const {x, p, list} of byPage.values()) {
+    const page = await x.pdf.getPage(p), vp = page.getViewport({scale: UL_SC}), H = x.pages[p].h;
+    const cv = document.createElement('canvas'); cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
+    const g = cv.getContext('2d', {willReadFrequently: true}); g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height);
+    await page.render({canvasContext: g, viewport: vp}).promise;
+    list.forEach(({o, key}) => { (cands[key].sc || (cands[key].sc = {}))[o.c] = underlineScore(g, H, o); });
+    cv.width = cv.height = 0;
+  }
+  let n = 0;
+  cands.forEach(cd => {
+    const sc = ['A', 'B', 'C', 'D'].map(c => (cd.sc || {})[c] || 0), order = sc.map((v, i) => [v, i]).sort((a, b) => b[0] - a[0]);
+    if (dbg) dbg.push(sc.map(v => Math.round(v * 100)));
+    if (order[0][0] >= 0.6 && order[0][0] - order[1][0] >= 0.3) { cd.q.ans = order[0][1]; n++; }
+  });
+  return n;
+}
+
+async function importSmart(files, labels, withImg, onChange, examOpt, aiOn) {
   const m = modal(`<h2>⬆ Đang import đề mới</h2><div class="lb-prog"><span id="ip" style="width:0%"></span></div><div id="il" class="crawl-console" style="display:block;max-height:240px;overflow:auto"></div><div id="idone"></div>`, 1);
   const b = m.b, logBox = $('#il', b), bar = $('#ip', b);
   const log = (t, c = '') => { const d = document.createElement('div'); if (c) d.className = c; d.textContent = t; logBox.append(d); logBox.scrollTop = logBox.scrollHeight; };
   OCR_LOG = ev => { if (ev && /loading/.test(ev.status || '') && ev.progress != null && ev.progress < 1) bar.title = ev.status; };
   const keys = files.filter(f => KEY_NAME.test(f.name)), exams = keys.length === files.length ? files.slice() : files.filter(f => !keys.includes(f));
   let added = 0, noAns = 0, imgs = 0, ocrN = 0, sols = 0, merged = 0;
+  const aiTot = {ok: 0, fail: 0};
   const batchId = 'i' + Date.now().toString(36), batchAt = Math.floor(Date.now() / 1000);   // mã lần import: để chỉ xử lý riêng các câu của lần này
   for (let fi = 0; fi < exams.length; fi++) {
     const f = exams[fi], seg = v => { bar.style.width = ((fi + v * 0.6) / exams.length * 100) + '%'; };
@@ -1216,6 +1317,10 @@ async function importSmart(files, labels, withImg, onChange, examOpt) {
         res.questions.forEach(q => { const part = {mcq: 'I', tf: 'II', short: 'III', essay: 'IV'}[q.t] || 'IV'; cnt[part] = (cnt[part] || 0) + 1; Object.assign(q, {examId: batchId + '-' + eo.no, examCat: examOpt.cat, examName: eo.name, examNo: eo.no, examPart: part, examIdx: cnt[part]}); });
         log(`   📑 Lưu thành “${examOpt.cat} · ${eo.name}” (Đề ${eo.no}): ${cnt.I || 0} TN · ${cnt.II || 0} Đ/S · ${cnt.III || 0} TLN.`, 'ok');
       }
+      if (ext || kExt) {   // đáp án trắc nghiệm = phương án được gạch chân trong phần hướng dẫn giải (nếu đề trình bày kiểu đó)
+        try { const nu = await detectUnderlined(ext, res.questions, kExt, kOff); if (nu) log(`   ✓ Đọc được ${nu} đáp án trắc nghiệm từ phương án được gạch chân trong phần hướng dẫn giải.`, 'ok'); }
+        catch (e) { log('⚠ Không dò được phương án gạch chân (' + (e && e.message || e) + ')', 'warn'); res.questions.forEach(q => { delete q._os; }); }
+      } else res.questions.forEach(q => { delete q._os; });
       const lvT = autoLevels(res.questions);
       log(`   🎯 Tự phân mức độ: ${lvT[1]} nhận biết · ${lvT[2]} thông hiểu · ${lvT[3]} vận dụng · ${lvT[4]} vận dụng cao (có thể chỉnh trong “Quản lý & sửa đáp án”).`, 'ok');
       let nImg = 0;
@@ -1233,6 +1338,17 @@ async function importSmart(files, labels, withImg, onChange, examOpt) {
       added += n; noAns += res.questions.filter(q => !hasAns(q)).length; imgs += nImg; sols += res.questions.filter(q => kept.has(q.id) && hasSol(q)).length; merged += SOL_MERGED;
       await flushBank();   // lưu ngay file này vào cơ sở dữ liệu, không chờ các file sau
       log(`💾 Đã lưu ${n} câu của file ${f.name} vào cơ sở dữ liệu.`, 'ok');
+      if (aiOn) {   // nhờ AI giải các câu chưa đọc được đáp án (ảnh đã lên máy chủ sau flushBank)
+        const need = aiCandidates(res.questions.filter(q => kept.has(q.id)));
+        if (need.length) {
+          log(`🤖 Đang nhờ AI giải ${need.length} câu chưa có đáp án (mỗi câu vài chục giây)...`);
+          const r = await aiFill(need, (d, t) => { bar.title = `AI: ${d}/${t}`; });
+          aiTot.ok += r.ok; aiTot.fail += r.fail;
+          log(`🤖 AI giải được ${r.ok}/${r.total} câu${r.fail ? `, ${r.fail} câu không giải được (${[...new Set(r.errors)].slice(0, 2).join('; ')})` : ''}${r.stopped ? ' — đã dừng vì lỗi liên tiếp' : ''}.`, r.fail ? 'warn' : 'ok');
+          noAns -= r.ok;
+          await flushBank();
+        }
+      }
       log(`✓ ${f.name}: ${res.stats.total} câu — ${res.stats.mcq} trắc nghiệm · ${res.stats.tf} đúng/sai · ${res.stats.short} trả lời ngắn · ${res.stats.essay} tự luận; thêm mới ${n}${d ? `, bỏ ${d} câu trùng` : ''}${nImg ? `, đã cắt ảnh ${nImg} câu` : ''}`, 'ok');
     } catch (e) { log('✗ Lỗi: ' + (e && e.message || e), 'err'); }
   }
@@ -1241,6 +1357,7 @@ async function importSmart(files, labels, withImg, onChange, examOpt) {
     + (merged ? `<div class="lb-note">📘 Đã <b>bổ sung lời giải chi tiết cho ${merged} câu đã có sẵn</b> trong ngân hàng (các câu này không bị thêm trùng).</div>` : '')
     + (added ? `<div class="lb-note">📘 <b>${sols}/${added}</b> câu có lời giải chi tiết đi kèm. ${sols < added ? 'Câu chưa có lời giải: thêm file lời giải (tên có chữ “lời giải” / “đáp án”) khi import, hoặc gõ lời giải trong “Xử lý câu vừa import” → 📘 Lời giải.' : 'Học sinh sẽ xem được lời giải này khi xem lại bài.'}</div>` : '')
     + (ocrN ? `<div class="lb-note">🔎 ${ocrN} trang là ảnh scan nên được nhận dạng bằng OCR — chữ có thể sai chút, nhưng ảnh câu hỏi vẫn giữ nguyên đề gốc. Hãy mở “Xem & sửa” kiểm tra nhanh đáp án.</div>` : '')
+    + (aiTot.ok ? `<div class="lb-note" style="background:#eef2ff;border-color:#c7d2fe;color:#3730a3">🤖 <b>AI đã giải ${aiTot.ok} câu</b> (đáp án gắn nhãn 🤖). AI có thể sai — hãy mở “Xử lý câu vừa import”, lọc <b>“Đáp án AI chưa xác nhận”</b> và xem lại từng câu trước khi giao bài.</div>` : '')
     + (noAns ? `<div class="lb-note" style="background:#fff7ed;border-color:#fed7aa;color:#9a3412">⚠ ${noAns} câu chưa đọc được đáp án (file không có phần đáp án hoặc định dạng lạ). Dùng “✎ Nhập nhanh đáp án” hoặc chọn đáp án trong màn xem & sửa.</div>` : '')
     + `<div class="lb-row"><button class="btn btn-blue" id="ib-mg">🗂 Xử lý ${added} câu vừa import</button><a class="btn btn-outline" href="manage.html#practice">🎯 Mở cho học sinh luyện tập</a><button class="btn btn-outline" id="ib-cl">Đóng</button></div>`;
   $('#ib-cl', b).onclick = m.close;
@@ -1262,7 +1379,10 @@ function openSmartImport(onChange) {
     <input type="file" id="si-f" accept=".pdf,.txt,.png,.jpg,.jpeg,application/pdf,text/plain,image/png,image/jpeg" multiple hidden>
     <p style="font-size:11px;color:#667085;margin:8px 0">Đáp án và <b>lời giải chi tiết từng câu</b> có thể nằm ngay sau mỗi câu (“Lời giải: …”), ở <b>cuối file đề</b> (“HƯỚNG DẪN GIẢI · Câu 1. Chọn A. …”), hoặc trong <b>file lời giải riêng</b> tải lên cùng lúc (đặt tên có chữ “đáp án” hoặc “lời giải”).</p>
     <label style="display:flex;gap:8px;font-size:12px;margin:6px 0"><input type="checkbox" id="si-img" checked> Giữ nguyên định dạng: lưu ảnh cắt từng câu và lời giải (công thức, hình vẽ hiện đúng như đề gốc)</label>
+    <label id="si-ai-row" hidden style="gap:8px;font-size:12px;margin:6px 0;padding:8px 10px;border:1px solid #c7d2fe;background:#eef2ff;border-radius:8px"><input type="checkbox" id="si-ai"> <span>🤖 <b>Nhờ AI giải đáp án</b> cho các câu chưa đọc được đáp án trong file (đề chụp ảnh, đề không có đáp án). Ảnh câu hỏi được gửi tới <b id="si-ai-prov">dịch vụ AI</b>; đáp án AI có thể sai nên được đánh dấu để bạn xem lại.</span></label>
+    <div id="si-ai-off" hidden style="font-size:11px;color:#94a3b8;margin:4px 0">🤖 Giải đáp án bằng AI chưa bật — quản trị viên cần đặt khóa ANTHROPIC_API_KEY trên máy chủ.</div>
     <button class="btn btn-blue" id="si-go" disabled>Bắt đầu import</button>`);
+  aiStatus().then(st => { const row = $('#si-ai-row', m.b); if (!row) return; if (st.ready) { row.hidden = false; row.style.display = 'flex'; $('#si-ai-prov', m.b).textContent = st.free ? 'Google Gemini (gói miễn phí — Google có thể dùng nội dung để cải thiện sản phẩm của họ)' : 'Claude (Anthropic)'; } else { const off = $('#si-ai-off', m.b); off.textContent = '🤖 ' + aiOffMsg(st); off.hidden = false; } });
   let files = [];
   const examFiles = () => { const keys = files.filter(f => KEY_NAME.test(f.name)); return keys.length === files.length ? files.slice() : files.filter(f => !keys.includes(f)); };
   const drawEx = () => {
@@ -1290,7 +1410,9 @@ function openSmartImport(onChange) {
       }
       examOpt = {cat, byName};
     }
-    m.close(); importSmart(files, labels, wi, onChange, examOpt); };
+    const aiOn = !!($('#si-ai', m.b) && $('#si-ai', m.b).checked && !$('#si-ai-row', m.b).hidden);
+    if (aiOn && !confirm(aiConsent(AI_ST))) return;
+    m.close(); importSmart(files, labels, wi, onChange, examOpt, aiOn); };
 }
 
 /* ---- Cắt câu hỏi thủ công từ PDF / ảnh (dùng được cả với PDF scan không có lớp chữ) ----
@@ -1569,7 +1691,7 @@ function openBankManager(onChange, opts) {
   const m = modal('', 1, true), b = m.b;   // khóa: chỉ đóng bằng nút “Đóng” để không mất thay đổi chưa lưu
   HOLD_SYNC = true; PENDING_DROP = [];     // chế độ lưu thủ công: mọi chỉnh sửa chỉ ghi lên máy chủ khi bấm “Lưu thay đổi”
   const eqf = (v, val) => val === 'all' || (val === 'none' ? !v : v === val);
-  const matches = q => (st.f === 'all' || (st.f === 'noans' ? !hasAns(q) : q.t === st.f))
+  const matches = q => (st.f === 'all' || (st.f === 'noans' ? !hasAns(q) : st.f === 'ai' ? !!q.aiAns : q.t === st.f))
     && (st.b === 'all' || (st.b === 'none' ? !q.batch : q.batch === st.b))
     && eqf(q.subject, st.s) && eqf(q.grade, st.g) && eqf(q.topic, st.tp)
     && (!st.q || (q.q + ' ' + (q.opts || []).join(' ')).toLowerCase().includes(st.q.toLowerCase()));
@@ -1610,7 +1732,7 @@ function openBankManager(onChange, opts) {
     const old = $('#bk-list', b), keep = old && !reset ? old.scrollTop : 0;
     const all = S.bank || [], L = list(), pages = Math.max(1, Math.ceil(L.length / PER));
     st.p = Math.max(0, Math.min(st.p, pages - 1));
-    const noans = all.filter(q => !hasAns(q)).length, off = st.p * PER, nSel = all.filter(q => sel.has(q.id)).length;
+    const aiN = all.filter(q => q.aiAns).length, noans = all.filter(q => !hasAns(q)).length, off = st.p * PER, nSel = all.filter(q => sel.has(q.id)).length;
     const rows = L.slice(off, off + PER).map((q, ri) => {
       const on = sel.has(q.id);
       return `<div class="bk-row" data-id="${esc(q.id)}" style="border:1px solid ${on ? '#60a5fa' : hasAns(q) ? '#e2e8f0' : '#fca5a5'};border-radius:8px;padding:8px;margin-bottom:6px;background:${on ? '#eff6ff' : hasAns(q) ? '#fff' : '#fff7f7'}">
@@ -1626,6 +1748,7 @@ function openBankManager(onChange, opts) {
           <input data-f="topic" list="bk-tpl" value="${esc(q.topic || '')}" placeholder="Chuyên đề" title="Chuyên đề (chọn gợi ý hoặc gõ tay)" style="width:170px;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-size:10px">
           <select data-f="lv" title="Mức độ (dùng để xếp bài cá nhân hóa)" style="${SELS}">${LVL.map(([v, l]) => `<option value="${v}" ${(q.lv || 2) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
           <button class="btn btn-outline" data-bk="del" style="font-size:9px;padding:3px 8px">✕ Xóa</button>
+          ${q.aiAns ? `<span class="pill warn" title="${esc(q.aiAns.n || 'Đáp án do AI giải — cần giáo viên xem lại')}">🤖 AI · tin cậy ${AI_CONF[q.aiAns.c] || '?'} · cần xem lại</span><button class="btn btn-outline" data-bk="ai-ok" style="font-size:9px;padding:3px 8px">✓ Đã kiểm tra</button>` : ''}
           ${q.warn ? '<span style="color:#b45309;font-weight:700" title="Có thể thiếu/sai phương án hoặc công thức — hãy đối chiếu đề gốc và sửa lại.">⚠ Kiểm tra lại</span>' : ''}
           ${q.examId ? `<span class="pill" style="background:#e0e7ff;color:#3730a3" title="Câu thuộc đề thi — dùng khi nhập đáp án theo đề">${esc(q.examName || 'Đề')} · De${q.examNo}.${q.examPart}.${String(q.examIdx || 0).padStart(2, '0')}</span>` : ''}
           <span style="color:#98a2b3">${esc(q.src || '')}</span>
@@ -1652,6 +1775,7 @@ function openBankManager(onChange, opts) {
           <option value="all" ${st.f === 'all' ? 'selected' : ''}>Tất cả (${all.length})</option>
           ${ORD.map(t => `<option value="${t}" ${st.f === t ? 'selected' : ''}>${TYL[t]} (${all.filter(q => q.t === t).length})</option>`).join('')}
           <option value="noans" ${st.f === 'noans' ? 'selected' : ''}>Chưa có đáp án (${noans})</option>
+          ${aiN || st.f === 'ai' ? `<option value="ai" ${st.f === 'ai' ? 'selected' : ''}>🤖 Đáp án AI chưa xác nhận (${aiN})</option>` : ''}
         </select>
         <select id="bk-s" style="padding:6px;border:1px solid #cbd5e1;border-radius:6px;font-size:11px">${optsOf(SUBJECTS, st.s, 'Mọi môn')}</select>
         <select id="bk-g" style="padding:6px;border:1px solid #cbd5e1;border-radius:6px;font-size:11px">${optsOf(GRADES, st.g, 'Mọi khối', g => 'Khối ' + g)}</select>
@@ -1661,6 +1785,8 @@ function openBankManager(onChange, opts) {
         <button class="btn btn-blue" data-bk="quick-tf" style="font-size:10px;padding:5px 10px" title="Ví dụ: 1ĐĐSS;2SĐĐS;3SSSS">✎ Nhập nhanh đáp án Đ/S</button>
         <button class="btn btn-blue" data-bk="quick-short" style="font-size:10px;padding:5px 10px" title="Ví dụ: 1.0,4;2.123;3.-5">✎ Nhập nhanh đáp án TLN</button>
         <button class="btn btn-blue" data-bk="auto-lv" style="font-size:10px;padding:5px 10px" title="Tự gán Nhận biết / Thông hiểu / Vận dụng / Vận dụng cao cho các câu đang chọn (hoặc đang lọc) dựa vào vị trí trong đề và nội dung câu">🎯 Tự phân mức độ</button>
+        <button class="btn btn-blue" data-bk="ai-solve" style="font-size:10px;padding:5px 10px;background:#4f46e5" title="Nhờ AI (Claude) giải đáp án cho các câu đang chọn (hoặc đang lọc) mà chưa có đáp án">🤖 AI giải câu chưa có đáp án</button>
+        ${aiN ? `<button class="btn btn-outline" data-bk="ai-ok-all" style="font-size:10px;padding:5px 10px;color:#3730a3;border-color:#a5b4fc">✓ Xác nhận đáp án AI đang lọc/chọn</button>` : ''}
         <button class="btn btn-blue" data-bk="quick-exam" style="font-size:10px;padding:5px 10px" title="Dán đáp án nhiều đề cùng lúc, ví dụ: De1.I.01.A;De1.II.01.ĐĐSS;De1.III.01.0,5">✎ Nhập đáp án theo đề</button>
         <button class="btn btn-outline" data-bk="del-noans" style="font-size:10px;padding:5px 10px">Xóa câu chưa có đáp án</button>
         <button class="btn btn-outline" data-bk="del-all" style="font-size:10px;padding:5px 10px;color:#b91c1c">Xóa toàn bộ</button>
@@ -1703,8 +1829,8 @@ function openBankManager(onChange, opts) {
     const row = t.closest('.bk-row'); if (!row) return;
     const q = (S.bank || []).find(x => x.id === row.dataset.id); if (!q) return;
     if (t.dataset.f === 't') setQType(q, t.value);
-    else if (t.dataset.f === 'ans') q.ans = q.t === 'short' ? t.value.trim() : (+t.value < 0 ? null : +t.value);
-    else if (t.dataset.f === 'ans4') { q.ans = Array.isArray(q.ans) ? q.ans.slice() : q.sts.map(() => null); q.ans[+t.dataset.k] = +t.value < 0 ? null : +t.value; }
+    else if (t.dataset.f === 'ans') { q.ans = q.t === 'short' ? t.value.trim() : (+t.value < 0 ? null : +t.value); delete q.aiAns; }
+    else if (t.dataset.f === 'ans4') { q.ans = Array.isArray(q.ans) ? q.ans.slice() : q.sts.map(() => null); q.ans[+t.dataset.k] = +t.value < 0 ? null : +t.value; delete q.aiAns; }
     else if (t.dataset.f === 'subject' || t.dataset.f === 'grade') q[t.dataset.f] = t.value;
     else if (t.dataset.f === 'topic') q.topic = t.value.trim();
     else if (t.dataset.f === 'lv') { q.lv = +t.value; delete q.lvAuto; }
@@ -1804,6 +1930,30 @@ function openBankManager(onChange, opts) {
       if (!confirm(`Xóa CẢ FILE import “${name}”: ${qs.length} câu (kể cả câu đang bị ẩn bởi bộ lọc)?\n\nViệc xóa chỉ được ghi vào cơ sở dữ liệu khi bạn bấm “💾 Lưu thay đổi” (có thể bấm “Hủy thay đổi” để khôi phục).`)) return;
       dropLater(qs); S.bank = S.bank.filter(q => !inB(q)); sel.clear(); pinned.clear(); st.b = 'all'; st.p = 0; save(); onChange && onChange();
       toast(`Đã xóa ${qs.length} câu của “${name}” — nhớ bấm 💾 Lưu thay đổi để ghi lại`);
+    }
+    else if (a === 'ai-ok') { const q = (S.bank || []).find(x => x.id === btn.closest('.bk-row').dataset.id); if (q) { delete q.aiAns; touched(q); } }
+    else if (a === 'ai-ok-all') {
+      const ids = sel.size ? sel : new Set(list().map(q => q.id)), qs = (S.bank || []).filter(q => q.aiAns && ids.has(q.id));
+      if (!qs.length) return toast('Không có câu AI nào cần xác nhận trong phạm vi này');
+      if (!confirm(`Xác nhận ${qs.length} đáp án do AI giải là ĐÚNG (bạn đã xem lại)? Nhãn 🤖 sẽ được bỏ.`)) return;
+      qs.forEach(q => { delete q.aiAns; pinned.add(q.id); }); save(); onChange && onChange();
+      toast(`Đã xác nhận ${qs.length} đáp án — nhớ bấm 💾 Lưu thay đổi`);
+    }
+    else if (a === 'ai-solve') {
+      const ids = sel.size ? sel : new Set(list().map(q => q.id)), qs = aiCandidates((S.bank || []).filter(q => ids.has(q.id)));
+      if (!qs.length) return toast('Không có câu nào cần AI giải (câu phải chưa có đáp án, và có ảnh đã lưu hoặc có nội dung chữ)');
+      (async () => {
+        const st0 = await aiStatus();
+        if (!st0.ready) return toast(aiOffMsg(st0));
+        if (!confirm(`Nhờ AI giải ${qs.length} câu ${sel.size ? 'đã chọn' : 'đang lọc'} chưa có đáp án (mỗi câu vài chục giây)?
+
+` + aiConsent(st0))) return;
+        btn.disabled = true;
+        const r = await aiFill(qs, (d, t) => { btn.textContent = `🤖 Đang giải ${d}/${t}...`; });
+        qs.forEach(q => pinned.add(q.id)); save(); onChange && onChange(); draw();
+        toast(`🤖 AI giải được ${r.ok}/${r.total} câu${r.fail ? `; ${r.fail} câu không giải được (${[...new Set(r.errors)].slice(0, 2).join('; ')})` : ''} — hãy xem lại rồi bấm 💾 Lưu thay đổi`);
+      })();
+      return;
     }
     else if (a === 'quick-exam') {
       const pool = list().filter(q => q.examId);
@@ -2807,6 +2957,8 @@ async function openAssign(title, variations, c) {
     }
     const dv = $('#as-due', m.b).value, btn = $('#as-go', m.b), show = +$('#as-show', m.b).value;
     if (show === 2 && !dv && !confirm('Chưa đặt hạn nộp: học sinh chỉ xem được đáp án khi bạn bấm “Đóng” bài ở trang quản lý. Tiếp tục?')) return;
+    const unverified = sendVars.reduce((n, v) => n + v.questions.filter(q => q.aiAns).length, 0);
+    if (unverified && !confirm(`${unverified} câu trong bài này có đáp án do AI giải mà bạn CHƯA xác nhận. AI có thể sai và học sinh sẽ bị chấm theo đáp án đó.\\n\\nVẫn giao bài? (Hủy để vào “Quản lý & sửa đáp án” xem lại trước.)`)) return;
     btn.disabled = true;
     try {
       const r = await LB.api.post('/api/assignments', {

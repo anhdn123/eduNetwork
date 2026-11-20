@@ -153,3 +153,18 @@ dùng bucket riêng tư, giữ khóa bí mật, và xem lại yêu cầu pháp l
       node tools/bulk_import.js apply tools/answers/05.txt --dry    xem trước; bỏ --dry để ghi. --force để ghi đè đáp án đã có
   Thêm --local để chạy thử trên máy chủ tạm của máy này (không đụng web thật).
   Lưu ý: ảnh cắt và phân dạng do trình duyệt trên WEB THẬT thực hiện, nên web phải đang chạy bản code mới nhất.
+
+10. AI GIẢI ĐÁP ÁN KHI IMPORT ĐỀ (tùy chọn; mặc định dùng Google Gemini gói MIỄN PHÍ)
+   - Bật: lấy khóa miễn phí ở Google AI Studio, đặt biến môi trường GEMINI_API_KEY trên MÁY CHỦ (Render: Environment → GEMINI_API_KEY; chạy máy nhà: đặt biến
+     môi trường rồi chạy lại). Không cần cài thêm gói nào. Không bao giờ dán khóa vào chat, mã nguồn hay file cấu hình trong repo.
+   - Model mặc định gemini-3.8-flash; nếu Google đổi tên model thì đặt LBAI_AI_MODEL_GEMINI=<tên model hiện hành>.
+   - Dùng: (a) Import đề mới → tick "Nhờ AI giải đáp án" (áp dụng cho câu chưa đọc được đáp án; đề chụp ảnh cũng được vì ảnh đi qua OCR + cắt từng câu);
+     (b) Quản lý & sửa đáp án → "🤖 AI giải câu chưa có đáp án" cho các câu đang chọn/đang lọc.
+   - Đáp án AI luôn có nhãn 🤖 kèm mức tin cậy tới khi giáo viên bấm "Đã kiểm tra" (hoặc tự sửa đáp án). Lọc "Đáp án AI chưa xác nhận" để rà lại.
+     Khi giao bài mà còn đáp án AI chưa xác nhận, hệ thống hỏi lại. AI miễn phí có thể sai, nhất là câu khó — câu cần độ chính xác cao hãy tự giải/duyệt kỹ.
+   - Quyền riêng tư: chỉ ảnh/chữ của câu hỏi được gửi đi (không có tên, lớp hay thông tin học sinh). Ở gói miễn phí, Google ghi rõ nội dung gửi lên CÓ THỂ được
+     dùng để cải thiện sản phẩm của Google → đừng gửi đề còn mật; hệ thống luôn hỏi xác nhận trước khi gửi.
+   - Giới hạn: gói miễn phí có giới hạn số yêu cầu mỗi phút/ngày (Google quy định và có thể thay đổi): hệ thống gửi từng câu một, tự thử lại khi chạm giới hạn
+     theo phút, và báo rõ khi hết hạn mức ngày. Ngoài ra có giới hạn LBAI_AI_HOURLY=400 câu/giờ/giáo viên.
+   - Tùy chọn trả phí chính xác hơn: LBAI_AI_PROVIDER=claude + ANTHROPIC_API_KEY + pip install -r requirements.txt (model mặc định claude-opus-5-5, đổi bằng
+     LBAI_AI_MODEL_CLAUDE, ví dụ claude-haiku-5-5 cho rẻ).

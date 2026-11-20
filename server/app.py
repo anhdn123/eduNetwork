@@ -26,7 +26,7 @@ import time
 import urllib.parse
 import webbrowser
 
-from . import backup, db, grading, security
+from . import ai, backup, db, grading, security
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PUBLIC = os.path.join(ROOT, "public")
@@ -590,6 +590,42 @@ def r_img_up(c):
     iid = secrets.token_hex(12)
     c.con.execute("INSERT INTO images(id,owner_id,mime,data,created_at) VALUES(?,?,?,?,?)", (iid, c.user["id"], m.group(1), raw, db.now()))
     return {"id": iid}
+
+
+@route("GET", "/api/ai/status", TEACHER_ROLES)
+def r_ai_status(c):
+    return ai.status()
+
+
+@route("POST", "/api/ai/solve", TEACHER_ROLES)
+def r_ai_solve(c):
+    """Nhờ AI giải 1–4 câu hỏi (ảnh đã lưu trên máy chủ hoặc văn bản) và trả đáp án kèm mức tin cậy; không tự ghi vào ngân hàng — giáo viên xem lại rồi lưu."""
+    raw = c.body.get("items")
+    if not isinstance(raw, list) or not 1 <= len(raw) <= ai.MAX_ITEMS:
+        raise ApiError(400, f"Mỗi lần gửi từ 1 đến {ai.MAX_ITEMS} câu")
+    items = []
+    for it in raw:
+        if not isinstance(it, dict) or not isinstance(it.get("id"), str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", it["id"]) or it.get("t") not in ("mcq", "tf", "short"):
+            raise ApiError(400, "Câu hỏi gửi lên không hợp lệ")
+        item = {"id": it["id"], "kind": it["t"], "image": None, "text": None}
+        if it.get("img") is not None:
+            if not valid_img_id(it["img"]):
+                raise ApiError(400, "Ảnh câu hỏi không hợp lệ")
+            row = c.con.execute("SELECT owner_id, mime, data FROM images WHERE id=?", (it["img"],)).fetchone()
+            if not row or (row["owner_id"] != c.user["id"] and c.user["role"] != "admin"):
+                raise ApiError(404, "Không tìm thấy ảnh câu hỏi (hãy lưu ngân hàng rồi thử lại)")
+            item["image"] = (row["mime"], bytes(row["data"]))
+        elif isinstance(it.get("text"), str) and it["text"].strip():
+            item["text"] = it["text"]
+        else:
+            raise ApiError(400, "Câu hỏi cần có ảnh hoặc nội dung chữ")
+        items.append(item)
+    try:
+        res = ai.solve(c.user["id"], items)
+    except ai.AiError as e:
+        raise ApiError(e.status, e.msg)
+    audit(c.con, c.user["id"], "ai_solve", f"{len(items)} câu")
+    return {"results": res, "model": ai.model(), "provider": ai.provider()}
 
 
 @route("DELETE", r"/api/img/([a-f0-9]{16,40})", TEACHER_ROLES)

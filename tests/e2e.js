@@ -11,13 +11,26 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log(...a);
 let fails = 0; const check = (name, ok, extra) => { if (!ok) fails++; log((ok ? 'PASS ' : 'FAIL ') + name + (extra ? '  → ' + extra : '')); };
 
-const server = spawn('python', ['-m', 'server'], {cwd: ROOT, env: {...process.env, LBAI_DATA: DATA, LBAI_PORT: String(PORT), LBAI_QUIET: '1', LBAI_NO_BROWSER: '1', PYTHONUTF8: '1'}, stdio: ['ignore', 'pipe', 'pipe']});
+// Dịch vụ Gemini GIẢ cho kiểm thử tính năng AI giải đáp án (không tốn quota, không cần khóa thật; khóa là chuỗi ngẫu nhiên chỉ dùng với server giả)
+for (const k of Object.keys(process.env)) if (/^(ANTHROPIC_|GEMINI_|LBAI_AI_)/.test(k)) delete process.env[k];   // không kế thừa khóa AI thật của máy
+const AI_PORT = 5300 + Math.floor(Math.random() * 300), AI_KEY = require('crypto').randomBytes(16).toString('hex');
+const fakeAi = require('http').createServer((req, res) => {
+  let b = ''; req.on('data', d => b += d); req.on('end', () => {
+    const body = JSON.parse(b || '{}'), tx = (body.contents[0].parts || []).filter(x => x.text).map(x => x.text);
+    const ids = tx.filter(t => /id=/.test(t)).map(t => t.split('id=')[1].split(' ')[0]), kinds = tx.filter(t => /dạng: /.test(t)).map(t => t.split('dạng: ')[1].split(' ')[0]);
+    const T = {mcq: ['B', 'high', 'Chọn B'], tf: ['ĐSSĐ', 'medium', 'Ý b, c sai'], short: ['3.5', 'low', '= 3,5']};
+    const ok = req.url.includes(':generateContent') && req.headers['x-goog-api-key'] === AI_KEY;
+    const out = JSON.stringify(ok ? {candidates: [{finishReason: 'STOP', content: {role: 'model', parts: [{text: JSON.stringify({answers: ids.map((id, i) => ({id, answer: T[kinds[i]][0], confidence: T[kinds[i]][1], note: T[kinds[i]][2]}))})}]}}]} : {error: {code: 403, message: 'bad key'}});
+    res.writeHead(ok ? 200 : 403, {'Content-Type': 'application/json'}); res.end(out);
+  });
+}).listen(AI_PORT, '127.0.0.1');
+const server = spawn('python', ['-m', 'server'], {cwd: ROOT, env: {...process.env, GEMINI_API_KEY: AI_KEY, GEMINI_BASE_URL: `http://127.0.0.1:${AI_PORT}`, LBAI_DATA: DATA, LBAI_PORT: String(PORT), LBAI_QUIET: '1', LBAI_NO_BROWSER: '1', PYTHONUTF8: '1'}, stdio: ['ignore', 'pipe', 'pipe']});
 let serverErr = ''; server.stderr.on('data', d => serverErr += d); server.stdout.on('data', () => {});
 const DP = 10100 + Math.floor(Math.random() * 800);   // tránh các dải cổng Windows giữ chỗ (netsh int ipv4 show excludedportrange)
 const chrome = spawn(process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--remote-debugging-port=' + DP, '--user-data-dir=' + path.join(DATA, 'chrome'), '--window-size=1300,1700', 'about:blank'], {stdio: ['ignore', 'pipe', 'pipe']});
 let chromeErr = ''; chrome.stderr.on('data', d => chromeErr += d); chrome.stdout.on('data', () => {});
-setTimeout(() => { console.log('TIMEOUT toàn bộ kịch bản (240s)'); cleanup(); process.exit(2); }, 240000);
-const cleanup = () => { try { chrome.kill(); } catch (e) { } try { server.kill(); } catch (e) { } };
+setTimeout(() => { console.log('TIMEOUT toàn bộ kịch bản (300s)'); cleanup(); process.exit(2); }, 300000);
+const cleanup = () => { try { chrome.kill(); } catch (e) { } try { server.kill(); } catch (e) { } try { fakeAi.close(); } catch (e) { } };
 process.on('exit', cleanup);
 
 (async () => {
@@ -175,6 +188,30 @@ process.on('exit', cleanup);
     check('đáp án theo đề được gán đúng và lưu vào DB (TN, Đ/S, TLN, nhiều đề)', ans('exq1') === 0 && ans('exq2') === 2 && JSON.stringify(ans('exq3')) === '[0,0,1,1]' && ans('exq4') === '0,5' && ans('exq5') === 1 && ans('exq6') === 3, JSON.stringify([ans('exq1'), ans('exq2'), ans('exq3'), ans('exq4'), ans('exq5'), ans('exq6')]));
     await api('post', '/api/bank/sync', {delete: exq.map(q => q.id)});
 
+    // 3-ai. AI giải đáp án cho câu chưa có đáp án: kết quả được gắn nhãn 🤖 tới khi giáo viên xác nhận
+    const PNG1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const aiImg = (await api('post', '/api/img', {data: 'data:image/png;base64,' + PNG1})).id, aiBase = {subject: 'Toán', grade: '9', topic: 'AI thử', src: 'ai.pdf', img: aiImg, lv: 2, sol: ''};
+    await api('post', '/api/bank/sync', {upsert: [{...aiBase, id: 'ai1', t: 'mcq', q: 'ảnh một', opts: ['A', 'B', 'C', 'D']}, {...aiBase, id: 'ai2', t: 'tf', q: 'ảnh hai', sts: ['a', 'b', 'c', 'd']}, {...aiBase, id: 'ai3', t: 'short', q: 'ảnh ba'}]});
+    await nav('teacher-builder.html');
+    await waitFor("document.querySelector('[data-act=bank-manage]')", 8);
+    await click('[data-act=bank-manage]');
+    await waitFor("document.querySelector('[data-bk=ai-solve]')", 8, 'nút AI giải trong quản lý ngân hàng');
+    await ev("(() => { const s = document.getElementById('bk-tp'); s.value = 'AI thử'; s.dispatchEvent(new Event('change', {bubbles: true})); })()"); await sleep(300);   // chỉ hiện 3 câu thử (danh sách chia trang 15 câu)
+    await click('[data-bk=ai-solve]');
+    await waitFor("document.querySelectorAll('.bk-row .pill.warn').length>=3", 25, 'AI giải xong và gắn nhãn 🤖');
+    check('AI giải 3 câu (TN, Đ/S, TLN) và gắn nhãn 🤖 chưa xác nhận', true, await ev("[...document.querySelectorAll('.bk-row .pill.warn')].map(e => e.textContent.trim()).join(' | ')"));
+    await click('[data-bk=save]'); await sleep(1500);
+    let ab = (await api('get', '/api/bank')).questions, aq = id => ab.find(q => q.id === id);
+    check('đáp án AI đã lưu đúng định dạng (B → 1 · ĐSSĐ → [0,1,1,0] · 3.5 → 3,5) kèm mức tin cậy', aq('ai1').ans === 1 && JSON.stringify(aq('ai2').ans) === '[0,1,1,0]' && aq('ai3').ans === '3,5' && aq('ai1').aiAns.c === 'high' && aq('ai3').aiAns.c === 'low', JSON.stringify([aq('ai1').ans, aq('ai2').ans, aq('ai3').ans]));
+    await ev("(() => { const s = document.getElementById('bk-f'); s.value = 'ai'; s.dispatchEvent(new Event('change', {bubbles: true})); })()"); await sleep(300);
+    check('lọc “Đáp án AI chưa xác nhận” chỉ còn các câu do AI giải', (await ev("document.querySelectorAll('.bk-row').length")) >= 3);
+    await click('[data-bk=ai-ok-all]'); await sleep(300);
+    check('xác nhận đáp án AI → bỏ nhãn 🤖', (await ev("document.querySelectorAll('.bk-row .pill.warn').length")) === 0);
+    await click('[data-bk=save]'); await sleep(1500);
+    ab = (await api('get', '/api/bank')).questions;
+    check('đã xác nhận: không còn cờ AI, đáp án vẫn giữ', !aq('ai1').aiAns && aq('ai1').ans === 1 && aq('ai3').ans === '3,5');
+    await api('post', '/api/bank/sync', {delete: ['ai1', 'ai2', 'ai3']});
+
     // 3-key. đề có phần “ĐÁP ÁN VÀ LỜI GIẢI” in lại cả đề + bảng đáp án cuối (TN · Đ/S · TLN): bảng cuối là đáp án chuẩn
     const keyDoc = ['PHẦN I. CÂU TRẮC NGHIỆM NHIỀU PHƯƠNG ÁN LỰA CHỌN', 'Câu 1. Hai cộng hai bằng?', 'A. 3 B. 4 C. 5 D. 6', 'Câu 2. Ba nhân ba bằng?', 'A. 6 B. 9 C. 12 D. 3',
       'PHẦN II. CÂU TRẮC NGHIỆM ĐÚNG – SAI', 'Câu 1. Xét các mệnh đề sau:', 'a) Một cộng một bằng hai.', 'b) Hai cộng hai bằng năm.', 'c) Ba nhân hai bằng sáu.', 'd) Bốn chia hai bằng ba.',
@@ -185,12 +222,23 @@ process.on('exit', cleanup);
       'Câu 2. Xét tiếp:', 'a) Một nhân một bằng một.', 'b) Hai trừ một bằng một.', 'c) Ba trừ ba bằng ba.', 'd) Bốn trừ bốn bằng không.', 'Lời giải', 'a) 1 · 1 = 1. ⇒ Đúng', 'b) 2 − 1 = 1. ⇒ Đúng', 'c) 3 − 3 = 0. ⇒ Sai', 'd) 4 − 4 = 0. ⇒ Đúng',
       'Câu 1. Tính 10 chia 4.', 'Lời giải', '10 : 4 = 2,5. ⇒ Đáp số: 2,5', 'Câu 2. Tính 7 chia 2.', 'Lời giải', '7 : 2 = 3,5. ⇒ Đáp số: 3,5',
       'HỌC SINH ĐIỀN NHANH ĐÁP ÁN VÀO BẢNG SAU', 'PHẦN I. Mỗi câu trả lời đúng được 0,25 điểm.', 'Câu 1 2', 'Đáp án B B', 'PHẦN II.', 'Câu a) b) c) d)', '1 Đ S Đ S', '2 Đ Đ S Đ', 'PHẦN III.', 'Câu 1 2', 'Đáp án 2,5 3,5'].join('\n');
-    const kp = await ev(`(async () => { const src = await (await fetch('/app.js')).text(), sc = document.createElement('script');   // app.js nằm trong IIFE: nạp thêm bản có xuất hàm đọc đề để gọi trực tiếp
+    const keyDoc2 = ['PHẦN I. Câu trắc nghiệm nhiều phương án lựa chọn.', 'Câu 1: Hai cộng hai bằng?', 'A. 3. B. 4. C. 5. D. 6.', 'Câu 2: Ba nhân ba bằng?', 'A. 6. B. 9. C. 12. D. 3.',
+      'PHẦN II. Câu trắc nghiệm đúng sai.', 'Câu 1: Xét các mệnh đề:', 'a) 1 + 1 = 2.', 'b) 2 + 2 = 5.', 'c) 3 · 2 = 6.', 'd) 4 : 2 = 3.',
+      'PHẦN III. Thí sinh trả lời từ câu 1 đến câu 2.', 'Câu 1: Tính 10 chia 4.', 'Câu 2: Tính 7 chia 2.',
+      'HƯỚNG DẪN GIẢI CHI TIẾT THAM KHẢO', 'PHẦN I. Câu trắc nghiệm nhiều phương án lựa chọn.', 'Câu 1: Hai cộng hai bằng?', 'A. 3. B. 4. C. 5. D. 6.', 'Lời giải', 'Ta có 2 + 2 = 4 và 4. D. 5 A. 4 không phải đáp án.',
+      'Câu 2: Ba nhân ba bằng?', 'A. 6. B. 9. C. 12. D. 3.', 'Lời giải', '3 · 3 = 9. Xem 2. B và 3. A trong bài trước.',
+      'PHẦN II. Câu trắc nghiệm đúng sai.', 'Câu 1: Xét các mệnh đề:', 'a) 1 + 1 = 2.', 'b) 2 + 2 = 5.', 'c) 3 · 2 = 6.', 'd) 4 : 2 = 3.', 'Lời giải', 'a) Đúng b) Sai c) Đúng d) Sai', 'a) Đúng. 1 + 1 = 2.', 'b) Sai. 2 + 2 = 4.', 'c) Đúng. 3 · 2 = 6.', 'd) Sai. 4 : 2 = 2.',
+      'PHẦN III. Thí sinh trả lời từ câu 1 đến câu 2.', 'Câu 1: Tính 10 chia 4.', 'Lời giải', 'Trả lời: 2,5', '10 : 4 = 2,5.', 'Câu 2: Tính 7 chia 2.', 'Lời giải', 'Trả lời: 3,5', '7 : 2 = 3,5.'].join('\n');
+    const kpAll = await ev(`(async () => { const src = await (await fetch('/app.js')).text(), sc = document.createElement('script');   // app.js nằm trong IIFE: nạp thêm bản có xuất hàm đọc đề để gọi trực tiếp
       sc.textContent = src.replace(/\\}\\)\\(\\);\\s*$/, 'window.__pq = parseQuestionBank;})();'); document.head.append(sc);
-      return window.__pq(${JSON.stringify(keyDoc)}, 'k.pdf', false).questions.map(q => ({t: q.t, ans: q.ans, sol: (q.sol || '').slice(0, 14)})); })()`);
+      const one = d => window.__pq(d, 'k.pdf', false).questions.map(q => ({t: q.t, ans: q.ans, sol: (q.sol || '').slice(0, 14)}));
+      return {a: one(${JSON.stringify(keyDoc)}), b: one(${JSON.stringify(keyDoc2)})}; })()`);
+    const kp = kpAll.a, kp2 = kpAll.b;
     await nav('teacher-builder.html');   // tải lại trang để bỏ bản app.js nạp thêm
     check('đề lặp lại ở phần lời giải: đúng 2 TN + 2 Đ/S + 2 TLN, đáp án lấy từ bảng cuối', kp.length === 6 && kp[0].ans === 1 && kp[1].ans === 1 && JSON.stringify(kp[2].ans) === '[0,1,0,1]' && JSON.stringify(kp[3].ans) === '[0,0,1,0]' && kp[4].ans === '2,5' && kp[5].ans === '3,5', JSON.stringify(kp.map(q => q.ans)));
     check('lời giải chỉ là phần sau “Lời giải” (câu TN in lại đề thì không có lời giải)', !kp[0].sol && kp[2].sol.startsWith('a) 1 + 1') && kp[4].sol.startsWith('10 : 4'), JSON.stringify(kp.map(q => q.sol)));
+    check('đề không có bảng đáp án cuối (đáp án nằm trong từng lời giải): Đ/S đọc từ bảng “a) Đúng b) Sai…”, TLN từ “Trả lời: …”', kp2.length === 5 && JSON.stringify(kp2[2].ans) === '[0,1,0,1]' && kp2[3].ans === '2,5' && kp2[4].ans === '3,5', JSON.stringify(kp2.map(q => q.ans)));
+    check('không nhặt nhầm “4. D”, “2. B” rải rác trong lời giải thành đáp án trắc nghiệm', kp2[0].ans == null && kp2[1].ans == null, JSON.stringify([kp2[0].ans, kp2[1].ans]));
     // 3a. giáo viên mở chuyên đề "Hệ phương trình" cho lớp luyện tập tự do
     const cid = (await api('get', '/api/classes')).classes[0].id;
     const op = await api('post', `/api/classes/${cid}/practice`, {open: [{subject: 'Toán', grade: '9', topic: 'Hệ phương trình'}]});

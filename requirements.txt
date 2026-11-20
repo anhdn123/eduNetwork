@@ -1,0 +1,3 @@
+# CHỈ cần nếu dùng AI Claude (tùy chọn, trả phí: đặt ANTHROPIC_API_KEY và LBAI_AI_PROVIDER=claude).
+# AI Gemini (mặc định, có gói miễn phí) và mọi tính năng khác chỉ dùng thư viện chuẩn của Python — không cần cài gì.
+anthropic>=1.0.0

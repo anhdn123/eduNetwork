@@ -9,7 +9,7 @@ services:
     runtime: python
     plan: free
     region: singapore            # gần Việt Nam nhất
-    buildCommand: python --version   # ứng dụng chỉ dùng thư viện chuẩn của Python, không cần cài gói
+    buildCommand: python --version   # ứng dụng chỉ dùng thư viện chuẩn của Python, không cần cài gói (kể cả AI Gemini; chỉ AI Claude tùy chọn mới cần `pip install -r requirements.txt`)
     startCommand: python -m server
     healthCheckPath: /api/status
     envVars:
@@ -23,6 +23,8 @@ services:
         value: "1"
       - key: LBAI_QUIET           # không ghi log từng yêu cầu (tránh lộ địa chỉ IP người dùng vào log)
         value: "1"
+      - key: GEMINI_API_KEY       # khóa Google Gemini (BÍ MẬT, có gói miễn phí tại Google AI Studio) để bật AI giải đáp án khi import đề — bạn tự nhập trong bảng điều khiển Render, KHÔNG ghi vào file này; để trống = tắt tính năng AI
+        sync: false
       - key: LBAI_SETUP_CODE      # mã bí mật để tạo tài khoản quản trị lần đầu — bạn tự nhập trong bảng điều khiển Render, KHÔNG ghi vào file này
         sync: false
       - key: LBAI_BACKUP_URL      # địa chỉ dự án Supabase, dạng https://xxxx.supabase.co — tự nhập trong bảng điều khiển Render
