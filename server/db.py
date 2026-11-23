@@ -237,6 +237,7 @@ CREATE TABLE IF NOT EXISTS att_rules(           -- quy tắc phạt muộn / th�
   late_fee INTEGER NOT NULL DEFAULT 1000,       -- đồng / phút đi muộn
   reward_min REAL NOT NULL DEFAULT 8,           -- điểm bài kiểm tra tối thiểu (thang 10) để được thưởng
   reward_amount INTEGER NOT NULL DEFAULT 5000,  -- điểm thưởng mỗi bài kiểm tra đạt
+  missed_penalty INTEGER NOT NULL DEFAULT 5000, -- điểm bị trừ cho mỗi bài được giao mà quá hạn vẫn chưa nộp
   updated_at INTEGER NOT NULL,
   PRIMARY KEY(owner_id, month)
 );
@@ -263,6 +264,9 @@ def init():
     # nâng cấp CSDL cũ: thêm cột số phút đi muộn cho bảng điểm danh
     if "late_min" not in [r[1] for r in con.execute("PRAGMA table_info(attendance)").fetchall()]:
         con.execute("ALTER TABLE attendance ADD COLUMN late_min INTEGER NOT NULL DEFAULT 0")
+    # quy tắc phạt bài được giao quá hạn không làm (mặc định trừ 5.000 điểm mỗi bài)
+    if "missed_penalty" not in [r[1] for r in con.execute("PRAGMA table_info(att_rules)").fetchall()]:
+        con.execute("ALTER TABLE att_rules ADD COLUMN missed_penalty INTEGER NOT NULL DEFAULT 5000")
     # bài tự luyện tính điểm theo thang mới (scheme=1: điểm thật theo dạng câu) khác bài cũ (scheme=0: số câu đúng)
     if "scheme" not in [r[1] for r in con.execute("PRAGMA table_info(practice)").fetchall()]:
         con.execute("ALTER TABLE practice ADD COLUMN scheme INTEGER NOT NULL DEFAULT 0")

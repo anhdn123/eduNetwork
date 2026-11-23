@@ -1035,6 +1035,68 @@ class ApiTest(unittest.TestCase):
         finally:
             app.today_vn = real_today
 
+    def test_zz_missed_penalty(self):
+        """Bài được giao có hạn nộp mà quá hạn chưa nộp → −5.000 điểm/bài (đặt được); nộp đúng hạn thì không bị trừ; gia hạn thì hết trừ;
+        bài không có hạn không bị trừ; học sinh tự xem điểm của mình, giáo viên thấy trong thống kê."""
+        lan = self.C()
+        lan.post("/api/login", {"username": "lan", "password": LAN_PW})
+        cid = lan.post("/api/classes", {"name": "PHAT", "grade": "9"})[1]["id"]
+        accs = lan.post("/api/students/bulk", {"class_id": cid, "rows": ["Nộp Đủ", "Quên Bài"]})[1]["accounts"]
+        A, B = accs[0]["id"], accs[1]["id"]
+        v = {"code": "P1", "questions": [mcq(1, 0), mcq(2, 0)]}
+
+        def give(title, due):
+            st, r = lan.post("/api/assignments", {"title": title, "class_id": cid, "dist_mode": "alt", "duration_min": 0, "max_attempts": 1, "show_result": True,
+                                                  "due_at": due, "exam": {"title": title, "variations": [v]}})
+            self.assertEqual(st, 200, r)
+            return r["id"]
+        now = int(time.time())
+        late_id = give("Bài quá hạn", now + 3600)           # hạn còn dài lúc tạo; sẽ chỉnh về quá khứ sau khi A nộp bài khác
+        ok_id = give("Bài A nộp đúng hạn", now + 3600)
+        free_id = give("Bài không hạn", None)
+        future_id = give("Bài còn hạn", now + 86400)
+        sa, sb = self.C(), self.C()
+        sa.post("/api/login", {"username": accs[0]["username"], "password": accs[0]["password"]})
+        sb.post("/api/login", {"username": accs[1]["username"], "password": accs[1]["password"]})
+        sa.post(f"/api/assignments/{ok_id}/start")
+        self.assertEqual(sa.post(f"/api/assignments/{ok_id}/submit", {"answers": [0, 0]})[0], 200)
+        month = app.month_key()
+        self.assertEqual(sb.get("/api/points/me")[1]["parts"]["missed"], 0)                      # chưa quá hạn bài nào
+        past = now - 60                                                                          # hai bài hết hạn
+        for aid in (late_id, ok_id):
+            self.assertEqual(lan.call("PATCH", f"/api/assignments/{aid}", {"due_at": past})[0], 200)
+        due_month = app.month_key(past)
+        pa = sa.get(f"/api/points/me?month={due_month}")[1]
+        pb = sb.get(f"/api/points/me?month={due_month}")[1]
+        self.assertEqual([m["title"] for m in pa["missed"]], ["Bài quá hạn"])                    # A nộp bài kia đúng hạn → chỉ thiếu 1 bài
+        self.assertEqual(sorted(m["title"] for m in pb["missed"]), ["Bài A nộp đúng hạn", "Bài quá hạn"])
+        self.assertEqual((pa["parts"]["missed"], pb["parts"]["missed"]), (-5000, -10000))        # mặc định 5.000 điểm/bài
+        self.assertEqual(pb["net"], -10000)
+        self.assertEqual(pb["history"][0]["month"], month)
+        self.assertEqual(len(pb["history"]), 6)
+        # học sinh không thể nộp bài đã quá hạn
+        self.assertEqual(sb.post(f"/api/assignments/{late_id}/start")[0], 403)
+        # thống kê của giáo viên: cùng số liệu
+        t = {x["id"]: x for x in lan.get(f"/api/attendance/stats?month={due_month}&class_id={cid}")[1]["students"]}
+        self.assertEqual((t[A]["missed_fine"], t[B]["missed_fine"]), (5000, 10000))
+        self.assertEqual(t[B]["net_points"], -10000 - t[B]["late_fine"] + t[B]["test_reward"] + t[B]["practice_bonus"])
+        # đổi mức phạt theo quy tắc của giáo viên (áp dụng từ tháng đặt trở đi) và đặt 0 = tắt
+        self.assertEqual(lan.post("/api/att-rules", {"month": due_month, "missed_penalty": 2000})[0], 200)
+        self.assertEqual(lan.get(f"/api/att-rules?month={due_month}")[1]["rules"]["missed_penalty"], 2000)
+        self.assertEqual(sb.get(f"/api/points/me?month={due_month}")[1]["parts"]["missed"], -4000)
+        self.assertEqual(lan.post("/api/att-rules", {"month": due_month, "missed_penalty": -1})[0], 400)
+        self.assertEqual(lan.post("/api/att-rules", {"month": due_month, "missed_penalty": 0})[0], 200)
+        self.assertEqual(sb.get(f"/api/points/me?month={due_month}")[1]["parts"]["missed"], 0)
+        lan.post("/api/att-rules", {"month": due_month, "missed_penalty": 5000})
+        # gia hạn → hết bị trừ; bài không hạn / còn hạn không bao giờ bị trừ
+        self.assertEqual(lan.call("PATCH", f"/api/assignments/{late_id}", {"due_at": now + 7200})[0], 200)
+        self.assertEqual([m["title"] for m in sb.get(f"/api/points/me?month={due_month}")[1]["missed"]], ["Bài A nộp đúng hạn"])
+        self.assertTrue({free_id, future_id}.isdisjoint({m["id"] for m in sb.get(f"/api/points/me?month={due_month}")[1]["missed"]}))
+        # chỉ học sinh gọi được; tháng sai định dạng bị từ chối
+        self.assertEqual(lan.get("/api/points/me")[0], 403)
+        self.assertEqual(sb.get("/api/points/me?month=abc")[0], 400)
+        self.assertEqual(self.C().get("/api/points/me")[0], 401)
+
     def test_zz_attendance_rules(self):
         """Học sinh mới tạo vẫn có lịch; phút đi muộn; chốt điểm danh; phạt muộn và thưởng điểm theo quy tắc từng tháng."""
         import datetime as dt

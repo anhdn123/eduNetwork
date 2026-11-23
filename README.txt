@@ -190,3 +190,10 @@ dùng bucket riêng tư, giữ khóa bí mật, và xem lại yêu cầu pháp l
      5) fly status / fly logs để kiểm tra; đường dẫn dạng https://learning-by-ai.fly.dev
    Lưu ý: CHỈ MỘT nơi được ghi vào kho sao lưu. Trước khi bật Fly, hãy tắt dịch vụ Render (hoặc xóa LBAI_BACKUP_KEY ở Render), và ngược lại.
    Chạy 1 máy duy nhất (SQLite không chia sẻ giữa nhiều máy): `fly scale count 1`.
+
+13. PHẠT BÀI ĐƯỢC GIAO KHÔNG LÀM + HỌC SINH TỰ XEM ĐIỂM
+   - Mỗi bài giáo viên giao CÓ HẠN NỘP mà đến hạn học sinh vẫn chưa nộp → bị trừ 5.000 điểm (mặc định) cho mỗi bài. Trừ vào tháng của hạn nộp.
+   - Bài không đặt hạn nộp thì không bị trừ (hệ thống không biết lúc nào là quá hạn). Gia hạn bài thì điểm bị trừ được tính lại (hết trừ).
+   - Giáo viên đổi mức phạt ở tab "Điểm danh" > "Phạt đi muộn · Thưởng điểm" (ô "Phạt không làm bài"; áp dụng từ tháng đặt trở đi; 0 = tắt).
+     Thống kê đi học có thêm cột "Phạt không làm bài" và điểm ròng đã trừ khoản này.
+   - Học sinh xem ở trang "Bài của tôi" > tab "Điểm của tôi": điểm ròng từng tháng, chi tiết thưởng bài kiểm tra, thưởng luyện tập, phạt đi muộn, các bài quá hạn chưa nộp.

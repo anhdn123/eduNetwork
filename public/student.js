@@ -19,6 +19,7 @@ async function draw() {
     const st = a.doing ? '<span class="pill warn">Đang làm dở</span>' : a.attempts && left <= 0 ? '<span class="pill ok">Đã nộp</span>' : a.closed || over ? '<span class="pill bad">Hết hạn</span>' : a.attempts ? '<span class="pill blue">Làm lại được</span>' : '<span class="pill blue">Chưa làm</span>';
     const can = !a.closed && !over && (a.doing || left > 0);
     return `<div class="card" style="margin-bottom:12px" data-a="${a.id}"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><div><b style="font-size:15px">${esc(a.title)}</b><div style="font-size:11px;color:#667085;margin-top:3px">${a.duration_min ? '⏱ ' + a.duration_min + ' phút' : '⏱ Không giới hạn thời gian'} · ${a.due_at ? 'Hạn nộp: ' + fmtDate(a.due_at) : 'Không có hạn nộp'} · Làm tối đa ${a.max_attempts} lần (đã làm ${a.attempts})</div></div><div>${st}</div></div>
+      ${over && !a.attempts ? '<div style="margin:8px 0;font-size:12px;color:#b91c1c"><b>⛔ Quá hạn mà chưa nộp</b> — bị trừ điểm (xem tab “⭐ Điểm của tôi”).</div>' : !over && a.due_at && !a.attempts ? '<div style="margin:6px 0 0;font-size:11px;color:#b45309">Nếu quá hạn nộp mà chưa làm bài này sẽ bị trừ điểm.</div>' : ''}
       ${a.best != null ? `<div style="margin:8px 0;font-size:13px">Điểm cao nhất: <b style="font-size:18px">${fmtScore(a.best)}</b>/10</div>` : ''}
       <div class="lb-row" style="margin-top:10px">${can ? `<button class="btn btn-blue sm" data-go="1">${a.doing ? '▶ Làm tiếp' : '▶ Bắt đầu làm bài'}</button>` : ''}
         ${a.attempts ? `<button class="btn btn-outline sm" data-rv="1">📖 Xem lại bài${a.reveal ? ' · đáp án & lời giải' : ''}</button>` : ''}
@@ -150,14 +151,48 @@ async function drawPractice() {
   });
 }
 
+/* ---------- Điểm của tôi: thưởng/phạt trong tháng (bài kiểm tra, luyện tập, đi muộn, bài quá hạn không làm) ---------- */
+let ptMonth = null;
+async function drawPoints() {
+  const host = $('#v-points');
+  host.innerHTML = '<div class="card empty">Đang tải...</div>';
+  let r;
+  try { r = await api.get('/api/points/me' + (ptMonth ? '?month=' + ptMonth : '')); } catch (e) { host.innerHTML = `<div class="card empty">${esc(e.message)}</div>`; return; }
+  ptMonth = r.month;
+  const ml = m => m.slice(5) + '/' + m.slice(0, 4), n = v => Math.abs(v).toLocaleString('vi-VN'), sg = v => (v > 0 ? '+' : v < 0 ? '−' : '') + n(v), col = v => v < 0 ? '#b91c1c' : v > 0 ? '#166534' : '#667085';
+  const P = r.parts, ru = r.rules;
+  const row = (icon, label, val, note) => `<tr><td style="width:34px;font-size:20px">${icon}</td><td><b>${label}</b><div style="font-size:11px;color:#667085">${note}</div></td><td style="text-align:right;white-space:nowrap"><b style="color:${col(val)};font-size:16px">${sg(val)}</b></td></tr>`;
+  host.innerHTML = `<div class="grid2" style="grid-template-columns:minmax(300px,420px) 1fr"><div class="card">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><h2 style="margin:0;font-size:18px">⭐ Điểm của tôi</h2>
+        <select id="pt-m" style="margin-left:auto;padding:6px;border:1px solid var(--line);border-radius:8px">${r.history.map(h => `<option value="${h.month}" ${h.month === r.month ? 'selected' : ''}>Tháng ${ml(h.month)}</option>`).join('')}</select></div>
+      <div style="font-size:12px;color:#667085">Điểm ròng tháng ${ml(r.month)}</div>
+      <div style="font-size:38px;font-weight:800;color:${r.net < 0 ? '#b91c1c' : '#1e40af'};line-height:1.2">${sg(r.net)} <small style="font-size:14px;font-weight:400;color:#667085">điểm</small></div>
+      <table class="tbl" style="margin-top:10px;font-size:13px">
+        ${row('🏆', 'Thưởng bài kiểm tra', P.tests, `Bài giáo viên giao đạt từ ${String(ru.reward_min).replace('.', ',')}/10: +${n(ru.reward_amount)} mỗi bài`)}
+        ${row('🎯', 'Thưởng tự luyện tập', P.practice, 'Cộng khi làm đúng câu trong bài tự luyện')}
+        ${row('⏰', 'Phạt đi muộn', P.late, r.late_min ? `${r.late_min} phút muộn × ${n(ru.late_fee)} điểm/phút` : 'Không đi muộn')}
+        ${row('⛔', 'Phạt không làm bài', P.missed, r.missed.length ? `${r.missed.length} bài quá hạn chưa nộp` : `Bài quá hạn mà chưa nộp bị trừ ${n(ru.missed_penalty)} điểm/bài`)}
+      </table>
+      <div style="font-size:11px;color:#475467;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-top:10px;line-height:1.5">
+        <b>Luật:</b> mỗi bài được giao có hạn nộp mà đến hạn bạn <b>chưa nộp</b> thì bị trừ <b>${n(ru.missed_penalty)} điểm</b>. Nộp đúng hạn thì không bị trừ; nếu giáo viên gia hạn, điểm bị trừ được tính lại. Điểm tính theo từng tháng.</div></div>
+    <div class="card"><h2 style="margin:0 0 10px;font-size:18px">Chi tiết tháng ${ml(r.month)}</h2>
+      ${r.missed.length ? `<b style="font-size:13px;color:#b91c1c">Bài quá hạn chưa nộp</b><table class="tbl" style="margin:4px 0 14px;font-size:12px"><tr><th>Bài</th><th>Hạn nộp</th><th style="text-align:right">Điểm</th></tr>${r.missed.map(m => `<tr><td>${esc(m.title)}</td><td>${fmtDate(m.due_at)}</td><td style="text-align:right;color:#b91c1c"><b>−${n(m.amount)}</b></td></tr>`).join('')}</table>` : ''}
+      ${r.tests.length ? `<b style="font-size:13px;color:#166534">Bài kiểm tra được thưởng</b><table class="tbl" style="margin:4px 0 14px;font-size:12px"><tr><th>Bài</th><th>Điểm</th><th style="text-align:right">Thưởng</th></tr>${r.tests.map(t => `<tr><td>${esc(t.title)}</td><td>${fmtScore(t.score10)}/10</td><td style="text-align:right;color:#166534"><b>+${n(t.amount)}</b></td></tr>`).join('')}</table>` : ''}
+      ${r.practice.length ? `<b style="font-size:13px;color:#b45309">Điểm cộng luyện tập</b><table class="tbl" style="margin:4px 0 14px;font-size:12px"><tr><th>Bài</th><th>Lúc</th><th style="text-align:right">Thưởng</th></tr>${r.practice.map(p => `<tr><td>${esc(p.title)}</td><td>${fmtDate(p.at)}</td><td style="text-align:right;color:#b45309"><b>+${n(p.points)}</b></td></tr>`).join('')}</table>` : ''}
+      ${!r.missed.length && !r.tests.length && !r.practice.length && !r.late_min ? '<div class="empty">Tháng này chưa có điểm thưởng hay điểm phạt nào.</div>' : ''}
+      <b style="font-size:13px">Các tháng gần đây</b><table class="tbl" style="margin-top:4px;font-size:12px">${r.history.map(h => `<tr><td>Tháng ${ml(h.month)}</td><td style="text-align:right"><b style="color:${col(h.net)}">${sg(h.net)}</b></td></tr>`).join('')}</table></div></div>`;
+  $('#pt-m', host).onchange = e => { ptMonth = e.target.value; drawPoints(); };
+}
+
 $$('#stabs button').forEach(b => b.onclick = () => {
   $$('#stabs button').forEach(x => x.classList.toggle('on', x === b));
-  $('#v-assigned').hidden = b.dataset.t !== 'assigned'; $('#v-practice').hidden = b.dataset.t !== 'practice';
+  $('#v-assigned').hidden = b.dataset.t !== 'assigned'; $('#v-practice').hidden = b.dataset.t !== 'practice'; $('#v-points').hidden = b.dataset.t !== 'points';
   if (b.dataset.t === 'practice') drawPractice();
+  if (b.dataset.t === 'points') drawPoints();
 });
 
 draw();
-const hashTab = () => { if (location.hash === '#practice') { const b = $('#stabs [data-t="practice"]'); if (b) b.click(); } };
+const hashTab = () => { const t = location.hash.slice(1); if (t === 'practice' || t === 'points') { const b = $('#stabs [data-t="' + t + '"]'); if (b) b.click(); } };
 hashTab();
 window.addEventListener('hashchange', hashTab);
 })();

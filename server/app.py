@@ -1754,17 +1754,17 @@ def r_attendance_close(c):
 
 
 # ---------- quy tắc phạt đi muộn / thưởng điểm (đổi được theo tháng, áp dụng từ tháng đặt trở đi) ----------
-RULE_DEFAULT = {"late_fee": 1000, "reward_min": 8.0, "reward_amount": 5000}
+RULE_DEFAULT = {"late_fee": 1000, "reward_min": 8.0, "reward_amount": 5000, "missed_penalty": 5000}
 
 
 def att_rules(con, owner_id, month) -> dict:
     """Quy tắc của giáo viên có hiệu lực ở tháng `month`: bản ghi gần nhất không muộn hơn tháng đó, chưa đặt thì dùng mặc định."""
-    r = con.execute("SELECT late_fee, reward_min, reward_amount, month FROM att_rules WHERE owner_id=? AND month<=? ORDER BY month DESC LIMIT 1",
+    r = con.execute("SELECT late_fee, reward_min, reward_amount, missed_penalty, month FROM att_rules WHERE owner_id=? AND month<=? ORDER BY month DESC LIMIT 1",
                     (owner_id, month)).fetchone()
     out = dict(RULE_DEFAULT)
     out["from"] = None
     if r:
-        out.update({k: r[k] for k in ("late_fee", "reward_min", "reward_amount")})
+        out.update({k: r[k] for k in ("late_fee", "reward_min", "reward_amount", "missed_penalty")})
         out["from"] = r["month"]
     return out
 
@@ -1793,6 +1793,59 @@ def test_rewards(con, sid, owner_id, month) -> list:
     return out
 
 
+def missed_assignments(con, sid, month, now=None) -> list:
+    """Bài được giao cho học sinh đã QUÁ HẠN NỘP trong tháng `month` (theo ngày hết hạn) mà học sinh chưa nộp bài nào → bị trừ điểm theo quy tắc của giáo viên giao bài.
+    Chỉ tính bài có hạn nộp (không hạn thì không biết lúc nào là quá hạn). Tính lại mỗi lần xem nên giáo viên gia hạn là hết bị trừ."""
+    now = db.now() if now is None else now
+    out = []
+    for a in con.execute("SELECT a.id, a.title, a.owner_id, a.due_at FROM assignments a JOIN assignment_students s ON s.assignment_id=a.id "
+                         "WHERE s.student_id=? AND a.due_at IS NOT NULL AND a.due_at<? AND NOT EXISTS("
+                         "SELECT 1 FROM submissions x WHERE x.assignment_id=a.id AND x.student_id=? AND x.submitted_at IS NOT NULL) ORDER BY a.due_at",
+                         (sid, now, sid)).fetchall():
+        if month_key(a["due_at"]) != month:
+            continue
+        amount = att_rules(con, a["owner_id"], month)["missed_penalty"]
+        if amount > 0:
+            out.append({"id": a["id"], "title": a["title"], "due_at": a["due_at"], "amount": amount})
+    return out
+
+
+def my_points(con, user, month) -> dict:
+    """Điểm của một học sinh trong một tháng: thưởng bài kiểm tra + thưởng luyện tập − phạt đi muộn − phạt bài quá hạn không làm (cùng cách tính với thống kê của giáo viên)."""
+    sid = user["id"]
+    cls = con.execute("SELECT owner_id FROM classes WHERE id=?", (user["class_id"],)).fetchone() if user["class_id"] else None
+    owner = cls["owner_id"] if cls else None
+    rules = att_rules(con, owner, month)
+    y, m = int(month[:4]), int(month[5:])
+    first, last = datetime.date(y, m, 1), datetime.date(y, m, calendar.monthrange(y, m)[1])
+    late_min = con.execute("SELECT COALESCE(SUM(late_min),0) s FROM attendance WHERE student_id=? AND status='present' AND date BETWEEN ? AND ? AND date<=?",
+                           (sid, first.isoformat(), last.isoformat(), today_vn().isoformat())).fetchone()["s"]
+    tests = test_rewards(con, sid, owner, month)
+    practice = [{"title": r["title"], "points": r["points"], "at": r["at"]} for r in con.execute(
+        "SELECT b.points, b.at, p.title FROM bonus_log b JOIN practice p ON p.id=b.practice_id WHERE b.student_id=? AND b.month=? AND b.points<>0 ORDER BY b.at DESC",
+        (sid, month)).fetchall()]
+    missed = missed_assignments(con, sid, month)
+    parts = {"tests": sum(t["amount"] for t in tests), "practice": sum(p["points"] for p in practice),
+             "late": -late_min * rules["late_fee"], "missed": -sum(x["amount"] for x in missed)}
+    return {"month": month, "net": sum(parts.values()), "parts": parts, "tests": tests, "practice": practice, "late_min": late_min, "missed": missed,
+            "rules": {k: rules[k] for k in ("late_fee", "reward_min", "reward_amount", "missed_penalty")}}
+
+
+@route("GET", "/api/points/me", ("student",))
+def r_my_points(c):
+    month = need_month(c.query.get("month") or month_key())
+    out = my_points(c.con, c.user, month)
+    cur = month_key()
+    y, m = int(cur[:4]), int(cur[5:])
+    months = []
+    for i in range(6):
+        mm = m - i
+        yy = y + (mm - 1) // 12
+        months.append(f"{yy:04d}-{(mm - 1) % 12 + 1:02d}")
+    out["history"] = [{"month": x, "net": out["net"] if x == month else my_points(c.con, c.user, x)["net"]} for x in months]
+    return out
+
+
 @route("GET", "/api/att-rules", TEACHER_ROLES)
 def r_att_rules(c):
     month = need_month(c.query.get("month") or month_key())
@@ -1809,12 +1862,13 @@ def r_att_rules_set(c):
     month = need_month(c.body.get("month") or month_key())
     fee = need_int(c.body, "late_fee", 0, 1_000_000, RULE_DEFAULT["late_fee"])
     amount = need_int(c.body, "reward_amount", 0, 100_000_000, RULE_DEFAULT["reward_amount"])
+    miss = need_int(c.body, "missed_penalty", 0, 100_000_000, RULE_DEFAULT["missed_penalty"])
     rmin = c.body.get("reward_min", RULE_DEFAULT["reward_min"])
     if isinstance(rmin, bool) or not isinstance(rmin, (int, float)) or not 0 <= rmin <= 10:
         raise ApiError(400, "Mức điểm được thưởng phải từ 0 đến 10")
-    c.con.execute("INSERT OR REPLACE INTO att_rules(owner_id, month, late_fee, reward_min, reward_amount, updated_at) VALUES(?,?,?,?,?,?)",
-                  (c.user["id"], month, fee, float(rmin), amount, db.now()))
-    audit(c.con, c.user["id"], "att_rules", f"từ {month}: muộn {fee}đ/phút · thưởng ≥{rmin} → +{amount}")
+    c.con.execute("INSERT OR REPLACE INTO att_rules(owner_id, month, late_fee, reward_min, reward_amount, missed_penalty, updated_at) VALUES(?,?,?,?,?,?,?)",
+                  (c.user["id"], month, fee, float(rmin), amount, miss, db.now()))
+    audit(c.con, c.user["id"], "att_rules", f"từ {month}: muộn {fee}đ/phút · thưởng ≥{rmin} → +{amount} · bài quá hạn không làm −{miss}")
     return {"ok": True}
 
 
@@ -1880,14 +1934,16 @@ def r_attendance_stats(c):
         tests = test_rewards(c.con, s["id"], owner, month)
         test_pts = sum(t["amount"] for t in tests)
         practice_pts = c.con.execute("SELECT COALESCE(SUM(points),0) s FROM bonus_log WHERE student_id=? AND month=?", (s["id"], month)).fetchone()["s"]
+        missed = missed_assignments(c.con, s["id"], month)
+        missed_fine = sum(m_["amount"] for m_ in missed)
         out.append({"id": s["id"], "name": s["name"], "username": s["username"], "class_id": s["class_id"], "class_name": cls[s["class_id"]]["name"],
                     "present": present, "absent": absent, "planned": planned, "amount": amount, "marks": "".join(marks), "notes": notes,
                     "late_min": late, "late_fine": fine, "tests": tests, "test_reward": test_pts, "practice_bonus": practice_pts,
-                    "net_points": test_pts + practice_pts - fine})
+                    "missed": missed, "missed_fine": missed_fine, "net_points": test_pts + practice_pts - fine - missed_fine})
     fees = {k: (sched_on(sch[k], min(today, last)) or (None, 0))[1] for k in cls}
     return {"month": month, "days": ndays, "first_weekday": first.weekday(), "today": today.isoformat(),
             "classes": [{"id": k["id"], "name": k["name"], "fee": fees[k["id"]]} for k in cls.values()], "students": out,
-            "total": sum(x["amount"] for x in out), "total_late_fine": sum(x["late_fine"] for x in out),
+            "total": sum(x["amount"] for x in out), "total_late_fine": sum(x["late_fine"] for x in out), "total_missed_fine": sum(x["missed_fine"] for x in out),
             "total_reward": sum(x["test_reward"] + x["practice_bonus"] for x in out)}
 
 
