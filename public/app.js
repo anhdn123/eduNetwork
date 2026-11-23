@@ -549,7 +549,7 @@ function parseKey(key) {
 
 // Tìm dãy phương án theo thứ tự (A,B,C,D hoặc a,b,c,d) trong chuỗi đã gộp dòng
 function findSeq(flat, letters, closer) {
-  const rx = L => new RegExp('(?:^|\\s|(?<=[.;]))' + L + '\\s*' + closer + '\\s*', 'g');   // phương án có thể dính liền dấu chấm của phương án trước: “…(O).B. không có…”
+  const rx = L => new RegExp('(?:^|\\s|(?<=[.;\\s]))' + L + '\\s*' + closer + '\\s*', 'g');   // phương án có thể dính liền dấu chấm của phương án trước: “…(O).B. không có…”
   const r0 = rx(letters[0]); let m0, best = null;
   while ((m0 = r0.exec(flat))) {
     const pos = [{i: m0.index + (/^\s/.test(m0[0]) ? 1 : 0), e: m0.index + m0[0].length}];
@@ -586,6 +586,9 @@ function parseBlock(raw, sec, ke, infer) {
   const up = lowFirst ? null : findSeq(flat, ['A', 'B', '(?:C|c|e|E|€)', 'D'], '[.)]');
   if (up) {
     const opts = up.map((p, k) => flat.slice(p.e, k < 3 ? up[k + 1].i : undefined).trim());
+    const stem4 = flat.slice(0, up[0].i);
+    if (/(?:chọn|xét)\s+(?:là\s+)?đúng\s+hoặc\s+sai|đúng\s+hoặc\s+sai/i.test(stem4) && opts.every(o => o.replace(/[.\s]/g, '').length > 2))   // 4 ý đánh A. B. C. D. nhưng yêu cầu chọn đúng/sai từng ý
+      return [mk({t: 'tf', q: esc(stem4.trim()), sts: opts, ans: [null, null, null, null]})];
     return [mk({t: 'mcq', q: esc(flat.slice(0, up[0].i).trim()), opts, ans: info && info.l ? 'ABCD'.indexOf(info.l) : null})];
   }
   // công thức làm hỏng phương án D: thấy đủ A, B, C vẫn là trắc nghiệm (phương án D để trống cho giáo viên sửa)
@@ -624,7 +627,10 @@ function parseBlock(raw, sec, ke, infer) {
 }
 
 // câu thuộc một đề thi (examId) được giữ riêng theo từng đề, không bị coi là trùng với câu cùng nội dung ở chuyên đề/đề khác
-const bankKey = q => (q.examId ? q.examId + '|' : '') + q.t + '|' + q.q + '|' + (q.opts || []).join('|') + '|' + (q.sts || []).join('|');
+// Câu có số in trong đề (num) thì trùng chỉ khi cùng file + cùng số câu + cùng nội dung: một đề hay lặp lại cùng lời dẫn với công thức/hình khác nhau (chữ đọc ra giống hệt).
+const bankBase = q => (q.examId ? q.examId + '|' : '') + q.t + '|' + q.q + '|' + (q.opts || []).join('|') + '|' + (q.sts || []).join('|');
+const bankKey = q => bankBase(q) + (q.num != null && q.src ? '|' + q.src + '#' + q.num : '');
+const bankKeyLegacy = q => bankBase(q) + '|@' + (q.src || '');   // câu import từ bản cũ chưa lưu số câu: chỉ khớp với câu cùng file
 
 function parseQuestionBank(raw, src, hasLines) {
   const text = String(raw || '').replace(/\r/g, '').replace(/ /g, ' ').replace(/[ \t]+/g, ' ');
@@ -742,7 +748,7 @@ function parseQuestionBank(raw, src, hasLines) {
       if (q.sol && (solMathy || (ke && ke.a && ke.a.solBad) || solGarbled(q))) q.solBad = true;
       delete q.grp;
       q.num = n;   // số câu in trong đề (“Câu 61.”): để nhập nhanh đáp án theo đúng số câu thay vì thứ tự trong danh sách
-      const k = bankKey(q); if (seen.has(k)) return; seen.add(k);
+      const k = bankKey({...q, src}); if (seen.has(k)) return; seen.add(k);
       out.push({id: 'b' + Date.now().toString(36) + (BID++), src, ...q});
     });
   });
@@ -757,10 +763,11 @@ function parseExamTextFromWeb(raw) { return parseQuestionBank(raw, 'web').questi
 let SOL_MERGED = 0;
 function addToBank(list) {
   S.bank = S.bank || [];
-  const idx = new Map(S.bank.map(q => [bankKey(q), q])); let n = 0; SOL_MERGED = 0;
+  const idx = new Map(); let n = 0; SOL_MERGED = 0;
+  S.bank.forEach(q => { idx.set(bankKey(q), q); if (q.num == null && !idx.has(bankKeyLegacy(q))) idx.set(bankKeyLegacy(q), q); });
   list.forEach(q => {
     delete q._os;
-    const k = bankKey(q), old = idx.get(k);
+    const k = bankKey(q), old = idx.get(k) || (q.num != null ? idx.get(bankKeyLegacy(q)) : undefined);
     if (!old) { idx.set(k, q); S.bank.push(q); n++; return; }
     let got = false;
     if (q.solImg && !old.solImg) { old.solImg = q.solImg; delete q.solImg; got = true; }   // chuyển ảnh sang câu cũ (ảnh câu trùng bị xóa sau đó)

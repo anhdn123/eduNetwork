@@ -246,12 +246,17 @@ process.on('exit', cleanup);
       'Câu 2: Ba nhân ba bằng?', 'A. 6. B. 9. C. 12. D. 3.', 'Lời giải', '3 · 3 = 9. Xem 2. B và 3. A trong bài trước.',
       'PHẦN II. Câu trắc nghiệm đúng sai.', 'Câu 1: Xét các mệnh đề:', 'a) 1 + 1 = 2.', 'b) 2 + 2 = 5.', 'c) 3 · 2 = 6.', 'd) 4 : 2 = 3.', 'Lời giải', 'a) Đúng b) Sai c) Đúng d) Sai', 'a) Đúng. 1 + 1 = 2.', 'b) Sai. 2 + 2 = 4.', 'c) Đúng. 3 · 2 = 6.', 'd) Sai. 4 : 2 = 2.',
       'PHẦN III. Thí sinh trả lời từ câu 1 đến câu 2.', 'Câu 1: Tính 10 chia 4.', 'Lời giải', 'Trả lời: 2,5', '10 : 4 = 2,5.', 'Câu 2: Tính 7 chia 2.', 'Lời giải', 'Trả lời: 3,5', '7 : 2 = 3,5.'].join('\n');
+    // phương án chỉ là công thức (“A. B. C. D.” trống) vẫn là trắc nghiệm; hai câu lời dẫn giống hệt (công thức/hình khác nhau) KHÔNG bị coi là trùng; “chọn đúng hoặc sai” → Đ/S
+    const keyDoc3 = ['PHẦN TRẮC NGHIỆM', 'Câu 1. Nửa đường tròn có số đo bằng:', 'A. B. C. D.', 'Câu 2. Nửa đường tròn có số đo bằng:', 'A. B. C. D.',
+      'Câu 3. Cho đường tròn như hình vẽ. Trong mỗi ý a), b), c), d) ở dưới đây, thí sinh chọn đúng hoặc sai.', 'A. Hai điểm chia đường tròn thành 2 cung.', 'B. Cung nhỏ nằm trong góc ở tâm.',
+      'C. Số đo cung bằng số đo góc ở tâm.', 'D. Hai cung bằng nhau thì có số đo bằng nhau.'].join('\n');
     const kpAll = await ev(`(async () => { const src = await (await fetch('/app.js')).text(), sc = document.createElement('script');   // app.js nằm trong IIFE: nạp thêm bản có xuất hàm đọc đề để gọi trực tiếp
       sc.textContent = src.replace(/\\}\\)\\(\\);\\s*$/, 'window.__pq = parseQuestionBank; window.__pk = parseQuickKey;})();'); document.head.append(sc);
       const one = d => window.__pq(d, 'k.pdf', false).questions.map(q => ({t: q.t, ans: q.ans, num: q.num, sol: (q.sol || '').slice(0, 14)}));
       const qk = (k, t) => [...window.__pk(k, t).map];
-      return {a: one(${JSON.stringify(keyDoc)}), b: one(${JSON.stringify(keyDoc2)}), tf: qk('tf', '61SSSĐ;68?SĐĐ;86Đ???;70????'), sh: qk('short', '1.127;20.?;3.106,2')}; })()`);
-    const kp = kpAll.a, kp2 = kpAll.b;
+      return {a: one(${JSON.stringify(keyDoc)}), b: one(${JSON.stringify(keyDoc2)}), c: one(${JSON.stringify(keyDoc3)}), tf: qk('tf', '61SSSĐ;68?SĐĐ;86Đ???;70????'), sh: qk('short', '1.127;20.?;3.106,2')}; })()`);
+    const kp = kpAll.a, kp2 = kpAll.b, kp3 = kpAll.c;
+    check('phương án chỉ là công thức vẫn là trắc nghiệm; hai câu lời dẫn giống hệt không bị bỏ là trùng; “chọn đúng hoặc sai” → Đ/S', kp3.length === 3 && kp3[0].t === 'mcq' && kp3[1].t === 'mcq' && kp3[2].t === 'tf', JSON.stringify(kp3.map(q => q.t + q.num)));
     check('mỗi câu lưu số câu in trong đề (Câu N) để nhập nhanh đáp án theo đúng số câu', kp[0].num === 1 && kp[1].num === 2 && kp[2].num === 1 && kp[4].num === 1 && kp[5].num === 2, JSON.stringify(kp.map(q => q.num)));
     const tfm = new Map(kpAll.tf), shm = new Map(kpAll.sh);
     check('nhập nhanh: dấu ? = chưa biết (68?SĐĐ → [null,1,0,0]; 86Đ??? → [0,null,null,null]); toàn dấu ? thì bỏ qua cả câu', JSON.stringify(tfm.get(61)) === '[1,1,1,0]' && JSON.stringify(tfm.get(68)) === '[null,1,0,0]' && JSON.stringify(tfm.get(86)) === '[0,null,null,null]' && !tfm.has(70), JSON.stringify([...tfm]));
