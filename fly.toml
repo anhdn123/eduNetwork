@@ -1,0 +1,39 @@
+# Cấu hình Fly.io cho Learning by AI. Xem hướng dẫn triển khai ở README.txt, mục 12.
+# Đổi `app` thành tên chưa ai dùng nếu `fly launch`/`fly apps create` báo trùng.
+app = "learning-by-ai"
+primary_region = "sin"          # Singapore, gần Việt Nam nhất
+
+[build]
+
+[env]
+  LBAI_HOST = "0.0.0.0"
+  LBAI_PORT = "8080"
+  LBAI_DATA = "/data"           # nằm trên đĩa bền (volume) bên dưới → không cần khôi phục mỗi lần khởi động
+  LBAI_BACKUP_BUCKET = "lbai-backup"
+  LBAI_BACKUP_INTERVAL = "1800"
+
+# Đĩa bền: tạo trước bằng `fly volumes create lbai_data --region sin --size 1`
+[[mounts]]
+  source = "lbai_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"   # tắt khi không có ai dùng để đỡ tiền; dữ liệu vẫn nằm trên đĩa
+  auto_start_machines = true
+  min_machines_running = 0
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 50
+    hard_limit = 100
+
+  [[http_service.checks]]
+    path = "/api/status"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "3m"           # khi khởi động lần đầu app tải bản sao lưu về trước rồi mới mở cổng → cần chờ lâu hơn
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"      # 256mb bị hết RAM (OOM) khi khôi phục bản sao lưu lần đầu; sau khi chạy ổn có thể hạ xuống 512mb

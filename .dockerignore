@@ -1,0 +1,11 @@
+.git
+data
+tests
+tools
+legacy_prototype
+Learning_by_AI_FINAL
+TOÁN 9
+*.docx
+*.bat
+__pycache__
+*.pyc

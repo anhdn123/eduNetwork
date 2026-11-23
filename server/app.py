@@ -8,6 +8,7 @@ Biến môi trường:
   LBAI_COOKIE_SECURE=1  bật cờ Secure cho cookie (khi chạy sau HTTPS)
 """
 import base64
+import gzip
 import calendar
 import datetime
 import hashlib
@@ -39,6 +40,8 @@ PROXY_HOPS = max(1, int(os.environ.get("LBAI_PROXY_HOPS") or 1))
 SETUP_CODE = os.environ.get("LBAI_SETUP_CODE") or ""
 MAX_JSON = 3 * 1024 * 1024
 MAX_UPLOAD = 25 * 1024 * 1024
+GZIP_TYPES = {"application/json", "application/javascript", "text/html", "text/css", "text/plain", "image/svg+xml", "text/javascript"}
+STATIC_CACHE = {}   # đường dẫn → (mtime+kích thước, etag, nội dung, bản gzip)
 FILE_EXT = {  # whitelist file upload; MIME do server quyết định, không tin client
     "pdf": "application/pdf", "doc": "application/msword",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -641,7 +644,7 @@ def r_img_get(c):
     r = c.con.execute("SELECT mime,data FROM images WHERE id=?", (c.p[0],)).fetchone()
     if not r:
         raise ApiError(404, "Không có ảnh")
-    return Raw(200, {"Content-Type": r["mime"], "Cache-Control": "private, max-age=86400"}, bytes(r["data"]))
+    return Raw(200, {"Content-Type": r["mime"], "Cache-Control": "private, max-age=31536000, immutable"}, bytes(r["data"]))   # mã ảnh không bao giờ đổi nội dung → trình duyệt giữ lâu, đỡ tải lại
 
 
 # ---------- đề & giao bài ----------
@@ -2109,6 +2112,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     # --- phản hồi ---
     def _send(self, status, headers, body):
+        # Nén gzip phản hồi dạng chữ (JSON, HTML, JS, CSS…): băng thông ra là thứ bị giới hạn (gói free của Render chỉ 5 GB/tháng cho cả workspace)
+        ct = headers.get("Content-Type", "")
+        if (status == 200 and len(body) > 1024 and "Content-Encoding" not in headers and ct.split(";")[0].strip() in GZIP_TYPES
+                and "gzip" in (self.headers.get("Accept-Encoding") or "").lower()):
+            body = gzip.compress(body, 6, mtime=0)
+            headers = {**headers, "Content-Encoding": "gzip", "Vary": "Accept-Encoding"}
         self.send_response(status)
         for k, v in headers.items():
             self.send_header(k, v)
@@ -2223,9 +2232,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
         ext = os.path.splitext(full)[1].lower()
         if ext not in STATIC_EXT or not os.path.isfile(full):
             raise ApiError(404, "Không tìm thấy trang")
-        with open(full, "rb") as fh:
-            body = fh.read()
-        self._send(200, {"Content-Type": STATIC_EXT[ext], "Cache-Control": "no-store"}, body)
+        # Tệp giao diện: có ETag để trình duyệt hỏi lại và nhận 304 (không kèm nội dung); thư mục vendor (pdf.js, tesseract…) hiếm đổi nên cho giữ 7 ngày;
+        # nội dung nén gzip được tính một lần rồi giữ trong bộ nhớ. Trước đây phục vụ `no-store` → mỗi lần mở trang tải lại toàn bộ (~0,5–1 MB).
+        stt = os.stat(full)
+        key = (stt.st_mtime_ns, stt.st_size)
+        ent = STATIC_CACHE.get(full)
+        if not ent or ent[0] != key:
+            with open(full, "rb") as fh:
+                raw = fh.read()
+            gz = gzip.compress(raw, 9, mtime=0) if len(raw) > 1024 and STATIC_EXT[ext].split(";")[0].strip() in GZIP_TYPES else None
+            ent = STATIC_CACHE[full] = (key, '"' + hashlib.sha1(raw).hexdigest()[:20] + '"', raw, gz)
+        _, etag, raw, gz = ent
+        cc = "public, max-age=604800" if path.startswith("/vendor/") else "no-cache"
+        hd = {"Content-Type": STATIC_EXT[ext], "Cache-Control": cc, "ETag": etag, "Vary": "Accept-Encoding"}
+        if (self.headers.get("If-None-Match") or "").strip() == etag:
+            return self._send(304, {"ETag": etag, "Cache-Control": cc, "Vary": "Accept-Encoding"}, b"")
+        if gz is not None and "gzip" in (self.headers.get("Accept-Encoding") or "").lower():
+            return self._send(200, {**hd, "Content-Encoding": "gzip"}, gz)
+        self._send(200, hd, raw)
 
 
 class Server(http.server.ThreadingHTTPServer):

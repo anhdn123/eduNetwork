@@ -168,3 +168,25 @@ dùng bucket riêng tư, giữ khóa bí mật, và xem lại yêu cầu pháp l
      theo phút, và báo rõ khi hết hạn mức ngày. Ngoài ra có giới hạn LBAI_AI_HOURLY=400 câu/giờ/giáo viên.
    - Tùy chọn trả phí chính xác hơn: LBAI_AI_PROVIDER=claude + ANTHROPIC_API_KEY + pip install -r requirements.txt (model mặc định claude-opus-5-5, đổi bằng
      LBAI_AI_MODEL_CLAUDE, ví dụ claude-haiku-5-5 cho rẻ).
+
+11. BĂNG THÔNG RENDER (gói Hobby/free chỉ có 5 GB lưu lượng RA mỗi tháng cho cả workspace; vượt thì toàn bộ dịch vụ bị khóa tới đầu tháng sau)
+   - Lưu lượng đẩy lên kho sao lưu (Supabase) cũng bị tính. Vì vậy sao lưu đã được làm TIẾT KIỆM: ảnh/file tải lên nằm ở các gói bất biến (img-…, up-…) chỉ gửi một lần,
+     còn `latest.zip` chỉ chứa CSDL đã bỏ ảnh (nhỏ); chu kỳ mặc định 30 phút (LBAI_BACKUP_INTERVAL). Bản sao lưu kiểu cũ (một zip chứa cả ảnh) vẫn khôi phục được;
+     lần sao lưu đầu tiên sau khi nâng cấp sẽ chuyển sang kiểu mới (gửi các gói ảnh một lần duy nhất).
+   - Giao diện được nén gzip, trình duyệt giữ đệm (ETag → 304), ảnh theo mã giữ 1 năm → người dùng quay lại gần như không tốn băng thông.
+   - Muốn chạy ngay khi Render đang bị khóa: chạy run-public.bat trên máy cá nhân (cần cloudflared): hệ thống chạy tại máy, Cloudflare Quick Tunnel đưa ra Internet
+     miễn phí; đường dẫn trycloudflare.com ĐỔI MỖI LẦN CHẠY và không có cam kết hoạt động liên tục. Trước khi Render chạy lại hãy TẮT máy chủ trên máy cá nhân
+     (chỉ một nơi được ghi vào kho sao lưu), để Render khôi phục đúng bản mới nhất.
+
+
+12. CHUYỂN SANG FLY.IO (phương án dự phòng khi Render không đủ; chi phí ước tính khoảng 3–5 USD/tháng, cần thẻ thanh toán)
+   Đã có sẵn Dockerfile, fly.toml, .dockerignore. Dữ liệu nằm ở đĩa bền (/data) nên không phải khôi phục mỗi lần khởi động; vẫn nên giữ sao lưu Supabase.
+   Các bước (chạy ở thư mục dự án, cần cài flyctl và đăng nhập `fly auth login`):
+     1) fly apps create learning-by-ai          (đổi tên nếu trùng, nhớ sửa dòng app trong fly.toml)
+     2) fly volumes create lbai_data --region sin --size 1
+     3) fly secrets set LBAI_SETUP_CODE=...  LBAI_BACKUP_URL=...  LBAI_BACKUP_KEY=...  GEMINI_API_KEY=...     (tự nhập giá trị, không ghi vào file hay gửi vào chat)
+        Lần đầu muốn lấy lại dữ liệu hiện có: giữ LBAI_BACKUP_URL/KEY trỏ tới kho Supabase đang dùng, hệ thống tự khôi phục khi đĩa còn trống.
+     4) fly deploy
+     5) fly status / fly logs để kiểm tra; đường dẫn dạng https://learning-by-ai.fly.dev
+   Lưu ý: CHỈ MỘT nơi được ghi vào kho sao lưu. Trước khi bật Fly, hãy tắt dịch vụ Render (hoặc xóa LBAI_BACKUP_KEY ở Render), và ngược lại.
+   Chạy 1 máy duy nhất (SQLite không chia sẻ giữa nhiều máy): `fly scale count 1`.

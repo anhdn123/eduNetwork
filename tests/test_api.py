@@ -751,6 +751,46 @@ class ApiTest(unittest.TestCase):
                 else:
                     os.environ[k] = v
 
+    def test_zz_http_bandwidth(self):
+        """Tiết kiệm băng thông: nén gzip tệp giao diện và JSON lớn, ETag → 304 không kèm nội dung, vendor cache 7 ngày, ảnh bất biến cache 1 năm."""
+        import gzip
+        import struct
+        import zlib
+        anon, lan = self.C(), self.C()
+        lan.post("/api/login", {"username": "lan", "password": LAN_PW})
+        gz = {"Accept-Encoding": "gzip"}
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "public", "app.js"), "rb") as f:
+            raw_js = f.read()
+        st, body, r = anon.get("/app.js", headers=gz, raw=True)
+        self.assertEqual((st, r.getheader("Content-Encoding")), (200, "gzip"))
+        self.assertEqual(gzip.decompress(body), raw_js)                                          # nén đúng, giải ra đúng nội dung
+        self.assertLess(len(body), len(raw_js) * 0.5)                                            # nhỏ đi đáng kể
+        etag = r.getheader("ETag")
+        self.assertTrue(etag and r.getheader("Cache-Control") == "no-cache")                     # luôn hỏi lại nhưng chỉ tải khi đã đổi
+        st, body, r = anon.get("/app.js", headers={**gz, "If-None-Match": etag}, raw=True)
+        self.assertEqual((st, len(body)), (304, 0))                                              # không đổi → 304, không tốn băng thông
+        st, body, r = anon.get("/app.js", raw=True)                                              # trình duyệt không nhận gzip → bản gốc
+        self.assertEqual((st, r.getheader("Content-Encoding"), len(body)), (200, None, len(raw_js)))
+        st, body, r = anon.get("/vendor/pdfjs/pdf.min.js", headers=gz, raw=True)
+        self.assertEqual((st, r.getheader("Cache-Control")), (200, "public, max-age=604800"))   # thư viện ngoài hiếm đổi → giữ 7 ngày
+        st, _, r = anon.get("/api/status", headers=gz, raw=True)
+        self.assertIsNone(r.getheader("Content-Encoding"))                                       # JSON nhỏ không đáng nén
+        # JSON lớn (danh sách ngân hàng) được nén và giải ra đúng
+        qs = [{"id": f"bw{i}", "t": "mcq", "q": "Câu hỏi " + "x" * 200, "opts": ["a", "b", "c", "d"], "ans": 1} for i in range(40)]
+        lan.post("/api/bank/sync", {"upsert": qs})
+        st, body, r = lan.get("/api/bank", headers=gz, raw=True)
+        self.assertEqual((st, r.getheader("Content-Encoding")), (200, "gzip"))
+        self.assertEqual(len(json.loads(gzip.decompress(body))["questions"]) >= 40, True)
+        lan.post("/api/bank/sync", {"delete": [q["id"] for q in qs]})
+        # ảnh theo mã không bao giờ đổi → cache lâu
+        def chunk(t, d):
+            return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+        png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(b"\x00\xff\xff\xff")) + chunk(b"IEND", b"")
+        iid = lan.post("/api/img", {"data": "data:image/png;base64," + base64.b64encode(png).decode()})[1]["id"]
+        st, body, r = lan.get(f"/api/img/{iid}", raw=True)
+        self.assertEqual((st, r.getheader("Cache-Control")), (200, "private, max-age=31536000, immutable"))
+        lan.call("DELETE", f"/api/img/{iid}")
+
     def test_rate_limit(self):
         c = self.C()
         for _ in range(8):
@@ -1116,10 +1156,11 @@ class ApiTest(unittest.TestCase):
 
         def __enter__(self):
             from server import backup
-            self.old = (db.DATA_DIR, db.DB_PATH, db.UPLOAD_DIR, dict(backup.state), backup._last_sig)
+            self.old = (db.DATA_DIR, db.DB_PATH, db.UPLOAD_DIR, dict(backup.state), backup._last_sig, backup._remote)
             db.DATA_DIR, db.DB_PATH, db.UPLOAD_DIR = self.path, os.path.join(self.path, "lbai.db"), os.path.join(self.path, "uploads")
             backup.state.update(enabled=False, last_ok=None, last_error="", last_size=0, restored=None, blocked=False, last_daily=None)
             backup._last_sig = None
+            backup._remote = None
             return self
 
         def __exit__(self, *a):
@@ -1128,6 +1169,7 @@ class ApiTest(unittest.TestCase):
             backup.state.clear()
             backup.state.update(self.old[3])
             backup._last_sig = self.old[4]
+            backup._remote = self.old[5]
 
     def test_zz_backup_chunks(self):
         """Bản sao lưu lớn hơn giới hạn từng file được chia thành nhiều phần, ghép lại đúng; thiếu/lệch phần thì báo lỗi, không khôi phục sai."""
@@ -1212,6 +1254,93 @@ class ApiTest(unittest.TestCase):
                 self.assertFalse(os.path.exists(db.DB_PATH))
             self.assertGreater(len(good), 100)
         finally:
+            for k, v in old_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_zz_backup_incremental(self):
+        """Sao lưu tiết kiệm băng thông: ảnh/file tải lên nằm ở các gói bất biến, mỗi lần chỉ gửi gói MỚI; gói không còn dùng được dọn; khôi phục đủ ảnh;
+        thiếu gói thì chặn (không khôi phục thiếu ảnh); bản sao lưu kiểu cũ (một zip chứa cả ảnh) vẫn khôi phục được."""
+        from server import backup
+        A, B, C, D, B2, E = (tempfile.mkdtemp(prefix=f"lbai_bi{n}_") for n in ("A", "B", "C", "D", "B2", "E"))
+        old_env = {k: os.environ.get(k) for k in ("LBAI_BACKUP_DIR", "LBAI_BACKUP_URL", "LBAI_BACKUP_KEY")}
+        os.environ["LBAI_BACKUP_DIR"] = B
+        os.environ.pop("LBAI_BACKUP_URL", None); os.environ.pop("LBAI_BACKUP_KEY", None)
+        old_pack, puts, real_put = backup.PACK_BYTES, [], backup.DirStore.put
+        backup.PACK_BYTES = 3000
+
+        def spy(self, name, data):
+            puts.append((name, len(data)))
+            return real_put(self, name, data)
+        backup.DirStore.put = spy
+
+        def add_image(con, i, created):
+            con.execute("INSERT INTO images(id,owner_id,mime,data,created_at) VALUES(?,?,?,?,?)", (f"{i:016x}", 1, "image/png", bytes([i]) * 1000, created))
+        try:
+            with self._Dirs(A):
+                db.init()
+                con = db.connect()
+                for i in range(1, 7):
+                    add_image(con, i, 100 + i)
+                con.commit(); con.close()
+                with open(os.path.join(db.UPLOAD_DIR, "tai-lieu.txt"), "wb") as f:
+                    f.write(b"noi dung file")
+                r = backup.run_backup()
+                self.assertTrue(r["ok"], r)
+                imgs = sorted(n for n in os.listdir(B) if n.startswith("img-"))
+                self.assertEqual(len(imgs), 2)                                                  # 6 ảnh × 1000 byte, mỗi gói tối đa 3000 byte
+                self.assertTrue(any(n.startswith("up-") for n in os.listdir(B)))
+                self.assertLess(os.path.getsize(os.path.join(B, "latest.zip")), 100000)         # bản chính chỉ có CSDL, không chứa dữ liệu ảnh
+                self.assertTrue(backup.run_backup().get("skipped"))                              # không đổi → không gửi gì
+                puts.clear()
+                con = db.connect(); add_image(con, 7, 200); con.commit(); con.close()            # thêm 1 ảnh mới
+                r = backup.run_backup()
+                names = [n for n, _ in puts]
+                self.assertEqual([n for n in names if n.startswith("img-")].__len__(), 1)        # chỉ gửi gói chứa ảnh mới
+                self.assertIn("latest.zip", names)
+                self.assertFalse(any(n.startswith("up-") for n in names))                        # file tải lên không đổi → không gửi lại
+                self.assertLess(r["sent"], 2500)                                                 # ~1 ảnh, không phải cả kho
+                self.assertEqual(len([n for n in os.listdir(B) if n.startswith("img-")]), 3)
+                con = db.connect(); con.execute("DELETE FROM images WHERE id=?", (f"{7:016x}",)); con.commit(); con.close()
+                backup.run_backup()                                                              # ảnh bị xóa → gói chỉ chứa nó không còn được chỉ mục nhắc tới → được dọn
+                self.assertEqual(len([n for n in os.listdir(B) if n.startswith("img-")]), 2)
+                legacy = backup.build_archive()                                                  # bản kiểu cũ (chứa cả ảnh) để thử khả năng tương thích
+            with self._Dirs(C):                                                                  # container mới: khôi phục
+                backup.restore_if_needed()
+                self.assertEqual(backup.state["restored"], "ok")
+                db.init()
+                con = db.connect()
+                got = {r["id"]: bytes(r["data"]) for r in con.execute("SELECT id, data FROM images")}
+                con.close()
+                self.assertEqual(sorted(got), [f"{i:016x}" for i in range(1, 7)])
+                self.assertTrue(all(got[f"{i:016x}"] == bytes([i]) * 1000 for i in range(1, 7)))   # ảnh nguyên vẹn
+                with open(os.path.join(db.UPLOAD_DIR, "tai-lieu.txt"), "rb") as f:
+                    self.assertEqual(f.read(), b"noi dung file")
+                puts.clear()
+                self.assertTrue(backup.run_backup(force=True)["ok"])                             # sau khôi phục: biết gói nào đã có → không gửi lại ảnh
+                self.assertFalse(any(n.startswith(("img-", "up-")) for n, _ in puts))
+            os.remove(os.path.join(B, imgs[0]))                                                  # kho mất một gói → khôi phục phải báo lỗi và chặn, không chạy thiếu ảnh
+            with self._Dirs(D):
+                backup.restore_if_needed()
+                self.assertEqual((backup.state["restored"], backup.state["blocked"]), ("error", True))
+                self.assertFalse(os.path.exists(db.DB_PATH))
+            os.environ["LBAI_BACKUP_DIR"] = B2                                                   # bản kiểu cũ vẫn khôi phục được
+            os.makedirs(B2, exist_ok=True)
+            with open(os.path.join(B2, "latest.zip"), "wb") as f:
+                f.write(legacy)
+            with self._Dirs(E):
+                backup.restore_if_needed()
+                self.assertEqual(backup.state["restored"], "ok")
+                db.init()
+                con = db.connect()
+                self.assertEqual(con.execute("SELECT COUNT(*) n FROM images").fetchone()["n"], 6)
+                self.assertEqual(bytes(con.execute("SELECT data FROM images WHERE id=?", (f"{3:016x}",)).fetchone()["data"]), bytes([3]) * 1000)
+                con.close()
+        finally:
+            backup.PACK_BYTES = old_pack
+            backup.DirStore.put = real_put
             for k, v in old_env.items():
                 if v is None:
                     os.environ.pop(k, None)
