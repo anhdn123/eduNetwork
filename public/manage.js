@@ -179,19 +179,24 @@ async function drawPractice() {
     return groups.filter(g => !q || (g.topic + ' ' + g.subject).toLowerCase().includes(q));
   };
   const render = () => {
-    const list = body();
+    const list = body(), box0 = $('#pbox', view), keep = box0 ? box0.scrollTop : 0, pageY = window.scrollY;   // giữ vị trí cuộn khi vẽ lại
     view.innerHTML = `<div class="lb-note" style="margin-bottom:12px"><b>Cách hoạt động:</b> (1) chọn lớp, (2) tick chuyên đề trong ngân hàng câu hỏi, (3) bấm <b>Lưu và mở</b>. Học sinh vào <b>Bài của tôi → 🎯 Tự luyện tập</b>, tự chọn chuyên đề, số câu, thời gian; nộp bài là có điểm, đáp án và lời giải ngay. Giáo viên xem kết quả ở bảng học sinh của lớp.</div>
       <div class="grid2" style="grid-template-columns:minmax(220px,300px) 1fr"><div class="card"><h2 style="margin:0 0 8px;font-size:15px">1. Chọn lớp</h2>
         ${cls.map(c => `<label style="display:flex;gap:8px;align-items:center;padding:6px 0;font-size:13px;border-bottom:1px solid var(--line)"><input type="checkbox" data-c="${c.id}" ${picked.has(c.id) ? 'checked' : ''}><span style="flex:1"><b>${esc(c.name)}</b> <small style="color:#667085">${c.students} HS</small></span><span class="pill ${openBy[c.id].size ? 'ok' : ''}" title="Số chuyên đề đang mở">${openBy[c.id].size} đang mở</span></label>`).join('')}</div>
       <div class="card"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px"><h2 style="margin:0;font-size:15px">2. Chọn chuyên đề được phép luyện</h2>
         <input id="pq" placeholder="Tìm chuyên đề..." value="${esc($('#pq') ? $('#pq').value : '')}" style="padding:7px 10px;border:1px solid var(--line);border-radius:8px;min-width:180px"></div>
-        ${groups.length ? `<div style="max-height:50vh;overflow:auto"><table class="tbl"><tr><th style="width:30px"><input type="checkbox" id="pall" ${list.length && list.every(g => chosen.has(key(g))) ? 'checked' : ''} title="Chọn / bỏ chọn tất cả"></th><th>Môn · Khối</th><th>Chuyên đề</th><th>Số câu học sinh luyện được</th></tr>
+        ${groups.length ? `<div id="pbox" style="max-height:50vh;overflow:auto"><table class="tbl"><tr><th style="width:30px"><input type="checkbox" id="pall" ${list.length && list.every(g => chosen.has(key(g))) ? 'checked' : ''} title="Chọn / bỏ chọn tất cả"></th><th>Môn · Khối</th><th>Chuyên đề</th><th>Số câu học sinh luyện được</th></tr>
         ${list.map(g => `<tr><td><input type="checkbox" data-g="${esc(key(g))}" ${chosen.has(key(g)) ? 'checked' : ''}></td><td>${esc(g.subject || '—')}${g.grade ? ' · ' + esc(g.grade) : ''}</td><td><b>${esc(g.topic || 'Chưa phân chuyên đề')}</b></td><td>${g.counts.mcq} TN · ${g.counts.tf} Đ/S · ${g.counts.short} TLN</td></tr>`).join('') || '<tr><td colspan="4" class="empty">Không có chuyên đề khớp.</td></tr>'}</table></div>
-        <div class="lb-row" style="margin-top:12px"><button class="btn btn-blue" id="psave">Lưu và mở cho ${picked.size} lớp đã chọn</button><span style="font-size:12px;color:#667085">${chosen.size} chuyên đề được chọn · bỏ tick rồi lưu để đóng lại</span></div>`
+        <div class="lb-row" style="margin-top:12px"><button class="btn btn-blue" id="psave">Lưu và mở cho ${picked.size} lớp đã chọn</button><span style="font-size:12px;color:#667085"><span id="pn">${chosen.size}</span> chuyên đề được chọn · bỏ tick rồi lưu để đóng lại</span></div>`
         : '<div class="empty">Ngân hàng của bạn chưa có câu nào có đáp án.<br>Vào <a href="teacher-builder.html">AI Copilot</a> bấm <b>📥 Import đề mẫu</b> hoặc import PDF kèm đáp án.</div>'}</div></div>`;
     $$('[data-c]', view).forEach(i => i.onchange = () => { const id = +i.dataset.c; i.checked ? picked.add(id) : picked.delete(id); syncChosen(); render(); });
-    $$('[data-g]', view).forEach(i => i.onchange = () => { i.checked ? chosen.add(i.dataset.g) : chosen.delete(i.dataset.g); render(); });
-    const all = $('#pall', view); if (all) all.onchange = () => { body().forEach(g => all.checked ? chosen.add(key(g)) : chosen.delete(key(g))); render(); };
+    // tick từng chuyên đề / tick tất cả: chỉ cập nhật ô đã bấm + bộ đếm, KHÔNG vẽ lại danh sách (vẽ lại làm thanh cuộn nhảy về đầu)
+    const all = $('#pall', view), sync = () => {
+      $('#pn', view).textContent = chosen.size;
+      if (all) all.checked = body().length > 0 && body().every(g => chosen.has(key(g)));
+    };
+    $$('[data-g]', view).forEach(i => i.onchange = () => { i.checked ? chosen.add(i.dataset.g) : chosen.delete(i.dataset.g); sync(); });
+    if (all) all.onchange = () => { body().forEach(g => all.checked ? chosen.add(key(g)) : chosen.delete(key(g))); $$('[data-g]', view).forEach(i => { i.checked = chosen.has(i.dataset.g); }); sync(); };
     const pq = $('#pq', view); if (pq) { pq.oninput = () => { const pos = pq.selectionStart; render(); const n = $('#pq', view); n.focus(); n.setSelectionRange(pos, pos); }; }
     const sv = $('#psave', view); if (sv) sv.onclick = async () => {
       if (!picked.size) return toast('Hãy chọn ít nhất một lớp');
@@ -201,6 +206,8 @@ async function drawPractice() {
         toast(open.length ? `Đã mở ${open.length} chuyên đề cho ${picked.size} lớp` : `Đã đóng luyện tập tự do cho ${picked.size} lớp`); render();
       } catch (e) { fail(e); }
     };
+    const box = $('#pbox', view); if (box) box.scrollTop = keep;
+    window.scrollTo(0, pageY);
   };
   render();
 }

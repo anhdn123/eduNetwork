@@ -383,6 +383,15 @@ process.on('exit', cleanup);
     await ev('document.querySelectorAll(".lb-overlay").forEach(e=>e.remove())');
     await click('#pt'); await waitFor("document.querySelector('#psave')", 8, 'cài đặt luyện tập của lớp');
     check('giáo viên mở/đóng chuyên đề luyện tập theo lớp (đang mở 1)', (await ev("document.querySelectorAll('[data-i]:checked').length")) === 1);
+    // tab “Mở luyện tập tự do”: tick chuyên đề không vẽ lại danh sách (thanh cuộn không nhảy về đầu), bộ đếm và ô “chọn tất cả” cập nhật
+    await ev('document.querySelectorAll(".lb-overlay").forEach(e=>e.remove())');
+    await click('[data-tab=practice]'); await waitFor("document.querySelector('#pbox [data-g]')", 8, 'tab mở luyện tập tự do');
+    const tk = await ev(`(() => { const box = document.querySelector('#pbox'); box.__keep = 1; const q = x => [...document.querySelectorAll('#pbox [data-g]')].filter(i => i.checked).length, n = () => +document.querySelector('#pn').textContent, tot = document.querySelectorAll('#pbox [data-g]').length;
+      const a0 = q(); document.querySelector('#pbox [data-g]:not(:checked)').click(); const a1 = q(), n1 = n(), all1 = document.querySelector('#pall').checked;   // tick thêm 1 chuyên đề
+      document.querySelector('#pall').click(); const a2 = q(), n2 = n();      // đã chọn hết → bấm “tất cả” là bỏ chọn hết
+      document.querySelector('#pall').click(); const a3 = q(), n3 = n();      // bấm lại → chọn hết
+      return {same: document.querySelector('#pbox').__keep === 1, tot, a0, a1, n1, all1, a2, n2, a3, n3}; })()`);
+    check('tick chuyên đề luyện tập: danh sách không bị vẽ lại, bộ đếm và “chọn tất cả” cập nhật', tk.same && tk.a1 === tk.a0 + 1 && tk.n1 === tk.a1 && tk.all1 === (tk.a1 === tk.tot) && tk.a2 === 0 && tk.n2 === 0 && tk.a3 === tk.tot && tk.n3 === tk.tot, JSON.stringify(tk));
   } catch (e) {
     check('LỖI KỊCH BẢN', false, e.message); await shot('e2e_error').catch(() => { });
   }
