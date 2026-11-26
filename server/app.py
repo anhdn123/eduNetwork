@@ -1789,7 +1789,7 @@ def test_rewards(con, sid, owner_id, month) -> list:
         if s10 + 1e-9 >= student_reward_min(con, sid, mm, rules["reward_min"]) and rules["reward_amount"] > 0:
             seen.add(r["assignment_id"])
             if mm == month:
-                out.append({"title": r["title"], "score10": round(s10, 2), "amount": rules["reward_amount"]})
+                out.append({"title": r["title"], "score10": round(s10, 2), "amount": rules["reward_amount"], "at": r["submitted_at"]})
     return out
 
 
@@ -1829,6 +1829,131 @@ def my_points(con, user, month) -> dict:
              "late": -late_min * rules["late_fee"], "missed": -sum(x["amount"] for x in missed)}
     return {"month": month, "net": sum(parts.values()), "parts": parts, "tests": tests, "practice": practice, "late_min": late_min, "missed": missed,
             "rules": {k: rules[k] for k in ("late_fee", "reward_min", "reward_amount", "missed_penalty")}}
+
+
+def _date_ts(iso) -> int:
+    """Thời điểm 00:00 (giờ Việt Nam) của một ngày YYYY-MM-DD."""
+    d = datetime.date.fromisoformat(iso)
+    return int(datetime.datetime(d.year, d.month, d.day, tzinfo=datetime.timezone.utc).timestamp()) - VN_OFFSET
+
+
+def _owner_of(con, class_id):
+    r = con.execute("SELECT owner_id FROM classes WHERE id=?", (class_id,)).fetchone() if class_id else None
+    return r["owner_id"] if r else None
+
+
+def point_events(con, s, month) -> list:
+    """Mọi khoản cộng/trừ điểm của học sinh `s` (hàng users: id, class_id) trong tháng `month`, theo cùng cách tính với `my_points`.
+    Mỗi khoản: kind (tests/practice/late/missed), title, detail, amount (+ cộng, − trừ), at (giây), month."""
+    sid, owner = s["id"], _owner_of(con, s["class_id"])
+    rules = att_rules(con, owner, month)
+    ev = []
+    for t in test_rewards(con, sid, owner, month):
+        ev.append({"kind": "tests", "title": t["title"], "detail": f"Bài kiểm tra {str(t['score10']).replace('.', ',')}/10", "amount": t["amount"], "at": t["at"]})
+    for r in con.execute("SELECT b.points, b.at, p.title FROM bonus_log b JOIN practice p ON p.id=b.practice_id WHERE b.student_id=? AND b.month=? AND b.points<>0",
+                         (sid, month)).fetchall():
+        ev.append({"kind": "practice", "title": r["title"], "detail": "Tự luyện tập", "amount": r["points"], "at": r["at"]})
+    y, m = int(month[:4]), int(month[5:])
+    first, last = datetime.date(y, m, 1), datetime.date(y, m, calendar.monthrange(y, m)[1])
+    for r in con.execute("SELECT date, late_min FROM attendance WHERE student_id=? AND status='present' AND late_min>0 AND date BETWEEN ? AND ? AND date<=?",
+                         (sid, first.isoformat(), last.isoformat(), today_vn().isoformat())).fetchall():
+        if rules["late_fee"] > 0:
+            ev.append({"kind": "late", "title": f"Đi muộn ngày {r['date'][8:10]}/{r['date'][5:7]}", "detail": f"{r['late_min']} phút × {rules['late_fee']:,}".replace(",", "."),
+                       "amount": -r["late_min"] * rules["late_fee"], "at": _date_ts(r["date"])})
+    for x in missed_assignments(con, sid, month):
+        ev.append({"kind": "missed", "title": x["title"], "detail": "Quá hạn nộp, chưa làm bài", "amount": -x["amount"], "at": x["due_at"]})
+    for e in ev:
+        e["month"] = month
+    return ev
+
+
+def student_events(con, s) -> list:
+    """Toàn bộ lịch sử điểm của học sinh từ lúc có dữ liệu đầu tiên đến nay (tối đa 36 tháng), cũ → mới, kèm số dư lũy kế `balance`."""
+    sid, cur = s["id"], month_key()
+    cand = [month_key(s["created_at"])]
+    for q, col in (("SELECT MIN(date) v FROM attendance WHERE student_id=? AND late_min>0", None),
+                   ("SELECT MIN(submitted_at) v FROM submissions WHERE student_id=? AND submitted_at IS NOT NULL", "ts"),
+                   ("SELECT MIN(month) v FROM bonus_log WHERE student_id=?", None),
+                   ("SELECT MIN(a.due_at) v FROM assignments a JOIN assignment_students x ON x.assignment_id=a.id WHERE x.student_id=? AND a.due_at IS NOT NULL", "ts")):
+        v = con.execute(q, (sid,)).fetchone()["v"]
+        if v:
+            cand.append(month_key(v) if col == "ts" else str(v)[:7])
+    y, m = int(min(cand)[:4]), int(min(cand)[5:])
+    cy, cm = int(cur[:4]), int(cur[5:])
+    months = []
+    while (y, m) <= (cy, cm):
+        months.append(f"{y:04d}-{m:02d}")
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    ev = []
+    for mm in months[-36:]:
+        ev.extend(point_events(con, s, mm))
+    ev.sort(key=lambda e: (e["at"] or 0, e["kind"]))
+    bal = 0
+    for e in ev:
+        bal += e["amount"]
+        e["balance"] = bal
+    return ev
+
+
+def _sum_events(ev) -> dict:
+    out = {"plus": 0, "minus": 0, "net": 0, "parts": {"tests": 0, "practice": 0, "late": 0, "missed": 0}}
+    for e in ev:
+        out["plus" if e["amount"] > 0 else "minus"] += abs(e["amount"])
+        out["net"] += e["amount"]
+        out["parts"][e["kind"]] += e["amount"]
+    return out
+
+
+def _month_list(n=12) -> list:
+    cur = month_key()
+    y, m = int(cur[:4]), int(cur[5:])
+    out = []
+    for i in range(n):
+        mm = m - i
+        out.append(f"{y + (mm - 1) // 12:04d}-{(mm - 1) % 12 + 1:02d}")
+    return out
+
+
+@route("GET", "/api/points/board", TEACHER_ROLES)
+def r_points_board(c):
+    """Bảng quản lý điểm của lớp: điểm cộng, điểm trừ, điểm hiện tại, xếp hạng giảm dần. month = all (từ trước đến nay) hoặc YYYY-MM."""
+    month = c.query.get("month") or "all"
+    if month != "all":
+        month = need_month(month)
+    cid = int(c.query["class_id"]) if str(c.query.get("class_id") or "").isdigit() else None
+    cls, studs = att_students(c.con, c.user, cid)
+    rows = []
+    for s in studs:
+        ev = [e for e in student_events(c.con, s) if month == "all" or e["month"] == month]
+        r = {"id": s["id"], "name": s["name"], "username": s["username"], "class_id": s["class_id"], "class_name": cls[s["class_id"]]["name"], "events": len(ev)}
+        r.update(_sum_events(ev))
+        rows.append(r)
+    rows.sort(key=lambda r: (-r["net"], r["name"]))
+    for i, r in enumerate(rows):
+        r["rank"] = rows[i - 1]["rank"] if i and rows[i - 1]["net"] == r["net"] else i + 1
+    return {"month": month, "months": _month_list(), "current": month_key(), "classes": [{"id": k["id"], "name": k["name"]} for k in cls.values()], "students": rows,
+            "totals": {"plus": sum(r["plus"] for r in rows), "minus": sum(r["minus"] for r in rows), "net": sum(r["net"] for r in rows),
+                       "negative": sum(1 for r in rows if r["net"] < 0), "students": len(rows)}}
+
+
+@route("GET", r"/api/points/student/(\d+)", TEACHER_ROLES)
+def r_points_student(c):
+    """Lịch sử điểm của một học sinh: từng khoản cộng/trừ kèm số dư lũy kế, và tổng hợp theo tháng."""
+    sid = int(c.p[0])
+    cls, studs = att_students(c.con, c.user)
+    s = next((x for x in studs if x["id"] == sid), None)
+    if not s:
+        raise ApiError(404, "Không tìm thấy học sinh trong các lớp của bạn")
+    ev = student_events(c.con, s)
+    by_month = {}
+    for e in ev:
+        b = by_month.setdefault(e["month"], {"month": e["month"], "plus": 0, "minus": 0, "net": 0})
+        b["plus" if e["amount"] > 0 else "minus"] += abs(e["amount"])
+        b["net"] += e["amount"]
+    out = {"student": {"id": s["id"], "name": s["name"], "username": s["username"], "class_name": cls[s["class_id"]]["name"]},
+           "events": ev, "months": sorted(by_month.values(), key=lambda b: b["month"], reverse=True)}
+    out.update(_sum_events(ev))
+    return out
 
 
 @route("GET", "/api/points/me", ("student",))

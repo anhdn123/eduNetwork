@@ -10,8 +10,8 @@ let tab = 'classes', classes = [], curClass = null;
 if (me.role === 'admin') $('#tab-teachers').hidden = false;
 $$('#tabs button').forEach(b => b.onclick = () => { tab = b.dataset.tab; $$('#tabs button').forEach(x => x.classList.toggle('on', x === b)); draw(); });
 
-const draw = () => ({classes: drawClasses, attend: drawAttend, practice: drawPractice, bonus: drawBonus, assign: drawAssign, parents: drawParents, teachers: drawTeachers})[tab]();
-const hashTab = () => { if (['#practice', '#bonus', '#attend'].includes(location.hash)) { tab = location.hash.slice(1); $$('#tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === tab)); return true; } };
+const draw = () => ({classes: drawClasses, attend: drawAttend, practice: drawPractice, bonus: drawBonus, points: drawPoints, assign: drawAssign, parents: drawParents, teachers: drawTeachers})[tab]();
+const hashTab = () => { if (['#practice', '#bonus', '#attend', '#points'].includes(location.hash)) { tab = location.hash.slice(1); $$('#tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === tab)); return true; } };
 hashTab();
 window.addEventListener('hashchange', () => { if (hashTab()) draw(); });
 const fail = e => toast(e.message || 'Có lỗi xảy ra');
@@ -462,6 +462,61 @@ async function drawBonus() {
         ${d.sessions.map(x => `<tr><td>${esc(x.title)}</td><td>${fmtScore(x.score)}/${x.max}</td><td>${x.mcq} · ${x.tf} · ${x.short}</td><td>${x.repeat ? `<span title="Câu đã làm đúng trước đó trong tháng, không cộng thêm">${x.repeat}</span>` : '—'}</td><td style="text-align:right"><b>+${x.points.toLocaleString('vi-VN')}</b></td><td>${fmtDate(x.at)}</td></tr>`).join('')}</table></div>`, true);
     } catch (e) { fail(e); }
   });
+}
+/* ---------- TAB: quản lý điểm — điểm cộng, điểm trừ, điểm hiện tại của cả lớp, xếp hạng, lịch sử từng học sinh ---------- */
+const ptv = {cls: '', month: 'all'};
+const PT_KIND = {tests: ['🏆', 'Thưởng bài kiểm tra'], practice: ['🎯', 'Thưởng tự luyện tập'], late: ['⏰', 'Phạt đi muộn'], missed: ['⛔', 'Phạt không làm bài']};
+const ptN = v => Math.abs(v).toLocaleString('vi-VN'), ptS = v => (v > 0 ? '+' : v < 0 ? '−' : '') + ptN(v);
+async function drawPoints() {
+  view.innerHTML = '<div class="card empty">Đang tải...</div>';
+  let r;
+  try { r = await api.get(`/api/points/board?month=${ptv.month}${ptv.cls ? '&class_id=' + ptv.cls : ''}`); } catch (e) { return fail(e); }
+  const ml = x => x.slice(5) + '/' + x.slice(0, 4), T = r.totals;
+  const chip = (label, val, color, sub) => `<div class="card" style="box-shadow:none;padding:12px 16px;flex:1;min-width:150px"><div style="font-size:11px;color:#667085">${label}</div><div style="font-size:24px;font-weight:800;color:${color}">${val}</div>${sub ? `<div style="font-size:11px;color:#667085">${sub}</div>` : ''}</div>`;
+  const brk = (x, kinds) => kinds.filter(k => x.parts[k]).map(k => `${PT_KIND[k][0]} ${ptN(x.parts[k])}`).join(' · ');
+  view.innerHTML = `<div class="card"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+      <h2 style="margin:0;font-size:18px">🏅 Quản lý điểm</h2>
+      <select id="pt-c" style="margin-left:auto;padding:7px;border:1px solid var(--line);border-radius:8px"><option value="">Tất cả lớp</option>${r.classes.map(c => `<option value="${c.id}" ${+ptv.cls === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
+      <select id="pt-m" style="padding:7px;border:1px solid var(--line);border-radius:8px"><option value="all" ${r.month === 'all' ? 'selected' : ''}>Từ trước đến nay</option>${r.months.map(m => `<option value="${m}" ${m === r.month ? 'selected' : ''}>Tháng ${ml(m)}${m === r.current ? ' (hiện tại)' : ''}</option>`).join('')}</select>
+      <button class="btn btn-outline sm" id="pt-csv">⬇ Tải CSV</button></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+      ${chip('Tổng điểm cộng', '+' + ptN(T.plus), '#166534', 'thưởng bài kiểm tra + luyện tập')}
+      ${chip('Tổng điểm trừ', '−' + ptN(T.minus), '#b91c1c', 'phạt đi muộn + không làm bài')}
+      ${chip('Điểm hiện tại (ròng)', ptS(T.net), T.net < 0 ? '#b91c1c' : '#1e40af', `${T.students} học sinh`)}
+      ${chip('Học sinh âm điểm', T.negative, T.negative ? '#b91c1c' : '#667085', T.negative ? 'đang bôi đỏ trong bảng' : 'không có')}</div>
+    ${r.students.length ? `<div style="max-height:62vh;overflow:auto"><table class="tbl"><tr><th>Hạng</th><th>Học sinh</th><th>Lớp</th><th style="text-align:right">Điểm cộng</th><th style="text-align:right">Điểm trừ</th><th style="text-align:right">Điểm hiện tại</th><th></th></tr>
+      ${r.students.map(x => { const neg = x.net < 0; return `<tr data-s="${x.id}" style="${neg ? 'background:#fef2f2' : ''}">
+        <td>${neg ? '<span title="Âm điểm">⚠</span>' : x.net > 0 && x.rank <= 3 ? ['🥇', '🥈', '🥉'][x.rank - 1] : x.rank}</td>
+        <td><b style="${neg ? 'color:#b91c1c' : ''}">${esc(x.name)}</b><br><small style="color:#667085">${esc(x.username)}</small></td><td>${esc(x.class_name)}</td>
+        <td style="text-align:right;white-space:nowrap"><b style="color:${x.plus ? '#166534' : '#98a2b3'}">${x.plus ? '+' + ptN(x.plus) : 0}</b><div style="font-size:10px;color:#667085">${brk(x, ['tests', 'practice'])}</div></td>
+        <td style="text-align:right;white-space:nowrap"><b style="color:${x.minus ? '#b91c1c' : '#98a2b3'}">${x.minus ? '−' + ptN(x.minus) : 0}</b><div style="font-size:10px;color:#667085">${brk(x, ['late', 'missed'])}</div></td>
+        <td style="text-align:right;font-size:17px;white-space:nowrap"><b style="color:${neg ? '#b91c1c' : x.net > 0 ? '#1e40af' : '#667085'}">${ptS(x.net)}</b></td>
+        <td><button class="btn btn-outline sm" data-pd="1">Chi tiết</button></td></tr>`; }).join('')}</table></div>
+      <p style="font-size:11px;color:#667085;margin:8px 0 0">Điểm hiện tại = điểm cộng − điểm trừ. Xếp hạng từ cao xuống thấp; hàng đỏ là học sinh đang âm điểm. Bấm “Chi tiết” để xem lịch sử từng khoản.</p>`
+      : '<div class="empty">Chưa có học sinh.</div>'}</div>`;
+  $('#pt-c', view).onchange = e => { ptv.cls = e.target.value; drawPoints(); };
+  $('#pt-m', view).onchange = e => { ptv.month = e.target.value; drawPoints(); };
+  $('#pt-csv', view).onclick = () => download(`diem-lop-${r.month}.csv`, 'Hạng,Họ tên,Tên đăng nhập,Lớp,Điểm cộng,Điểm trừ,Điểm hiện tại\n'
+    + r.students.map(x => [x.rank, x.name, x.username, x.class_name, x.plus, -x.minus, x.net].map(csvCell).join(',')).join('\n'));
+  $$('[data-pd]', view).forEach(b => b.onclick = () => pointDetail(+b.closest('tr').dataset.s).catch(fail));
+  $$('tr[data-s]', view).forEach(tr => tr.style.cursor = 'pointer');
+  $$('tr[data-s]', view).forEach(tr => tr.onclick = e => { if (e.target.closest('button')) return; pointDetail(+tr.dataset.s).catch(fail); });
+}
+async function pointDetail(id) {
+  const d = await api.get('/api/points/student/' + id), ml = x => x.slice(5) + '/' + x.slice(0, 4), ev = d.events.slice().reverse();
+  const col = v => v < 0 ? '#b91c1c' : v > 0 ? '#166534' : '#667085';
+  modal(`<h2>🏅 Lịch sử điểm · ${esc(d.student.name)} <small style="font-weight:400;color:#667085">· lớp ${esc(d.student.class_name)}</small></h2>
+    <div style="display:flex;gap:18px;flex-wrap:wrap;margin:6px 0 12px;font-size:13px">
+      <span>Điểm cộng <b style="color:#166534;font-size:18px">+${ptN(d.plus)}</b></span><span>Điểm trừ <b style="color:#b91c1c;font-size:18px">−${ptN(d.minus)}</b></span>
+      <span>Điểm hiện tại <b style="font-size:20px;color:${d.net < 0 ? '#b91c1c' : '#1e40af'}">${ptS(d.net)}</b></span></div>
+    ${d.net < 0 ? '<div class="lb-note" style="background:#fef2f2;border-color:#fecaca;color:#991b1b">Học sinh này đang âm điểm.</div>' : ''}
+    ${d.months.length ? `<b style="font-size:13px">Theo tháng</b><table class="tbl" style="margin:4px 0 14px;font-size:12px"><tr><th>Tháng</th><th style="text-align:right">Cộng</th><th style="text-align:right">Trừ</th><th style="text-align:right">Ròng</th></tr>
+      ${d.months.map(m => `<tr><td>${ml(m.month)}</td><td style="text-align:right;color:#166534">${m.plus ? '+' + ptN(m.plus) : 0}</td><td style="text-align:right;color:#b91c1c">${m.minus ? '−' + ptN(m.minus) : 0}</td><td style="text-align:right"><b style="color:${col(m.net)}">${ptS(m.net)}</b></td></tr>`).join('')}</table>` : ''}
+    <b style="font-size:13px">Từng khoản (mới nhất trước)</b>
+    ${ev.length ? `<div style="max-height:46vh;overflow:auto"><table class="tbl" style="font-size:12px"><tr><th>Lúc</th><th>Loại</th><th>Nội dung</th><th style="text-align:right">Điểm</th><th style="text-align:right">Số dư</th></tr>
+      ${ev.map(e => `<tr><td style="white-space:nowrap">${e.at ? fmtDate(e.at) : ''}</td><td style="white-space:nowrap">${PT_KIND[e.kind][0]} ${PT_KIND[e.kind][1]}</td><td>${esc(e.title)}<div style="font-size:10px;color:#667085">${esc(e.detail || '')}</div></td>
+        <td style="text-align:right;white-space:nowrap"><b style="color:${col(e.amount)}">${ptS(e.amount)}</b></td><td style="text-align:right;white-space:nowrap;color:${col(e.balance)}">${ptS(e.balance)}</td></tr>`).join('')}</table></div>`
+      : '<div class="empty">Chưa có khoản cộng hay trừ nào.</div>'}`, true);
 }
 /* Giáo viên mở các chuyên đề trong ngân hàng của mình cho lớp để học sinh tự tạo đề luyện tập */
 async function practiceSettings(cls) {

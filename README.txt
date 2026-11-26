@@ -197,3 +197,9 @@ dùng bucket riêng tư, giữ khóa bí mật, và xem lại yêu cầu pháp l
    - Giáo viên đổi mức phạt ở tab "Điểm danh" > "Phạt đi muộn · Thưởng điểm" (ô "Phạt không làm bài"; áp dụng từ tháng đặt trở đi; 0 = tắt).
      Thống kê đi học có thêm cột "Phạt không làm bài" và điểm ròng đã trừ khoản này.
    - Học sinh xem ở trang "Bài của tôi" > tab "Điểm của tôi": điểm ròng từng tháng, chi tiết thưởng bài kiểm tra, thưởng luyện tập, phạt đi muộn, các bài quá hạn chưa nộp.
+
+14. TAB "QUẢN LÝ ĐIỂM" (giáo viên / quản trị, trang Lớp & học sinh)
+   - Bảng cả lớp (hoặc tất cả lớp bạn quản lý): điểm cộng, điểm trừ, điểm hiện tại (ròng), xếp hạng cao → thấp. Học sinh âm điểm bị bôi đỏ.
+   - Chọn "Từ trước đến nay" (mặc định) hoặc từng tháng. Bấm "Chi tiết" (hoặc bấm vào hàng) xem lịch sử từng khoản: thưởng bài kiểm tra, thưởng tự luyện tập,
+     phạt đi muộn, phạt bài quá hạn không làm; có số dư lũy kế và tổng hợp theo tháng. Có nút tải CSV.
+   - Điểm cộng = thưởng bài kiểm tra + thưởng tự luyện tập. Điểm trừ = phạt đi muộn + phạt không làm bài. Điểm hiện tại = cộng − trừ (cùng cách tính với tab "Điểm của tôi" của học sinh).

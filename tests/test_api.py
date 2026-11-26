@@ -1097,6 +1097,87 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(sb.get("/api/points/me?month=abc")[0], 400)
         self.assertEqual(self.C().get("/api/points/me")[0], 401)
 
+    def test_zz_points_board(self):
+        """Quản lý điểm: điểm cộng, điểm trừ, điểm hiện tại của cả lớp (xếp hạng cao → thấp, âm điểm nằm cuối), lịch sử từng học sinh có số dư lũy kế,
+        khớp với điểm học sinh tự xem; lọc theo tháng; giáo viên khác và học sinh không xem được."""
+        import datetime as dt
+        lan = self.C()
+        lan.post("/api/login", {"username": "lan", "password": LAN_PW})
+        cid = lan.post("/api/classes", {"name": "BOARD", "grade": "9"})[1]["id"]
+        accs = lan.post("/api/students/bulk", {"class_id": cid, "rows": ["Chăm Chỉ", "Hay Quên", "Bình Thường"]})[1]["accounts"]
+        A, B, C = accs[0]["id"], accs[1]["id"], accs[2]["id"]
+        today = app.today_vn()
+        month = app.month_key()
+        lan.post("/api/att-rules", {"month": month, "late_fee": 1000, "reward_min": 8, "reward_amount": 5000, "missed_penalty": 5000})
+        # B đi muộn 10 phút hôm nay (phải có lịch học ngày hôm nay)
+        lan.post(f"/api/classes/{cid}/schedule", {"days": {str(today.weekday()): "19:00–21:00"}, "fee": 100000, "from": today.replace(day=1).isoformat()})
+        self.assertEqual(lan.post("/api/attendance", {"date": today.isoformat(), "items": [{"student_id": B, "status": "present", "late_min": 10}]})[0], 200)
+        v = {"code": "B1", "questions": [mcq(1, 0), mcq(2, 0)]}
+        now = int(time.time())
+
+        def give(title, due):
+            st, r = lan.post("/api/assignments", {"title": title, "class_id": cid, "dist_mode": "alt", "duration_min": 0, "max_attempts": 1, "show_result": True,
+                                                  "due_at": due, "exam": {"title": title, "variations": [v]}})
+            self.assertEqual(st, 200, r)
+            return r["id"]
+        late_id = give("Bài bị bỏ", now + 3600)
+        ok_id = give("Bài nộp tốt", now + 3600)
+        sa = self.C()
+        sa.post("/api/login", {"username": accs[0]["username"], "password": accs[0]["password"]})
+        sa.post(f"/api/assignments/{ok_id}/start")
+        sa.post(f"/api/assignments/{ok_id}/submit", {"answers": [0, 0]})                     # A: 10 điểm → +5.000
+        sc = self.C()
+        sc.post("/api/login", {"username": accs[2]["username"], "password": accs[2]["password"]})
+        sc.post(f"/api/assignments/{ok_id}/start")
+        sc.post(f"/api/assignments/{ok_id}/submit", {"answers": [0, 0]})                     # C cũng đạt, rồi nộp nốt bài kia trước hạn
+        sc.post(f"/api/assignments/{late_id}/start")
+        sc.post(f"/api/assignments/{late_id}/submit", {"answers": [0, 1]})                   # C: 5 điểm → không thưởng, không bị phạt
+        past = now - 60
+        for aid in (late_id, ok_id):
+            self.assertEqual(lan.call("PATCH", f"/api/assignments/{aid}", {"due_at": past})[0], 200)
+        # A chưa nộp bài kia → bị phạt 5.000 (bài "Bài bị bỏ"); B không nộp gì → phạt 2 × 5.000 và muộn 10.000
+        st, r = lan.get(f"/api/points/board?class_id={cid}")
+        self.assertEqual(st, 200, r)
+        by = {x["id"]: x for x in r["students"]}
+        self.assertEqual((by[A]["plus"], by[A]["minus"], by[A]["net"]), (5000, 5000, 0))
+        self.assertEqual((by[B]["plus"], by[B]["minus"], by[B]["net"]), (0, 20000, -20000))
+        self.assertEqual((by[C]["plus"], by[C]["minus"], by[C]["net"]), (5000, 0, 5000))
+        self.assertEqual([x["id"] for x in r["students"]], [C, A, B])                           # cao → thấp; âm điểm ở cuối
+        self.assertEqual([x["rank"] for x in r["students"]], [1, 2, 3])
+        self.assertEqual(by[B]["parts"], {"tests": 0, "practice": 0, "late": -10000, "missed": -10000})
+        self.assertEqual((r["totals"]["plus"], r["totals"]["minus"], r["totals"]["net"], r["totals"]["negative"], r["totals"]["students"]), (10000, 25000, -15000, 1, 3))
+        # khớp với điểm học sinh tự xem
+        sb = self.C()
+        sb.post("/api/login", {"username": accs[1]["username"], "password": accs[1]["password"]})
+        self.assertEqual(sb.get("/api/points/me")[1]["net"], -20000)
+        self.assertEqual(sa.get("/api/points/me")[1]["net"], 0)
+        self.assertEqual(sc.get("/api/points/me")[1]["net"], 5000)
+        # lịch sử của B: từng khoản, số dư lũy kế
+        st, d = lan.get(f"/api/points/student/{B}")
+        self.assertEqual(st, 200)
+        self.assertEqual(sorted(e["kind"] for e in d["events"]), ["late", "missed", "missed"])
+        self.assertEqual((d["plus"], d["minus"], d["net"]), (0, 20000, -20000))
+        self.assertEqual(d["events"][-1]["balance"], -20000)
+        self.assertEqual(sum(e["amount"] for e in d["events"]), -20000)
+        self.assertTrue(all(e["at"] for e in d["events"]))
+        self.assertEqual(d["months"][0]["net"], -20000)
+        self.assertEqual(d["student"]["name"], "Hay Quên")
+        # lọc theo tháng: tháng trống → 0 điểm
+        empty = (dt.date.fromisoformat(month + "-01") - dt.timedelta(days=60)).strftime("%Y-%m")
+        r2 = lan.get(f"/api/points/board?class_id={cid}&month={empty}")[1]
+        self.assertEqual([x["net"] for x in r2["students"]], [0, 0, 0])
+        r3 = lan.get(f"/api/points/board?class_id={cid}&month={app.month_key(past)}")[1]
+        self.assertEqual({x["id"]: x["net"] for x in r3["students"]}[B], -20000)
+        self.assertEqual(lan.get("/api/points/board?month=abc")[0], 400)
+        # quyền: giáo viên khác không thấy học sinh của lớp này; học sinh và khách không vào được
+        binh = self.C()
+        binh.post("/api/login", {"username": "binh", "password": self.__class__.binh_pw})
+        self.assertEqual(binh.get(f"/api/points/student/{B}")[0], 404)
+        self.assertEqual(binh.get(f"/api/points/board?class_id={cid}")[0], 404)
+        self.assertEqual(sb.get("/api/points/board")[0], 403)
+        self.assertEqual(sb.get(f"/api/points/student/{B}")[0], 403)
+        self.assertEqual(self.C().get("/api/points/board")[0], 401)
+
     def test_zz_attendance_rules(self):
         """Học sinh mới tạo vẫn có lịch; phút đi muộn; chốt điểm danh; phạt muộn và thưởng điểm theo quy tắc từng tháng."""
         import datetime as dt

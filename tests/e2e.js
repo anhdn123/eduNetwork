@@ -391,6 +391,13 @@ process.on('exit', cleanup);
       document.querySelector('#pall').click(); const a2 = q(), n2 = n();      // đã chọn hết → bấm “tất cả” là bỏ chọn hết
       document.querySelector('#pall').click(); const a3 = q(), n3 = n();      // bấm lại → chọn hết
       return {same: document.querySelector('#pbox').__keep === 1, tot, a0, a1, n1, all1, a2, n2, a3, n3}; })()`);
+    // tab “Quản lý điểm”: bảng cả lớp có điểm cộng / điểm trừ / điểm hiện tại, bấm Chi tiết xem lịch sử
+    await click('[data-tab=points]'); await waitFor("document.querySelector('#pt-m') && document.querySelector('tr[data-s]')", 10, 'tab quản lý điểm');
+    const pb = await ev(`(() => { const h = [...document.querySelectorAll('#view th')].map(x => x.innerText.trim()); const rows = document.querySelectorAll('tr[data-s]').length;
+      document.querySelector('[data-pd]').click(); return {h: h.join('|'), rows}; })()`);
+    await waitFor("/Lịch sử điểm/.test(document.body.innerText)", 8, 'lịch sử điểm của học sinh');
+    check('tab Quản lý điểm: cột điểm cộng · điểm trừ · điểm hiện tại, mỗi học sinh một hàng, bấm Chi tiết xem lịch sử', /điểm cộng/i.test(pb.h) && /điểm trừ/i.test(pb.h) && /điểm hiện tại/i.test(pb.h) && pb.rows >= 4, JSON.stringify(pb));
+    await ev('document.querySelectorAll(".lb-overlay").forEach(e=>e.remove())');
     check('tick chuyên đề luyện tập: danh sách không bị vẽ lại, bộ đếm và “chọn tất cả” cập nhật', tk.same && tk.a1 === tk.a0 + 1 && tk.n1 === tk.a1 && tk.all1 === (tk.a1 === tk.tot) && tk.a2 === 0 && tk.n2 === 0 && tk.a3 === tk.tot && tk.n3 === tk.tot, JSON.stringify(tk));
   } catch (e) {
     check('LỖI KỊCH BẢN', false, e.message); await shot('e2e_error').catch(() => { });
