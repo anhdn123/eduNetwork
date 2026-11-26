@@ -90,6 +90,12 @@ process.on('exit', cleanup);
     await waitFor("document.querySelectorAll('[data-tp]').length>=2", 8, 'danh sách chuyên đề');
     const tp = await ev("[...document.querySelectorAll('[data-tp]')].map(c=>c.dataset.tp)");
     check('hiện các chuyên đề trong ngân hàng để chọn nhiều', tp.includes('Hệ phương trình') && tp.includes('Hàm số'), tp.join(' | '));
+    // nút “Xem / sửa” trên từng chuyên đề: mở quản lý ngân hàng chỉ hiện các câu của chuyên đề đó, không đổi ô tick
+    await ev("document.querySelector('[data-tpview=\"Hàm số\"]').click()");
+    await waitFor("/Đang xem/.test(document.body.innerText)", 8, 'quản lý ngân hàng mở theo chuyên đề');
+    const tv = await ev("(() => { const t = document.querySelector('.lb-modal').innerText; return {banner: /Đang xem chuyên đề/.test(t), name: /Hàm số/.test(t), checked: document.querySelector('[data-tp=\"Hàm số\"]').checked, n: (t.match(/#\\d+/g) || []).length}; })()");
+    check('“Xem / sửa” chuyên đề Hàm số: mở quản lý ngân hàng theo chuyên đề, không tự tick', tv.banner && tv.name && tv.checked === false && tv.n > 0, JSON.stringify(tv));
+    await ev('document.querySelectorAll(".lb-overlay").forEach(e => e.remove())');
     await setv('[data-count=mcq]', '5'); await setv('[data-count=tf]', '2'); await setv('[data-count=short]', '2'); await setv('[data-count=essay]', '0');
     await setv('#cfg-exam-count', '4');
     await ev("document.querySelector('[data-tp=\"Hệ phương trình\"]').click()");

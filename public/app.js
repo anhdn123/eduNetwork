@@ -1738,7 +1738,7 @@ const latestBatch = () => { let best = null; (S.bank || []).forEach(q => { if (q
 function openBankManager(onChange, opts) {
   opts = opts || {};
   const TYL = {mcq: 'Trắc nghiệm', tf: 'Đúng/Sai', short: 'Trả lời ngắn', essay: 'Tự luận'}, LVL = [[1, 'Nhận biết'], [2, 'Thông hiểu'], [3, 'Vận dụng'], [4, 'Vận dụng cao']];
-  const st = {f: 'all', q: '', p: 0, s: 'all', g: 'all', tp: 'all', b: opts.batch || 'all', x: opts.exam || 'all'}, PER = 15;   // x: chỉ xem một đề thi đã import (theo mã đề)
+  const st = {f: 'all', q: '', p: 0, s: 'all', g: 'all', tp: 'all', b: opts.batch || 'all', x: opts.exam || 'all', ids: opts.ids ? new Set(opts.ids) : null, title: opts.title || ''}, PER = 15;   // ids + title: chỉ xem một nhóm câu (vd. một chuyên đề)   // x: chỉ xem một đề thi đã import (theo mã đề)
   const sel = new Set(), pinned = new Set(), solOpen = new Set(), bar = {t: '', lv: '', subject: '', grade: '', topic: ''};
   let lastSel = null;
   const m = modal('', 1, true), b = m.b;   // khóa: chỉ đóng bằng nút “Đóng” để không mất thay đổi chưa lưu
@@ -1747,6 +1747,7 @@ function openBankManager(onChange, opts) {
   const matches = q => (st.f === 'all' || (st.f === 'noans' ? !hasAns(q) : st.f === 'ai' ? !!q.aiAns : q.t === st.f))
     && (st.b === 'all' || (st.b === 'none' ? !q.batch : q.batch === st.b))
     && (st.x === 'all' || q.examId === st.x)
+    && (!st.ids || st.ids.has(q.id))
     && eqf(q.subject, st.s) && eqf(q.grade, st.g) && eqf(q.topic, st.tp)
     && (!st.q || (q.q + ' ' + (q.opts || []).join(' ')).toLowerCase().includes(st.q.toLowerCase()));
   // câu vừa chỉnh sửa được “ghim” lại trong danh sách đến khi đổi bộ lọc → không biến mất / nhảy chỗ khi đổi dạng
@@ -1821,6 +1822,7 @@ function openBankManager(onChange, opts) {
       + (groups.has('none') ? `<option value="none" ${st.b === 'none' ? 'selected' : ''}>Câu cũ / thêm tay (${groups.get('none').n})</option>` : '');
     const scoped = st.b !== 'all';
     b.innerHTML = `<div id="bk-head" style="position:sticky;top:0;z-index:3;background:#fff;padding:6px 0 8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-bottom:1px solid #e2e8f0"></div>
+      ${st.ids ? `<div class="lb-note" style="margin:8px 0 0;background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a">📚 Đang xem <b>${esc(st.title)}</b> (${all.filter(q => st.ids.has(q.id)).length} câu). Bấm vào từng câu để xem chi tiết, sửa đáp án, dạng câu, chuyên đề, lời giải rồi bấm <b>Lưu thay đổi</b>. <a href="#" data-bk="show-all">Xem toàn bộ ngân hàng</a></div>` : ''}
       ${st.x !== 'all' ? `<div class="lb-note" style="margin:8px 0 0;background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a">📑 Đang xem <b>${esc(((all.find(q => q.examId === st.x) || {}).examCat || 'Đề thi') + ' · ' + ((all.find(q => q.examId === st.x) || {}).examName || ''))}</b> (${all.filter(q => q.examId === st.x).length} câu, đúng thứ tự trong đề). Bấm vào từng câu để xem chi tiết, sửa đáp án, dạng câu, lời giải rồi bấm <b>Lưu thay đổi</b>. <a href="#" data-bk="show-all">Xem toàn bộ ngân hàng</a></div>` : ''}
       ${scoped ? `<div class="lb-note" style="margin:8px 0 0">📌 Đang chỉ hiện <b>${L.length}</b> câu của một lần import để bạn xử lý riêng — các câu import trước đó đã được lưu trong ngân hàng và đang được ẩn. <a href="#" data-bk="show-all">Xem toàn bộ ngân hàng (${all.length} câu)</a></div>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
@@ -1934,7 +1936,7 @@ function openBankManager(onChange, opts) {
       }
       return finish();
     }
-    if (a === 'show-all') { e.preventDefault(); st.b = 'all'; st.x = 'all'; st.p = 0; pinned.clear(); return draw(true); }
+    if (a === 'show-all') { e.preventDefault(); st.b = 'all'; st.x = 'all'; st.ids = null; st.p = 0; pinned.clear(); return draw(true); }
     if (a === 'prev') { st.p--; return draw(true); }
     if (a === 'next') { st.p++; return draw(true); }
     if (a === 'sel-all') list().forEach(q => sel.add(q.id));
@@ -2541,7 +2543,12 @@ function initBuilder() {
     [...selTopics].forEach(t => { if (!tc.has(t)) selTopics.delete(t); });
     const tp = $('#topic-picks');
     if (tp) {
-      tp.innerHTML = use && tc.size ? `<div style="font-size:10px;font-weight:700;color:#334155;margin:2px 0 6px">Chọn chuyên đề lấy câu hỏi (tick nhiều chuyên đề; bỏ trống = lấy tất cả):</div><div style="display:flex;flex-wrap:wrap;gap:6px">${[...tc].sort((a, b) => a[0].localeCompare(b[0], 'vi')).map(([t, n]) => `<label style="display:flex;gap:5px;align-items:center;font-size:11px;background:#fff;border:1px solid ${selTopics.has(t) ? '#2563eb' : '#cbd5e1'};padding:4px 10px;border-radius:14px;cursor:pointer"><input type="checkbox" data-tp="${esc(t)}" ${selTopics.has(t) ? 'checked' : ''}> ${esc(t || '(Chưa gắn chuyên đề)')} <b style="color:#2563eb">${n}</b></label>`).join('')}</div>` : '';
+      tp.innerHTML = use && tc.size ? `<div style="font-size:10px;font-weight:700;color:#334155;margin:2px 0 6px">Chọn chuyên đề lấy câu hỏi (tick nhiều chuyên đề; bỏ trống = lấy tất cả):</div><div style="display:flex;flex-wrap:wrap;gap:6px">${[...tc].sort((a, b) => a[0].localeCompare(b[0], 'vi')).map(([t, n]) => `<label style="display:flex;gap:5px;align-items:center;font-size:11px;background:#fff;border:1px solid ${selTopics.has(t) ? '#2563eb' : '#cbd5e1'};padding:4px 10px;border-radius:14px;cursor:pointer"><input type="checkbox" data-tp="${esc(t)}" ${selTopics.has(t) ? 'checked' : ''}> ${esc(t || '(Chưa gắn chuyên đề)')} <b style="color:#2563eb">${n}</b> <button type="button" data-tpview="${esc(t)}" title="Xem chi tiết từng câu của chuyên đề này và sửa đáp án, dạng câu, lời giải" style="border:1px solid #93c5fd;background:#eff6ff;color:#1d4ed8;border-radius:10px;padding:1px 8px;font-size:10px;cursor:pointer">✏️ Xem / sửa</button></label>`).join('')}</div>` : '';
+      $$('[data-tpview]', tp).forEach(btn => btn.onclick = e => {   // xem / sửa chi tiết các câu của chuyên đề (theo Môn + Khối đang chọn) ngay trong màn quản lý ngân hàng
+        e.preventDefault(); e.stopPropagation();
+        const t = btn.dataset.tpview, ids = bankPool({...cfg(), bankTopics: []}).filter(q => (q.topic || '') === t).map(q => q.id);
+        openBankManager(renderBank, {ids, title: `chuyên đề “${t || 'Chưa gắn chuyên đề'}” · ${cfg().subject} khối ${cfg().grade}`});
+      });
       $$('[data-tp]', tp).forEach(cb => cb.onchange = () => { if (cb.checked) selTopics.add(cb.dataset.tp); else selTopics.delete(cb.dataset.tp); renderBank(); });
     }
     // đề thi đã import (mỗi file = một đề): tick để lấy nguyên đề, đúng thứ tự câu và đúng số câu như đề gốc
