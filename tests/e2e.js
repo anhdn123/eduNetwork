@@ -368,6 +368,15 @@ process.on('exit', cleanup);
     await ev('window.confirm=()=>true;window.alert=()=>{};');
     await click('[data-tab=assign]'); await waitFor("document.querySelector('[data-x=res]')", 8, 'danh sách bài đã giao');
     check('danh sách bài đã giao: 1/4 đã nộp', /1\/4/.test(await ev("document.getElementById('view').innerText")));
+    // cột “Tính điểm”: hai ô tick riêng (cộng / trừ), mặc định đều có; bỏ tick → lưu về máy chủ rồi bảng vẽ lại; tick lại để bước sau không bị ảnh hưởng
+    check('bài đã giao: hai ô Cộng / Trừ mặc định đã tick', (await ev("document.querySelector('[data-cp=count_bonus]').checked && document.querySelector('[data-cp=count_penalty]').checked")) === true);
+    for (const k of ['count_bonus', 'count_penalty']) {
+      await ev(`document.querySelector('[data-cp=${k}]').__old = 1; document.querySelector('[data-cp=${k}]').click()`);
+      await waitFor(`document.querySelector('[data-cp=${k}]') && !document.querySelector('[data-cp=${k}]').__old && !document.querySelector('[data-cp=${k}]').checked`, 8, 'bỏ tick ' + k + ' được lưu (bảng vẽ lại sau khi máy chủ lưu)');
+      check('bỏ tick ' + k + ' được lưu, ô còn lại giữ nguyên', (await ev(`document.querySelector('[data-cp=${k === 'count_bonus' ? 'count_penalty' : 'count_bonus'}]').checked`)) === true);
+      await ev(`document.querySelector('[data-cp=${k}]').__old = 1; document.querySelector('[data-cp=${k}]').click()`);
+      await waitFor(`document.querySelector('[data-cp=${k}]') && !document.querySelector('[data-cp=${k}]').__old && document.querySelector('[data-cp=${k}]').checked`, 8, 'tick lại ' + k);
+    }
     await click('[data-x=res]'); await waitFor("document.querySelector('[data-sub]')", 8, 'bảng kết quả');
     const rtxt = await ev("document.querySelector('.lb-modal').innerText.replace(/\\s+/g,' ')");
     check('giáo viên xem kết quả từng học sinh', /Nguyễn Văn An/.test(rtxt) && /Đã nộp/.test(rtxt), rtxt.slice(0, 200));
@@ -397,6 +406,11 @@ process.on('exit', cleanup);
       document.querySelector('[data-pd]').click(); return {h: h.join('|'), rows}; })()`);
     await waitFor("/Lịch sử điểm/.test(document.body.innerText)", 8, 'lịch sử điểm của học sinh');
     check('tab Quản lý điểm: cột điểm cộng · điểm trừ · điểm hiện tại, mỗi học sinh một hàng, bấm Chi tiết xem lịch sử', /điểm cộng/i.test(pb.h) && /điểm trừ/i.test(pb.h) && /điểm hiện tại/i.test(pb.h) && pb.rows >= 4, JSON.stringify(pb));
+    // giáo viên điều chỉnh điểm ngay trong hộp lịch sử: nhập −3.000 + lý do → có dòng “Giáo viên điều chỉnh”, điểm hiện tại đổi
+    await ev(`(() => { document.querySelector('#pa-amt').value = '-3000'; document.querySelector('#pa-reason').value = 'Nói chuyện riêng'; document.querySelector('#pa-save').click(); })()`);
+    await waitFor("/Nói chuyện riêng/.test(document.body.innerText) && !!document.querySelector('[data-adel]')", 10, 'khoản điều chỉnh hiện trong lịch sử');
+    const adj = await ev(`({txt: document.body.innerText.includes('Giáo viên điều chỉnh'), del: !!document.querySelector('[data-adel]')})`);
+    check('điều chỉnh điểm trong hộp lịch sử: khoản −3.000 kèm lý do hiện ra và có nút Xóa', adj.txt && adj.del, JSON.stringify(adj));
     await ev('document.querySelectorAll(".lb-overlay").forEach(e=>e.remove())');
     check('tick chuyên đề luyện tập: danh sách không bị vẽ lại, bộ đếm và “chọn tất cả” cập nhật', tk.same && tk.a1 === tk.a0 + 1 && tk.n1 === tk.a1 && tk.all1 === (tk.a1 === tk.tot) && tk.a2 === 0 && tk.n2 === 0 && tk.a3 === tk.tot && tk.n3 === tk.tot, JSON.stringify(tk));
   } catch (e) {

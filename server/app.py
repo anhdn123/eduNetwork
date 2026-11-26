@@ -763,9 +763,9 @@ def r_assign_new(c):
                           json.dumps(vs, ensure_ascii=False), db.now()))
     due = b.get("due_at")
     due = int(due) if isinstance(due, (int, float)) and due > 0 else None
-    acur = c.con.execute("INSERT INTO assignments(exam_id,owner_id,class_id,title,dist_mode,due_at,duration_min,max_attempts,show_result,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+    acur = c.con.execute("INSERT INTO assignments(exam_id,owner_id,class_id,title,dist_mode,due_at,duration_min,max_attempts,show_result,count_bonus,count_penalty,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                          (ecur.lastrowid, c.user["id"], cls["id"], title, mode, due, need_int(b, "duration_min", 0, 300, 0),
-                          need_int(b, "max_attempts", 1, 10, 1), show, db.now()))
+                          need_int(b, "max_attempts", 1, 10, 1), show, 0 if b.get("count_bonus") is False else 1, 0 if b.get("count_penalty") is False else 1, db.now()))
     tiers = [0] * len(vs)
     if plan is None:
         rnd = balanced_random(len(students), len(vs)) if mode == "random" else None
@@ -804,7 +804,7 @@ def r_assign_list(c):
             bests = [s["best"] for s in subs if s["best"] is not None]
             out.append({"id": a["id"], "title": a["title"], "class_id": a["class_id"], "class_name": a["cname"], "due_at": a["due_at"],
                         "duration_min": a["duration_min"], "dist_mode": a["dist_mode"], "closed": bool(a["closed"]), "created_at": a["created_at"],
-                        "max_attempts": a["max_attempts"], "show_result": a["show_result"],
+                        "max_attempts": a["max_attempts"], "show_result": a["show_result"], "count_bonus": bool(a["count_bonus"]), "count_penalty": bool(a["count_penalty"]),
                         "total": tot, "submitted": len(subs), "avg": round(sum(bests) / len(bests), 2) if bests else None})
         return {"assignments": out}
     if u["role"] == "student":
@@ -818,7 +818,7 @@ def r_assign_list(c):
             best = max((score10(s["score"], s["max_score"]) or 0 for s in done), default=None)
             out.append({"id": a["id"], "title": a["title"], "class_name": a["cname"], "due_at": a["due_at"], "duration_min": a["duration_min"],
                         "closed": bool(a["closed"]), "free": a["variation"] is None, "attempts": len(done), "max_attempts": a["max_attempts"],
-                        "doing": bool(doing), "best": best, "show_result": a["show_result"], "reveal": can_reveal(a),
+                        "doing": bool(doing), "best": best, "show_result": a["show_result"], "reveal": can_reveal(a), "count_bonus": bool(a["count_bonus"]), "count_penalty": bool(a["count_penalty"]),
                         "last_submitted": done[-1]["submitted_at"] if done else None,
                         "last_sub_id": done[-1]["id"] if done else None})
         return {"assignments": out}
@@ -938,8 +938,17 @@ def r_assign_edit(c):
         due = int(due)
     att = need_int(c.body, "max_attempts", 1, 10, a["max_attempts"])
     show = show_result_value(c.body["show_result"]) if "show_result" in c.body else a["show_result"]
-    c.con.execute("UPDATE assignments SET due_at=?, max_attempts=?, show_result=? WHERE id=?", (due, att, show, a["id"]))
-    audit(c.con, c.user["id"], "edit_assignment", a["title"])
+    flags = {}
+    for k in ("count_bonus", "count_penalty"):
+        flags[k] = a[k]
+        if k in c.body:
+            if not isinstance(c.body[k], bool):
+                raise ApiError(400, f"“{k}” phải là true hoặc false")
+            flags[k] = 1 if c.body[k] else 0
+    c.con.execute("UPDATE assignments SET due_at=?, max_attempts=?, show_result=?, count_bonus=?, count_penalty=? WHERE id=?",
+                  (due, att, show, flags["count_bonus"], flags["count_penalty"], a["id"]))
+    note = "".join(f" · {lab} {'có' if flags[k] else 'không'}" for k, lab in (("count_bonus", "cộng điểm"), ("count_penalty", "trừ điểm")) if flags[k] != a[k])
+    audit(c.con, c.user["id"], "edit_assignment", a["title"] + note)
     return {"ok": True}
 
 
@@ -1778,7 +1787,7 @@ def test_rewards(con, sid, owner_id, month) -> list:
     """Các bài kiểm tra (bài giáo viên giao) được thưởng trong tháng: mỗi bài tính một lần, theo lần nộp đầu tiên đạt mức thưởng của học sinh.
     Điểm thưởng cộng dồn qua các bài."""
     rows = con.execute("SELECT s.assignment_id, s.score, s.max_score, s.submitted_at, a.title FROM submissions s JOIN assignments a ON a.id=s.assignment_id "
-                       "WHERE s.student_id=? AND s.submitted_at IS NOT NULL AND s.max_score>0 ORDER BY s.submitted_at", (sid,)).fetchall()
+                       "WHERE s.student_id=? AND s.submitted_at IS NOT NULL AND s.max_score>0 AND a.count_bonus=1 ORDER BY s.submitted_at", (sid,)).fetchall()
     seen, out = set(), []
     for r in rows:
         if r["assignment_id"] in seen:
@@ -1799,7 +1808,7 @@ def missed_assignments(con, sid, month, now=None) -> list:
     now = db.now() if now is None else now
     out = []
     for a in con.execute("SELECT a.id, a.title, a.owner_id, a.due_at FROM assignments a JOIN assignment_students s ON s.assignment_id=a.id "
-                         "WHERE s.student_id=? AND a.due_at IS NOT NULL AND a.due_at<? AND NOT EXISTS("
+                         "WHERE s.student_id=? AND a.count_penalty=1 AND a.due_at IS NOT NULL AND a.due_at<? AND NOT EXISTS("
                          "SELECT 1 FROM submissions x WHERE x.assignment_id=a.id AND x.student_id=? AND x.submitted_at IS NOT NULL) ORDER BY a.due_at",
                          (sid, now, sid)).fetchall():
         if month_key(a["due_at"]) != month:
@@ -1808,6 +1817,12 @@ def missed_assignments(con, sid, month, now=None) -> list:
         if amount > 0:
             out.append({"id": a["id"], "title": a["title"], "due_at": a["due_at"], "amount": amount})
     return out
+
+
+def point_adjusts(con, sid, month) -> list:
+    """Các khoản giáo viên điều chỉnh điểm của học sinh trong tháng (cộng/trừ kèm lý do)."""
+    return [{"id": r["id"], "amount": r["amount"], "reason": r["reason"], "at": r["at"]} for r in con.execute(
+        "SELECT id, amount, reason, at FROM point_adjust WHERE student_id=? AND month=? ORDER BY at", (sid, month)).fetchall()]
 
 
 def my_points(con, user, month) -> dict:
@@ -1825,9 +1840,10 @@ def my_points(con, user, month) -> dict:
         "SELECT b.points, b.at, p.title FROM bonus_log b JOIN practice p ON p.id=b.practice_id WHERE b.student_id=? AND b.month=? AND b.points<>0 ORDER BY b.at DESC",
         (sid, month)).fetchall()]
     missed = missed_assignments(con, sid, month)
+    adjusts = point_adjusts(con, sid, month)
     parts = {"tests": sum(t["amount"] for t in tests), "practice": sum(p["points"] for p in practice),
-             "late": -late_min * rules["late_fee"], "missed": -sum(x["amount"] for x in missed)}
-    return {"month": month, "net": sum(parts.values()), "parts": parts, "tests": tests, "practice": practice, "late_min": late_min, "missed": missed,
+             "late": -late_min * rules["late_fee"], "missed": -sum(x["amount"] for x in missed), "adjust": sum(a["amount"] for a in adjusts)}
+    return {"month": month, "net": sum(parts.values()), "parts": parts, "tests": tests, "practice": practice, "late_min": late_min, "missed": missed, "adjusts": adjusts,
             "rules": {k: rules[k] for k in ("late_fee", "reward_min", "reward_amount", "missed_penalty")}}
 
 
@@ -1862,6 +1878,8 @@ def point_events(con, s, month) -> list:
                        "amount": -r["late_min"] * rules["late_fee"], "at": _date_ts(r["date"])})
     for x in missed_assignments(con, sid, month):
         ev.append({"kind": "missed", "title": x["title"], "detail": "Quá hạn nộp, chưa làm bài", "amount": -x["amount"], "at": x["due_at"]})
+    for a in point_adjusts(con, sid, month):
+        ev.append({"kind": "adjust", "title": a["reason"], "detail": "Giáo viên điều chỉnh", "amount": a["amount"], "at": a["at"], "adj_id": a["id"]})
     for e in ev:
         e["month"] = month
     return ev
@@ -1874,6 +1892,7 @@ def student_events(con, s) -> list:
     for q, col in (("SELECT MIN(date) v FROM attendance WHERE student_id=? AND late_min>0", None),
                    ("SELECT MIN(submitted_at) v FROM submissions WHERE student_id=? AND submitted_at IS NOT NULL", "ts"),
                    ("SELECT MIN(month) v FROM bonus_log WHERE student_id=?", None),
+                   ("SELECT MIN(month) v FROM point_adjust WHERE student_id=?", None),
                    ("SELECT MIN(a.due_at) v FROM assignments a JOIN assignment_students x ON x.assignment_id=a.id WHERE x.student_id=? AND a.due_at IS NOT NULL", "ts")):
         v = con.execute(q, (sid,)).fetchone()["v"]
         if v:
@@ -1896,7 +1915,7 @@ def student_events(con, s) -> list:
 
 
 def _sum_events(ev) -> dict:
-    out = {"plus": 0, "minus": 0, "net": 0, "parts": {"tests": 0, "practice": 0, "late": 0, "missed": 0}}
+    out = {"plus": 0, "minus": 0, "net": 0, "parts": {"tests": 0, "practice": 0, "late": 0, "missed": 0, "adjust": 0}}
     for e in ev:
         out["plus" if e["amount"] > 0 else "minus"] += abs(e["amount"])
         out["net"] += e["amount"]
@@ -1940,10 +1959,8 @@ def r_points_board(c):
 def r_points_student(c):
     """Lịch sử điểm của một học sinh: từng khoản cộng/trừ kèm số dư lũy kế, và tổng hợp theo tháng."""
     sid = int(c.p[0])
-    cls, studs = att_students(c.con, c.user)
-    s = next((x for x in studs if x["id"] == sid), None)
-    if not s:
-        raise ApiError(404, "Không tìm thấy học sinh trong các lớp của bạn")
+    s = _my_student(c.con, c.user, sid)
+    cls = {k["id"]: k for k in visible_classes(c.con, c.user)}
     ev = student_events(c.con, s)
     by_month = {}
     for e in ev:
@@ -1954,6 +1971,51 @@ def r_points_student(c):
            "events": ev, "months": sorted(by_month.values(), key=lambda b: b["month"], reverse=True)}
     out.update(_sum_events(ev))
     return out
+
+
+def _my_student(con, user, sid):
+    """Học sinh nằm trong các lớp giáo viên được quản lý (admin: mọi lớp) — nếu không thì 404."""
+    cls, studs = att_students(con, user)
+    s = next((x for x in studs if x["id"] == sid), None)
+    if not s:
+        raise ApiError(404, "Không tìm thấy học sinh trong các lớp của bạn")
+    return s
+
+
+@route("POST", "/api/points/adjust", TEACHER_ROLES)
+def r_points_adjust(c):
+    """Giáo viên điều chỉnh điểm của một học sinh: cộng (số dương) hoặc trừ (số âm), bắt buộc ghi lý do; có thể chọn ngày (không ở tương lai)."""
+    s = _my_student(c.con, c.user, need_int(c.body, "student_id"))
+    amount = need_int(c.body, "amount", -100_000_000, 100_000_000)
+    if amount == 0:
+        raise ApiError(400, "Số điểm điều chỉnh phải khác 0")
+    reason = need_str(c.body, "reason", 200)
+    date = c.body.get("date")
+    if date in (None, ""):
+        at = db.now()
+    else:
+        try:
+            d = datetime.date.fromisoformat(str(date))
+        except ValueError:
+            raise ApiError(400, "Ngày không hợp lệ")
+        if d > today_vn():
+            raise ApiError(400, "Ngày điều chỉnh không được ở tương lai")
+        at = _date_ts(d.isoformat()) + 12 * 3600
+    cur = c.con.execute("INSERT INTO point_adjust(student_id, amount, reason, at, month, created_by, created_at) VALUES(?,?,?,?,?,?,?)",
+                        (s["id"], amount, reason, at, month_key(at), c.user["id"], db.now()))
+    audit(c.con, c.user["id"], "point_adjust", f"{s['name']}: {amount:+d} · {reason}")
+    return {"ok": True, "id": cur.lastrowid}
+
+
+@route("DELETE", r"/api/points/adjust/(\d+)", TEACHER_ROLES)
+def r_points_adjust_del(c):
+    a = c.con.execute("SELECT * FROM point_adjust WHERE id=?", (int(c.p[0]),)).fetchone()
+    if not a:
+        raise ApiError(404, "Không tìm thấy khoản điều chỉnh")
+    s = _my_student(c.con, c.user, a["student_id"])
+    c.con.execute("DELETE FROM point_adjust WHERE id=?", (a["id"],))
+    audit(c.con, c.user["id"], "point_adjust_del", f"{s['name']}: bỏ {a['amount']:+d} · {a['reason']}")
+    return {"ok": True}
 
 
 @route("GET", "/api/points/me", ("student",))

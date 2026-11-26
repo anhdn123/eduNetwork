@@ -1144,7 +1144,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual((by[C]["plus"], by[C]["minus"], by[C]["net"]), (5000, 0, 5000))
         self.assertEqual([x["id"] for x in r["students"]], [C, A, B])                           # cao → thấp; âm điểm ở cuối
         self.assertEqual([x["rank"] for x in r["students"]], [1, 2, 3])
-        self.assertEqual(by[B]["parts"], {"tests": 0, "practice": 0, "late": -10000, "missed": -10000})
+        self.assertEqual(by[B]["parts"], {"tests": 0, "practice": 0, "late": -10000, "missed": -10000, "adjust": 0})
         self.assertEqual((r["totals"]["plus"], r["totals"]["minus"], r["totals"]["net"], r["totals"]["negative"], r["totals"]["students"]), (10000, 25000, -15000, 1, 3))
         # khớp với điểm học sinh tự xem
         sb = self.C()
@@ -1177,6 +1177,123 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(sb.get("/api/points/board")[0], 403)
         self.assertEqual(sb.get(f"/api/points/student/{B}")[0], 403)
         self.assertEqual(self.C().get("/api/points/board")[0], 401)
+
+    def test_zz_points_adjust(self):
+        """Giáo viên điều chỉnh điểm (cộng/trừ kèm lý do, chọn ngày), “miễn” một khoản phạt vì nghỉ học, xóa điều chỉnh; học sinh thấy khoản điều chỉnh;
+        kiểm tra dữ liệu vào, quyền và ghi nhật ký."""
+        lan = self.C()
+        lan.post("/api/login", {"username": "lan", "password": LAN_PW})
+        cid = lan.post("/api/classes", {"name": "ADJ", "grade": "9"})[1]["id"]
+        accs = lan.post("/api/students/bulk", {"class_id": cid, "rows": ["Nghỉ Phép", "Được Cộng"]})[1]["accounts"]
+        A, B = accs[0]["id"], accs[1]["id"]
+        v = {"code": "J1", "questions": [mcq(1, 0)]}
+        now = int(time.time())
+        st, r = lan.post("/api/assignments", {"title": "Bài vắng", "class_id": cid, "dist_mode": "alt", "duration_min": 0, "max_attempts": 1, "show_result": True,
+                                              "due_at": now + 3600, "exam": {"title": "Bài vắng", "variations": [v]}})
+        aid = r["id"]
+        past = now - 60
+        lan.call("PATCH", f"/api/assignments/{aid}", {"due_at": past})                              # cả hai chưa nộp → mỗi em −5.000
+        month = app.month_key(past)
+        net = lambda sid: {x["id"]: x["net"] for x in lan.get(f"/api/points/board?class_id={cid}&month={month}")[1]["students"]}[sid]
+        self.assertEqual((net(A), net(B)), (-5000, -5000))
+        sa, sb = self.C(), self.C()
+        sa.post("/api/login", {"username": accs[0]["username"], "password": accs[0]["password"]})
+        sb.post("/api/login", {"username": accs[1]["username"], "password": accs[1]["password"]})
+        # A nghỉ học có phép → miễn khoản phạt (hoàn 5.000, ghi vào đúng ngày hạn nộp)
+        d = lan.get(f"/api/points/student/{A}")[1]
+        miss = [e for e in d["events"] if e["kind"] == "missed"][0]
+        day = time.strftime("%Y-%m-%d", time.gmtime(miss["at"] + app.VN_OFFSET))
+        st, r = lan.post("/api/points/adjust", {"student_id": A, "amount": 5000, "reason": "Miễn: Bài vắng (nghỉ học có phép)", "date": day})
+        self.assertEqual(st, 200, r)
+        adj_id = r["id"]
+        self.assertEqual((net(A), net(B)), (0, -5000))
+        d = lan.get(f"/api/points/student/{A}")[1]
+        adj = [e for e in d["events"] if e["kind"] == "adjust"]
+        self.assertEqual([(e["amount"], e["adj_id"]) for e in adj], [(5000, adj_id)])
+        self.assertEqual((d["plus"], d["minus"], d["net"]), (5000, 5000, 0))
+        self.assertEqual(d["events"][-1]["balance"], 0)
+        # học sinh tự xem thấy khoản điều chỉnh và điểm khớp
+        me = sa.get(f"/api/points/me?month={month}")[1]
+        self.assertEqual((me["net"], me["parts"]["adjust"], [a["reason"] for a in me["adjusts"]]), (0, 5000, ["Miễn: Bài vắng (nghỉ học có phép)"]))
+        # B bị trừ thêm 2.000 với lý do (ngày mặc định hôm nay → tháng hiện tại)
+        self.assertEqual(lan.post("/api/points/adjust", {"student_id": B, "amount": -2000, "reason": "Nói chuyện riêng"})[0], 200)
+        cur = app.month_key()
+        self.assertEqual(sb.get(f"/api/points/me?month={cur}")[1]["parts"]["adjust"], -2000)
+        board = {x["id"]: x for x in lan.get(f"/api/points/board?class_id={cid}&month={cur}")[1]["students"]}
+        self.assertEqual(board[B]["parts"]["adjust"], -2000)
+        # xóa điều chỉnh → điểm tính lại
+        self.assertEqual(lan.call("DELETE", f"/api/points/adjust/{adj_id}")[0], 200)
+        self.assertEqual(net(A), -5000)
+        self.assertEqual(lan.call("DELETE", f"/api/points/adjust/{adj_id}")[0], 404)
+        # dữ liệu vào
+        bad = [{"student_id": A, "amount": 0, "reason": "x"}, {"student_id": A, "amount": 5, "reason": ""}, {"student_id": A, "amount": "abc", "reason": "x"},
+               {"student_id": A, "amount": 10 ** 9, "reason": "x"}, {"student_id": A, "amount": 5, "reason": "x", "date": "2999-01-01"},
+               {"student_id": A, "amount": 5, "reason": "x", "date": "không phải ngày"}, {"amount": 5, "reason": "x"}]
+        self.assertEqual([lan.post("/api/points/adjust", b)[0] for b in bad], [400] * len(bad))
+        # quyền: giáo viên khác không điều chỉnh/xóa được; học sinh và khách bị chặn
+        binh = self.C()
+        binh.post("/api/login", {"username": "binh", "password": self.__class__.binh_pw})
+        self.assertEqual(binh.post("/api/points/adjust", {"student_id": A, "amount": 100, "reason": "x"})[0], 404)
+        lan.post("/api/points/adjust", {"student_id": A, "amount": 100, "reason": "thử xóa"})
+        other_id = lan.get(f"/api/points/student/{A}")[1]["events"][-1]["adj_id"]
+        self.assertEqual(binh.call("DELETE", f"/api/points/adjust/{other_id}")[0], 404)
+        self.assertEqual(sa.post("/api/points/adjust", {"student_id": A, "amount": 99999, "reason": "tự cộng"})[0], 403)
+        self.assertEqual(sa.call("DELETE", f"/api/points/adjust/{other_id}")[0], 403)
+        self.assertEqual(self.C().post("/api/points/adjust", {"student_id": A, "amount": 1, "reason": "x"})[0], 401)
+
+    def test_zz_assignment_count_points(self):
+        """Mỗi bài giao có hai ô tick riêng: “cộng điểm” (thưởng bài kiểm tra) và “trừ điểm” (quá hạn chưa nộp). Có bài chỉ cộng, bài chỉ trừ, bài không tính; mặc định là có cả hai."""
+        lan = self.C()
+        lan.post("/api/login", {"username": "lan", "password": LAN_PW})
+        cid = lan.post("/api/classes", {"name": "TICK", "grade": "9"})[1]["id"]
+        accs = lan.post("/api/students/bulk", {"class_id": cid, "rows": ["Học Bài", "Bỏ Bài"]})[1]["accounts"]
+        A, B = accs[0]["id"], accs[1]["id"]
+        v = {"code": "T1", "questions": [mcq(1, 0), mcq(2, 0)]}
+        now = int(time.time())
+
+        def give(title, **extra):
+            st, r = lan.post("/api/assignments", {"title": title, "class_id": cid, "dist_mode": "alt", "duration_min": 0, "max_attempts": 1, "show_result": True,
+                                                  "due_at": now + 3600, "exam": {"title": title, "variations": [v]}, **extra})
+            self.assertEqual(st, 200, r)
+            return r["id"]
+        both = give("Cộng và trừ")                                                         # mặc định: có cả hai
+        b_only = give("Chỉ cộng", count_penalty=False)
+        p_only = give("Chỉ trừ", count_bonus=False)
+        none = give("Không tính", count_bonus=False, count_penalty=False)
+        lst = {a["id"]: a for a in lan.get("/api/assignments")[1]["assignments"]}
+        self.assertEqual([(lst[x]["count_bonus"], lst[x]["count_penalty"]) for x in (both, b_only, p_only, none)], [(True, True), (True, False), (False, True), (False, False)])
+        sa, sb = self.C(), self.C()
+        sa.post("/api/login", {"username": accs[0]["username"], "password": accs[0]["password"]})
+        sb.post("/api/login", {"username": accs[1]["username"], "password": accs[1]["password"]})
+        self.assertEqual({a["id"]: (a["count_bonus"], a["count_penalty"]) for a in sa.get("/api/assignments")[1]["assignments"]}[p_only], (False, True))   # học sinh biết
+        for aid in (b_only, p_only):                                                       # A làm 10 điểm hai bài: chỉ bài “Chỉ cộng” được thưởng
+            sa.post(f"/api/assignments/{aid}/start")
+            sa.post(f"/api/assignments/{aid}/submit", {"answers": [0, 0]})
+        for aid in (both, b_only, p_only, none):
+            self.assertEqual(lan.call("PATCH", f"/api/assignments/{aid}", {"due_at": now - 60})[0], 200)   # cả 4 bài quá hạn
+        me = lambda st: st.get(f"/api/points/me?month={app.month_key()}")[1]
+        ra, rb = me(sa), me(sb)
+        self.assertEqual((ra["parts"]["tests"], ra["parts"]["missed"], [m["title"] for m in ra["missed"]]), (5000, -5000, ["Cộng và trừ"]))
+        # B không nộp gì: bị trừ ở bài “Cộng và trừ” + “Chỉ trừ”; bài “Chỉ cộng” và “Không tính” không bị trừ
+        self.assertEqual(sorted(m["title"] for m in rb["missed"]), ["Chỉ trừ", "Cộng và trừ"])
+        self.assertEqual((rb["parts"]["tests"], rb["parts"]["missed"], rb["net"]), (0, -10000, -10000))
+        # đổi tick: bật cộng cho “Chỉ trừ” → A được thưởng thêm; bỏ trừ ở “Cộng và trừ” → A hết bị phạt; các thiết lập khác giữ nguyên
+        self.assertEqual(lan.call("PATCH", f"/api/assignments/{p_only}", {"count_bonus": True})[0], 200)
+        self.assertEqual(lan.call("PATCH", f"/api/assignments/{both}", {"count_penalty": False})[0], 200)
+        ra = me(sa)
+        self.assertEqual((ra["parts"]["tests"], ra["parts"]["missed"], ra["net"]), (10000, 0, 10000))
+        self.assertEqual([m["title"] for m in me(sb)["missed"]], ["Chỉ trừ"])
+        a = {x["id"]: x for x in lan.get("/api/assignments")[1]["assignments"]}[both]
+        self.assertEqual((a["max_attempts"], a["show_result"], a["count_bonus"], a["count_penalty"]), (1, 1, True, False))
+        self.assertEqual(lan.call("PATCH", f"/api/assignments/{both}", {"count_bonus": "yes"})[0], 400)
+        # bảng điểm của giáo viên khớp
+        bd = {x["id"]: x for x in lan.get(f"/api/points/board?class_id={cid}&month={app.month_key()}")[1]["students"]}
+        self.assertEqual((bd[A]["plus"], bd[A]["minus"], bd[B]["plus"], bd[B]["minus"]), (10000, 0, 0, 5000))
+        # quyền: giáo viên khác và học sinh không đổi được
+        binh = self.C()
+        binh.post("/api/login", {"username": "binh", "password": self.__class__.binh_pw})
+        self.assertEqual(binh.call("PATCH", f"/api/assignments/{both}", {"count_bonus": False})[0], 404)
+        self.assertEqual(sa.call("PATCH", f"/api/assignments/{both}", {"count_bonus": False})[0], 403)
 
     def test_zz_attendance_rules(self):
         """Học sinh mới tạo vẫn có lịch; phút đi muộn; chốt điểm danh; phạt muộn và thưởng điểm theo quy tắc từng tháng."""

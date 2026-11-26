@@ -203,3 +203,15 @@ dùng bucket riêng tư, giữ khóa bí mật, và xem lại yêu cầu pháp l
    - Chọn "Từ trước đến nay" (mặc định) hoặc từng tháng. Bấm "Chi tiết" (hoặc bấm vào hàng) xem lịch sử từng khoản: thưởng bài kiểm tra, thưởng tự luyện tập,
      phạt đi muộn, phạt bài quá hạn không làm; có số dư lũy kế và tổng hợp theo tháng. Có nút tải CSV.
    - Điểm cộng = thưởng bài kiểm tra + thưởng tự luyện tập. Điểm trừ = phạt đi muộn + phạt không làm bài. Điểm hiện tại = cộng − trừ (cùng cách tính với tab "Điểm của tôi" của học sinh).
+
+15. GIÁO VIÊN ĐIỀU CHỈNH ĐIỂM
+   - Trong tab "Quản lý điểm" > "Chi tiết" của học sinh: ô "Điều chỉnh điểm" (số dương = cộng, số âm = trừ, bắt buộc ghi lý do, có thể chọn ngày).
+   - Khoản phạt tự động (đi muộn, không làm bài) có nút "Miễn": hoàn lại đúng số điểm bị trừ (vd. học sinh nghỉ học có phép), ghi thành một khoản điều chỉnh.
+   - Khoản điều chỉnh có nút "Xóa" để hủy. Mọi thao tác được ghi nhật ký. Học sinh thấy khoản điều chỉnh (kèm lý do) ở tab "Điểm của tôi".
+   - Lưu ý: khoản "Miễn" là khoản cộng riêng, không xóa khoản phạt gốc. Nếu sau đó gia hạn bài (phạt gốc tự mất) thì nên xóa khoản miễn để điểm không dư.
+
+16. BÀI NÀO ĐƯỢC CỘNG ĐIỂM / BỊ TRỪ ĐIỂM
+   - Mỗi bài giao có HAI ô tick riêng: "Cộng điểm" (học sinh đạt mức thưởng thì được cộng, mục "Thưởng bài kiểm tra") và "Trừ điểm" (quá hạn nộp mà chưa nộp thì bị trừ).
+     Đặt khi tạo bài (mặc định cả hai đều có) và đổi bất kỳ lúc nào ở tab "Bài đã giao" (cột "Tính điểm": ＋ Cộng, − Trừ).
+   - Ví dụ: bài chỉ để khuyến khích → tick Cộng, bỏ Trừ; bài bắt buộc phải nộp → tick Trừ, bỏ Cộng; bài chỉ để luyện → bỏ cả hai.
+   - Đổi tick là điểm tính lại ngay (điểm không lưu cứng). Bài đã giao từ trước mặc định có cả hai. Điểm cộng luyện tập tự do không phụ thuộc các ô tick này.

@@ -91,6 +91,8 @@ CREATE TABLE IF NOT EXISTS assignments(
   duration_min INTEGER NOT NULL DEFAULT 0,
   max_attempts INTEGER NOT NULL DEFAULT 1,
   show_result INTEGER NOT NULL DEFAULT 1,
+  count_bonus INTEGER NOT NULL DEFAULT 1,        -- 1: bài này được cộng điểm thưởng khi học sinh đạt mức thưởng; 0: không cộng
+  count_penalty INTEGER NOT NULL DEFAULT 1,      -- 1: bài này bị trừ điểm khi quá hạn mà học sinh chưa nộp; 0: không trừ
   closed INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );
@@ -203,6 +205,17 @@ CREATE TABLE IF NOT EXISTS bonus_q(
   qid TEXT NOT NULL,
   PRIMARY KEY(student_id, month, qid)
 );
+CREATE TABLE IF NOT EXISTS point_adjust(           -- giáo viên điều chỉnh điểm của học sinh (cộng/trừ kèm lý do), vd. miễn phạt vì nghỉ học
+  id INTEGER PRIMARY KEY,
+  student_id INTEGER NOT NULL,
+  amount INTEGER NOT NULL,                      -- + cộng, − trừ
+  reason TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  month TEXT NOT NULL,
+  created_by INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_padj_student ON point_adjust(student_id, month);
 CREATE TABLE IF NOT EXISTS class_schedule(
   class_id INTEGER NOT NULL,
   from_date TEXT NOT NULL,
@@ -264,6 +277,11 @@ def init():
     # nâng cấp CSDL cũ: thêm cột số phút đi muộn cho bảng điểm danh
     if "late_min" not in [r[1] for r in con.execute("PRAGMA table_info(attendance)").fetchall()]:
         con.execute("ALTER TABLE attendance ADD COLUMN late_min INTEGER NOT NULL DEFAULT 0")
+    # bài được giao có được cộng điểm / bị trừ điểm hay không (giáo viên tick riêng từng loại ở tab Bài đã giao); mặc định có cả hai
+    cols = [r[1] for r in con.execute("PRAGMA table_info(assignments)").fetchall()]
+    for col in ("count_bonus", "count_penalty"):
+        if col not in cols:
+            con.execute(f"ALTER TABLE assignments ADD COLUMN {col} INTEGER NOT NULL DEFAULT 1")
     # quy tắc phạt bài được giao quá hạn không làm (mặc định trừ 5.000 điểm mỗi bài)
     if "missed_penalty" not in [r[1] for r in con.execute("PRAGMA table_info(att_rules)").fetchall()]:
         con.execute("ALTER TABLE att_rules ADD COLUMN missed_penalty INTEGER NOT NULL DEFAULT 5000")

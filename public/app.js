@@ -2862,6 +2862,10 @@ async function openAssign(title, variations, c) {
       <option value="1">Ngay sau khi nộp bài</option>
       <option value="2">Sau khi hết hạn nộp (hoặc khi giáo viên đóng bài) — tránh lộ đáp án cho bạn chưa làm</option>
       <option value="0">Không cho xem (chỉ xem điểm và câu đúng/sai)</option></select></label>
+    <div style="font-size:13px;margin:4px 0 10px"><b>Điểm của bài này</b>
+      <label style="display:flex;gap:8px;align-items:flex-start;margin-top:4px"><input type="checkbox" id="as-cb" checked style="margin-top:3px"><span>Được <b>cộng điểm</b> khi đạt mức thưởng</span></label>
+      <label style="display:flex;gap:8px;align-items:flex-start;margin-top:2px"><input type="checkbox" id="as-cn" checked style="margin-top:3px"><span>Bị <b>trừ điểm</b> khi quá hạn mà chưa nộp</span></label>
+      <small style="color:#667085">Bỏ tick ô nào thì bài này không áp dụng phần đó. Đổi lại được ở tab “Bài đã giao”.</small></div>
     <div class="lb-note">Học sinh chỉ nhận được đề (không có đáp án). Hệ thống tự chấm câu trắc nghiệm, đúng/sai, trả lời ngắn; câu tự luận giáo viên chấm riêng. Sau khi nộp, học sinh vào <b>Bài của tôi → 📖 Xem lại bài</b> để xem lại bài làm.</div>
     <button class="btn btn-blue" id="as-go">✓ Giao bài</button>`);
   if (variations.length < 2 && c.kindKey !== 'personal') $('#as-d', m.b).value = 'alt';
@@ -2992,7 +2996,7 @@ async function openAssign(title, variations, c) {
         title: t, class_id: +$('#as-c', m.b).value, dist_mode: sendMode,
         ...(sendMap ? {variation_map: sendMap} : {}),
         due_at: dv ? Math.floor(new Date(dv).getTime() / 1000) : null, duration_min: +$('#as-min', m.b).value || 0,
-        max_attempts: +$('#as-try', m.b).value || 1, show_result: show,
+        max_attempts: +$('#as-try', m.b).value || 1, show_result: show, count_bonus: $('#as-cb', m.b).checked, count_penalty: $('#as-cn', m.b).checked,
         exam: {title: t, subject: c.subject, grade: c.grade, topic: c.topic, variations: sendVars.map(v => ({code: v.code, name: v.name, desc: v.desc, questions: v.questions}))}
       });
       const tiers = r.tiers ? `<p style="font-size:12px;color:#475467">Phân mức: ${r.tiers.map((n, i) => `<b>${esc(variations[i] ? variations[i].code : 'Mức ' + (i + 1))}</b> ${n} HS`).join(' · ')}</p>` : '';
