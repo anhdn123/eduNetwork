@@ -1684,14 +1684,16 @@ def r_attendance(c):
         st, scheduled, tm = day_status(r["status"] if r else None, sched_on(sch[s["class_id"]], d), d, joined_on(s))
         out.append({"id": s["id"], "name": s["name"], "username": s["username"], "class_id": s["class_id"], "class_name": cls[s["class_id"]]["name"],
                     "scheduled": scheduled, "time": tm, "status": st, "marked": bool(r), "note": r["note"] if r else "",
-                    "late_min": r["late_min"] if r and st == "present" else 0})
+                    "late_min": r["late_min"] if r and st == "present" else 0,
+                    **{k: (r[k] if r and st == "present" else 0) for k in DISC_KEYS}})
     classes = []
     for k in cls.values():
         sc = sched_on(sch[k["id"]], d)
         classes.append({"id": k["id"], "name": k["name"], "has_schedule": bool(sch[k["id"]]),
                         "scheduled": bool(sc and str(d.weekday()) in sc[0]), "time": sc[0].get(str(d.weekday()), "") if sc else "",
                         "closed": k["id"] in closed, "closed_at": closed[k["id"]]["closed_at"] if k["id"] in closed else None})
-    return {"date": d.isoformat(), "weekday": WEEKDAY_VN[d.weekday()], "today": today_vn().isoformat(), "classes": classes, "students": out}
+    return {"date": d.isoformat(), "weekday": WEEKDAY_VN[d.weekday()], "today": today_vn().isoformat(), "classes": classes, "students": out,
+            "discipline_fee": att_rules(c.con, c.user["id"], month_key(_date_ts(d.isoformat()) + 12 * 3600))["discipline_fee"]}
 
 
 @route("POST", "/api/attendance", TEACHER_ROLES)
@@ -1713,16 +1715,22 @@ def r_attendance_set(c):
         if mine[sid]["class_id"] in closed:
             raise ApiError(409, f"Ngày {d.strftime('%d/%m/%Y')} đã chốt điểm danh cho lớp này — hãy bấm “Mở lại” để sửa")
         st = it.get("status")
-        old = c.con.execute("SELECT late_min FROM attendance WHERE student_id=? AND date=?", (sid, d.isoformat())).fetchone()
+        old = c.con.execute("SELECT late_min, noisy, phone, snack FROM attendance WHERE student_id=? AND date=?", (sid, d.isoformat())).fetchone()
         late = it.get("late_min", old["late_min"] if old else 0)
         if isinstance(late, bool) or not isinstance(late, (int, float)) or not 0 <= late <= 600:
             raise ApiError(400, "Số phút đi muộn phải từ 0 đến 600")
+        disc = {}
+        for k in DISC_KEYS:   # số lần mất trật tự / dùng điện thoại / ăn quà vặt trong buổi (không gửi lên thì giữ nguyên)
+            v = it.get(k, old[k] if old else 0)
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or v != int(v) or not 0 <= v <= 99:
+                raise ApiError(400, f"Số lần {DISC_LABEL[k].lower()} phải là số nguyên từ 0 đến 99")
+            disc[k] = int(v)
         if st == "auto":   # bỏ đánh dấu, quay về mặc định theo lịch
             c.con.execute("DELETE FROM attendance WHERE student_id=? AND date=?", (sid, d.isoformat()))
         elif st in ATT_STATUS:
-            c.con.execute("INSERT OR REPLACE INTO attendance(student_id, date, status, class_id, note, marked_by, marked_at, late_min) VALUES(?,?,?,?,?,?,?,?)",
+            c.con.execute("INSERT OR REPLACE INTO attendance(student_id, date, status, class_id, note, marked_by, marked_at, late_min, noisy, phone, snack) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                           (sid, d.isoformat(), st, mine[sid]["class_id"], str(it.get("note") or "").strip()[:200], c.user["id"], db.now(),
-                           int(late) if st == "present" else 0))   # chỉ học sinh đi học mới có số phút muộn
+                           int(late) if st == "present" else 0, *(disc[k] if st == "present" else 0 for k in DISC_KEYS)))   # chỉ học sinh đi học mới có số phút muộn và số lần vi phạm
         else:
             raise ApiError(400, "Trạng thái điểm danh không hợp lệ")
         n += 1
@@ -1763,17 +1771,19 @@ def r_attendance_close(c):
 
 
 # ---------- quy tắc phạt đi muộn / thưởng điểm (đổi được theo tháng, áp dụng từ tháng đặt trở đi) ----------
-RULE_DEFAULT = {"late_fee": 1000, "reward_min": 8.0, "reward_amount": 5000, "missed_penalty": 5000}
+RULE_DEFAULT = {"late_fee": 1000, "reward_min": 8.0, "reward_amount": 5000, "missed_penalty": 5000, "discipline_fee": 5000}
+DISC_KEYS = ("noisy", "phone", "snack")
+DISC_LABEL = {"noisy": "Mất trật tự", "phone": "Dùng điện thoại", "snack": "Ăn quà vặt"}
 
 
 def att_rules(con, owner_id, month) -> dict:
     """Quy tắc của giáo viên có hiệu lực ở tháng `month`: bản ghi gần nhất không muộn hơn tháng đó, chưa đặt thì dùng mặc định."""
-    r = con.execute("SELECT late_fee, reward_min, reward_amount, missed_penalty, month FROM att_rules WHERE owner_id=? AND month<=? ORDER BY month DESC LIMIT 1",
+    r = con.execute("SELECT late_fee, reward_min, reward_amount, missed_penalty, discipline_fee, month FROM att_rules WHERE owner_id=? AND month<=? ORDER BY month DESC LIMIT 1",
                     (owner_id, month)).fetchone()
     out = dict(RULE_DEFAULT)
     out["from"] = None
     if r:
-        out.update({k: r[k] for k in ("late_fee", "reward_min", "reward_amount", "missed_penalty")})
+        out.update({k: r[k] for k in ("late_fee", "reward_min", "reward_amount", "missed_penalty", "discipline_fee")})
         out["from"] = r["month"]
     return out
 
@@ -1841,10 +1851,14 @@ def my_points(con, user, month) -> dict:
         (sid, month)).fetchall()]
     missed = missed_assignments(con, sid, month)
     adjusts = point_adjusts(con, sid, month)
+    disc = [{"date": r["date"], "noisy": r["noisy"], "phone": r["phone"], "snack": r["snack"], "times": r["noisy"] + r["phone"] + r["snack"],
+             "amount": -(r["noisy"] + r["phone"] + r["snack"]) * rules["discipline_fee"]} for r in con.execute(
+        "SELECT date, noisy, phone, snack FROM attendance WHERE student_id=? AND status='present' AND noisy+phone+snack>0 AND date BETWEEN ? AND ? AND date<=? ORDER BY date",
+        (sid, first.isoformat(), last.isoformat(), today_vn().isoformat())).fetchall()] if rules["discipline_fee"] > 0 else []
     parts = {"tests": sum(t["amount"] for t in tests), "practice": sum(p["points"] for p in practice),
-             "late": -late_min * rules["late_fee"], "missed": -sum(x["amount"] for x in missed), "adjust": sum(a["amount"] for a in adjusts)}
-    return {"month": month, "net": sum(parts.values()), "parts": parts, "tests": tests, "practice": practice, "late_min": late_min, "missed": missed, "adjusts": adjusts,
-            "rules": {k: rules[k] for k in ("late_fee", "reward_min", "reward_amount", "missed_penalty")}}
+             "late": -late_min * rules["late_fee"], "missed": -sum(x["amount"] for x in missed), "discipline": sum(x["amount"] for x in disc), "adjust": sum(a["amount"] for a in adjusts)}
+    return {"month": month, "net": sum(parts.values()), "parts": parts, "tests": tests, "practice": practice, "late_min": late_min, "missed": missed, "adjusts": adjusts, "discipline": disc,
+            "rules": {k: rules[k] for k in ("late_fee", "reward_min", "reward_amount", "missed_penalty", "discipline_fee")}}
 
 
 def _date_ts(iso) -> int:
@@ -1876,6 +1890,13 @@ def point_events(con, s, month) -> list:
         if rules["late_fee"] > 0:
             ev.append({"kind": "late", "title": f"Đi muộn ngày {r['date'][8:10]}/{r['date'][5:7]}", "detail": f"{r['late_min']} phút × {rules['late_fee']:,}".replace(",", "."),
                        "amount": -r["late_min"] * rules["late_fee"], "at": _date_ts(r["date"])})
+    if rules["discipline_fee"] > 0:
+        for r in con.execute("SELECT date, noisy, phone, snack FROM attendance WHERE student_id=? AND status='present' AND noisy+phone+snack>0 AND date BETWEEN ? AND ? AND date<=?",
+                             (sid, first.isoformat(), last.isoformat(), today_vn().isoformat())).fetchall():
+            n = r["noisy"] + r["phone"] + r["snack"]
+            what = " · ".join(f"{DISC_LABEL[k]} {r[k]}" for k in DISC_KEYS if r[k])
+            ev.append({"kind": "discipline", "title": f"Vi phạm ngày {r['date'][8:10]}/{r['date'][5:7]}", "detail": f"{what} ({n} lần × {rules['discipline_fee']:,})".replace(",", "."),
+                       "amount": -n * rules["discipline_fee"], "at": _date_ts(r["date"])})
     for x in missed_assignments(con, sid, month):
         ev.append({"kind": "missed", "title": x["title"], "detail": "Quá hạn nộp, chưa làm bài", "amount": -x["amount"], "at": x["due_at"]})
     for a in point_adjusts(con, sid, month):
@@ -1889,7 +1910,7 @@ def student_events(con, s) -> list:
     """Toàn bộ lịch sử điểm của học sinh từ lúc có dữ liệu đầu tiên đến nay (tối đa 36 tháng), cũ → mới, kèm số dư lũy kế `balance`."""
     sid, cur = s["id"], month_key()
     cand = [month_key(s["created_at"])]
-    for q, col in (("SELECT MIN(date) v FROM attendance WHERE student_id=? AND late_min>0", None),
+    for q, col in (("SELECT MIN(date) v FROM attendance WHERE student_id=? AND (late_min>0 OR noisy+phone+snack>0)", None),
                    ("SELECT MIN(submitted_at) v FROM submissions WHERE student_id=? AND submitted_at IS NOT NULL", "ts"),
                    ("SELECT MIN(month) v FROM bonus_log WHERE student_id=?", None),
                    ("SELECT MIN(month) v FROM point_adjust WHERE student_id=?", None),
@@ -1915,7 +1936,7 @@ def student_events(con, s) -> list:
 
 
 def _sum_events(ev) -> dict:
-    out = {"plus": 0, "minus": 0, "net": 0, "parts": {"tests": 0, "practice": 0, "late": 0, "missed": 0, "adjust": 0}}
+    out = {"plus": 0, "minus": 0, "net": 0, "parts": {"tests": 0, "practice": 0, "late": 0, "missed": 0, "discipline": 0, "adjust": 0}}
     for e in ev:
         out["plus" if e["amount"] > 0 else "minus"] += abs(e["amount"])
         out["net"] += e["amount"]
@@ -2050,12 +2071,13 @@ def r_att_rules_set(c):
     fee = need_int(c.body, "late_fee", 0, 1_000_000, RULE_DEFAULT["late_fee"])
     amount = need_int(c.body, "reward_amount", 0, 100_000_000, RULE_DEFAULT["reward_amount"])
     miss = need_int(c.body, "missed_penalty", 0, 100_000_000, RULE_DEFAULT["missed_penalty"])
+    dfee = need_int(c.body, "discipline_fee", 0, 100_000_000, RULE_DEFAULT["discipline_fee"])
     rmin = c.body.get("reward_min", RULE_DEFAULT["reward_min"])
     if isinstance(rmin, bool) or not isinstance(rmin, (int, float)) or not 0 <= rmin <= 10:
         raise ApiError(400, "Mức điểm được thưởng phải từ 0 đến 10")
-    c.con.execute("INSERT OR REPLACE INTO att_rules(owner_id, month, late_fee, reward_min, reward_amount, missed_penalty, updated_at) VALUES(?,?,?,?,?,?,?)",
-                  (c.user["id"], month, fee, float(rmin), amount, miss, db.now()))
-    audit(c.con, c.user["id"], "att_rules", f"từ {month}: muộn {fee}đ/phút · thưởng ≥{rmin} → +{amount} · bài quá hạn không làm −{miss}")
+    c.con.execute("INSERT OR REPLACE INTO att_rules(owner_id, month, late_fee, reward_min, reward_amount, missed_penalty, discipline_fee, updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                  (c.user["id"], month, fee, float(rmin), amount, miss, dfee, db.now()))
+    audit(c.con, c.user["id"], "att_rules", f"từ {month}: muộn {fee}đ/phút · thưởng ≥{rmin} → +{amount} · bài quá hạn không làm −{miss} · vi phạm −{dfee}/lần")
     return {"ok": True}
 
 
@@ -2087,12 +2109,13 @@ def r_attendance_stats(c):
     recs = {}
     if studs:
         q = ",".join("?" * len(studs))
-        for r in c.con.execute(f"SELECT student_id, date, status, note, late_min FROM attendance WHERE date BETWEEN ? AND ? AND student_id IN ({q})",
+        for r in c.con.execute(f"SELECT student_id, date, status, note, late_min, noisy, phone, snack FROM attendance WHERE date BETWEEN ? AND ? AND student_id IN ({q})",
                                [first.isoformat(), last.isoformat()] + [s["id"] for s in studs]).fetchall():
             recs[(r["student_id"], r["date"])] = r
     out = []
     for s in studs:
         joined, marks, present, absent, planned, amount, notes, late = joined_on(s), [], 0, 0, 0, 0, [], 0
+        disc = {k: 0 for k in DISC_KEYS}
         for i in range(ndays):
             d = first + datetime.timedelta(days=i)
             if d > today:
@@ -2106,6 +2129,9 @@ def r_attendance_stats(c):
                 present += 1
                 amount += sc[1] if sc else 0
                 late += r["late_min"] if r else 0
+                if r:
+                    for k in DISC_KEYS:
+                        disc[k] += r[k]
                 marks.append("P" if r else "p")
             elif st == "absent":
                 absent += 1
@@ -2118,6 +2144,7 @@ def r_attendance_stats(c):
         owner = cls[s["class_id"]]["owner_id"]
         rules = att_rules(c.con, owner, month)
         fine = late * rules["late_fee"]
+        disc_fine = sum(disc.values()) * rules["discipline_fee"]
         tests = test_rewards(c.con, s["id"], owner, month)
         test_pts = sum(t["amount"] for t in tests)
         practice_pts = c.con.execute("SELECT COALESCE(SUM(points),0) s FROM bonus_log WHERE student_id=? AND month=?", (s["id"], month)).fetchone()["s"]
@@ -2126,11 +2153,12 @@ def r_attendance_stats(c):
         out.append({"id": s["id"], "name": s["name"], "username": s["username"], "class_id": s["class_id"], "class_name": cls[s["class_id"]]["name"],
                     "present": present, "absent": absent, "planned": planned, "amount": amount, "marks": "".join(marks), "notes": notes,
                     "late_min": late, "late_fine": fine, "tests": tests, "test_reward": test_pts, "practice_bonus": practice_pts,
-                    "missed": missed, "missed_fine": missed_fine, "net_points": test_pts + practice_pts - fine - missed_fine})
+                    "missed": missed, "missed_fine": missed_fine, "disc": disc, "disc_times": sum(disc.values()), "disc_fine": disc_fine,
+                    "net_points": test_pts + practice_pts - fine - missed_fine - disc_fine})
     fees = {k: (sched_on(sch[k], min(today, last)) or (None, 0))[1] for k in cls}
     return {"month": month, "days": ndays, "first_weekday": first.weekday(), "today": today.isoformat(),
             "classes": [{"id": k["id"], "name": k["name"], "fee": fees[k["id"]]} for k in cls.values()], "students": out,
-            "total": sum(x["amount"] for x in out), "total_late_fine": sum(x["late_fine"] for x in out), "total_missed_fine": sum(x["missed_fine"] for x in out),
+            "total": sum(x["amount"] for x in out), "total_late_fine": sum(x["late_fine"] for x in out), "total_missed_fine": sum(x["missed_fine"] for x in out), "total_disc_fine": sum(x["disc_fine"] for x in out),
             "total_reward": sum(x["test_reward"] + x["practice_bonus"] for x in out)}
 
 

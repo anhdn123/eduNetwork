@@ -412,6 +412,15 @@ process.on('exit', cleanup);
     const adj = await ev(`({txt: document.body.innerText.includes('Giáo viên điều chỉnh'), del: !!document.querySelector('[data-adel]')})`);
     check('điều chỉnh điểm trong hộp lịch sử: khoản −3.000 kèm lý do hiện ra và có nút Xóa', adj.txt && adj.del, JSON.stringify(adj));
     await ev('document.querySelectorAll(".lb-overlay").forEach(e=>e.remove())');
+    // điểm danh: 3 cột số lần mất trật tự · dùng điện thoại · ăn quà vặt (nhập số → lưu về máy chủ, tải lại vẫn còn)
+    await ev('document.querySelectorAll(".lb-overlay").forEach(e=>e.remove())');
+    await click('[data-tab=attend]'); await waitFor("document.querySelector('[data-st=present]')", 10, 'bảng điểm danh');
+    await ev("document.querySelector('[data-st=present]').click()");
+    await waitFor("document.querySelector('[data-disc=noisy]:not([disabled])')", 10, 'ô số lần vi phạm mở sau khi tick đi học');
+    const heads = await ev("[...document.querySelectorAll('#view th')].map(x => x.innerText.replace(/\\s+/g, ' ').trim()).join('|')");
+    await ev("(() => { const i = document.querySelector('[data-disc=noisy]'); i.__old = 1; i.value = '2'; i.dispatchEvent(new Event('change')); })()");
+    await waitFor("document.querySelector('[data-disc=noisy]') && !document.querySelector('[data-disc=noisy]').__old && document.querySelector('[data-disc=noisy]').value === '2'", 10, 'số lần vi phạm được lưu');
+    check('điểm danh: 3 cột Mất trật tự · Dùng điện thoại · Ăn quà vặt, nhập số lần được lưu', /mất trật tự/i.test(heads) && /dùng điện thoại/i.test(heads) && /ăn quà vặt/i.test(heads), heads);
     check('tick chuyên đề luyện tập: danh sách không bị vẽ lại, bộ đếm và “chọn tất cả” cập nhật', tk.same && tk.a1 === tk.a0 + 1 && tk.n1 === tk.a1 && tk.all1 === (tk.a1 === tk.tot) && tk.a2 === 0 && tk.n2 === 0 && tk.a3 === tk.tot && tk.n3 === tk.tot, JSON.stringify(tk));
   } catch (e) {
     check('LỖI KỊCH BẢN', false, e.message); await shot('e2e_error').catch(() => { });

@@ -234,6 +234,9 @@ CREATE TABLE IF NOT EXISTS attendance(
   marked_by INTEGER,
   marked_at INTEGER NOT NULL,
   late_min INTEGER NOT NULL DEFAULT 0,
+  noisy INTEGER NOT NULL DEFAULT 0,           -- số lần mất trật tự trong buổi
+  phone INTEGER NOT NULL DEFAULT 0,           -- số lần dùng điện thoại
+  snack INTEGER NOT NULL DEFAULT 0,           -- số lần ăn quà vặt
   PRIMARY KEY(student_id, date)
 );
 CREATE INDEX IF NOT EXISTS idx_att_date ON attendance(date);
@@ -251,6 +254,7 @@ CREATE TABLE IF NOT EXISTS att_rules(           -- quy tắc phạt muộn / th�
   reward_min REAL NOT NULL DEFAULT 8,           -- điểm bài kiểm tra tối thiểu (thang 10) để được thưởng
   reward_amount INTEGER NOT NULL DEFAULT 5000,  -- điểm thưởng mỗi bài kiểm tra đạt
   missed_penalty INTEGER NOT NULL DEFAULT 5000, -- điểm bị trừ cho mỗi bài được giao mà quá hạn vẫn chưa nộp
+  discipline_fee INTEGER NOT NULL DEFAULT 5000, -- điểm bị trừ cho mỗi lần vi phạm trong buổi học (mất trật tự / dùng điện thoại / ăn quà vặt)
   updated_at INTEGER NOT NULL,
   PRIMARY KEY(owner_id, month)
 );
@@ -282,6 +286,13 @@ def init():
     for col in ("count_bonus", "count_penalty"):
         if col not in cols:
             con.execute(f"ALTER TABLE assignments ADD COLUMN {col} INTEGER NOT NULL DEFAULT 1")
+    # số lần vi phạm trong buổi học (mất trật tự / dùng điện thoại / ăn quà vặt) và mức phạt mỗi lần
+    acols = [r[1] for r in con.execute("PRAGMA table_info(attendance)").fetchall()]
+    for col in ("noisy", "phone", "snack"):
+        if col not in acols:
+            con.execute(f"ALTER TABLE attendance ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
+    if "discipline_fee" not in [r[1] for r in con.execute("PRAGMA table_info(att_rules)").fetchall()]:
+        con.execute("ALTER TABLE att_rules ADD COLUMN discipline_fee INTEGER NOT NULL DEFAULT 5000")
     # quy tắc phạt bài được giao quá hạn không làm (mặc định trừ 5.000 điểm mỗi bài)
     if "missed_penalty" not in [r[1] for r in con.execute("PRAGMA table_info(att_rules)").fetchall()]:
         con.execute("ALTER TABLE att_rules ADD COLUMN missed_penalty INTEGER NOT NULL DEFAULT 5000")

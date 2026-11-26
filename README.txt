@@ -215,3 +215,9 @@ dùng bucket riêng tư, giữ khóa bí mật, và xem lại yêu cầu pháp l
      Đặt khi tạo bài (mặc định cả hai đều có) và đổi bất kỳ lúc nào ở tab "Bài đã giao" (cột "Tính điểm": ＋ Cộng, − Trừ).
    - Ví dụ: bài chỉ để khuyến khích → tick Cộng, bỏ Trừ; bài bắt buộc phải nộp → tick Trừ, bỏ Cộng; bài chỉ để luyện → bỏ cả hai.
    - Đổi tick là điểm tính lại ngay (điểm không lưu cứng). Bài đã giao từ trước mặc định có cả hai. Điểm cộng luyện tập tự do không phụ thuộc các ô tick này.
+
+17. VI PHẠM TRONG BUỔI HỌC (mất trật tự · dùng điện thoại · ăn quà vặt)
+   - Tab "Điểm danh" > "Điểm danh": ba cột nhập SỐ LẦN trong buổi học (chỉ nhập được khi học sinh đi học). Mỗi lần trừ 5.000 điểm (mặc định).
+   - Đổi mức phạt mỗi lần ở "Phạt đi muộn · Thưởng điểm" (ô "Vi phạm trong buổi học", áp dụng từ tháng đặt trở đi; 0 = tắt).
+   - Điểm trừ vào "Điểm hiện tại": hiện trong thống kê tháng (cột "Vi phạm (lần)" và "Phạt vi phạm", có trong CSV), tab "Quản lý điểm" (lịch sử từng ngày) và tab "Điểm của tôi" của học sinh.
+   - Học sinh nghỉ học thì số lần vi phạm bị xóa. Nhập sai (âm, quá 99, không phải số nguyên) bị từ chối. Muốn miễn một khoản: "Miễn" trong lịch sử điểm của học sinh.
