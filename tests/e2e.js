@@ -170,6 +170,12 @@ process.on('exit', cleanup);
     await nav('teacher-builder.html');
     await waitFor("document.querySelectorAll('[data-ex]').length===2", 10, 'danh sách đề thi đã import');
     check('hiện 2 đề thi đã import theo nhóm “Đề giữa kì 1”', /Đề giữa kì 1/.test(await ev("document.getElementById('exam-picks').innerText")));
+    // nút “Xem / sửa” trên từng đề: mở quản lý ngân hàng chỉ hiện đúng câu của đề đó (đúng thứ tự trong đề), không đổi ô tick
+    await ev("document.querySelector('[data-exview=\"ex-1\"]').click()");
+    await waitFor("/Đang xem/.test(document.body.innerText) && document.querySelectorAll('.lb-modal .bk-item, .lb-modal [data-bk=\"sol\"], .lb-modal .q-item').length > 0 || /Đang xem/.test(document.body.innerText)", 8, 'quản lý ngân hàng mở theo đề');
+    const xv = await ev("(() => { const t = document.querySelector('.lb-modal').innerText; return {banner: /Đang xem[\\s\\S]*Đề 1/.test(t), has1: /Đề1 TN một/.test(t), has2: /Đề2 TN một/.test(t), checked: document.querySelector('[data-ex=\"ex-1\"]') ? document.querySelector('[data-ex=\"ex-1\"]').checked : null}; })()");
+    check('“Xem / sửa” đề 1: hiện đúng các câu của đề 1 (không lẫn đề 2) và không tự tick đề', xv.banner && xv.has1 && !xv.has2 && xv.checked === false, JSON.stringify(xv));
+    await ev('document.querySelectorAll(".lb-overlay").forEach(e => e.remove())');
     await ev("document.querySelector('[data-ex=\"ex-1\"]').click()"); await sleep(300);
     await ev("document.querySelector('[data-act=gen]').click()");
     await waitFor("document.querySelectorAll('.lb-exam .lb-q').length>0", 10, 'xem trước nguyên đề');

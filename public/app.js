@@ -1738,7 +1738,7 @@ const latestBatch = () => { let best = null; (S.bank || []).forEach(q => { if (q
 function openBankManager(onChange, opts) {
   opts = opts || {};
   const TYL = {mcq: 'Trắc nghiệm', tf: 'Đúng/Sai', short: 'Trả lời ngắn', essay: 'Tự luận'}, LVL = [[1, 'Nhận biết'], [2, 'Thông hiểu'], [3, 'Vận dụng'], [4, 'Vận dụng cao']];
-  const st = {f: 'all', q: '', p: 0, s: 'all', g: 'all', tp: 'all', b: opts.batch || 'all'}, PER = 15;
+  const st = {f: 'all', q: '', p: 0, s: 'all', g: 'all', tp: 'all', b: opts.batch || 'all', x: opts.exam || 'all'}, PER = 15;   // x: chỉ xem một đề thi đã import (theo mã đề)
   const sel = new Set(), pinned = new Set(), solOpen = new Set(), bar = {t: '', lv: '', subject: '', grade: '', topic: ''};
   let lastSel = null;
   const m = modal('', 1, true), b = m.b;   // khóa: chỉ đóng bằng nút “Đóng” để không mất thay đổi chưa lưu
@@ -1746,10 +1746,11 @@ function openBankManager(onChange, opts) {
   const eqf = (v, val) => val === 'all' || (val === 'none' ? !v : v === val);
   const matches = q => (st.f === 'all' || (st.f === 'noans' ? !hasAns(q) : st.f === 'ai' ? !!q.aiAns : q.t === st.f))
     && (st.b === 'all' || (st.b === 'none' ? !q.batch : q.batch === st.b))
+    && (st.x === 'all' || q.examId === st.x)
     && eqf(q.subject, st.s) && eqf(q.grade, st.g) && eqf(q.topic, st.tp)
     && (!st.q || (q.q + ' ' + (q.opts || []).join(' ')).toLowerCase().includes(st.q.toLowerCase()));
   // câu vừa chỉnh sửa được “ghim” lại trong danh sách đến khi đổi bộ lọc → không biến mất / nhảy chỗ khi đổi dạng
-  const list = () => (S.bank || []).filter(q => matches(q) || pinned.has(q.id));
+  const list = () => { const r = (S.bank || []).filter(q => matches(q) || pinned.has(q.id)); return st.x === 'all' ? r : r.sort((a, c) => (a.examIdx || 0) - (c.examIdx || 0)); };   // xem một đề: đúng thứ tự câu trong đề
   const dirtyN = () => { const cur = bankJson(); let n = 0; cur.forEach((js, id) => { if (bankSnap.get(id) !== js) n++; }); bankSnap.forEach((_, id) => { if (!cur.has(id)) n++; }); return n; };
   const warnUnload = e => { if (dirtyN()) { e.preventDefault(); e.returnValue = ''; } };
   window.addEventListener('beforeunload', warnUnload);
@@ -1820,6 +1821,7 @@ function openBankManager(onChange, opts) {
       + (groups.has('none') ? `<option value="none" ${st.b === 'none' ? 'selected' : ''}>Câu cũ / thêm tay (${groups.get('none').n})</option>` : '');
     const scoped = st.b !== 'all';
     b.innerHTML = `<div id="bk-head" style="position:sticky;top:0;z-index:3;background:#fff;padding:6px 0 8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-bottom:1px solid #e2e8f0"></div>
+      ${st.x !== 'all' ? `<div class="lb-note" style="margin:8px 0 0;background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a">📑 Đang xem <b>${esc(((all.find(q => q.examId === st.x) || {}).examCat || 'Đề thi') + ' · ' + ((all.find(q => q.examId === st.x) || {}).examName || ''))}</b> (${all.filter(q => q.examId === st.x).length} câu, đúng thứ tự trong đề). Bấm vào từng câu để xem chi tiết, sửa đáp án, dạng câu, lời giải rồi bấm <b>Lưu thay đổi</b>. <a href="#" data-bk="show-all">Xem toàn bộ ngân hàng</a></div>` : ''}
       ${scoped ? `<div class="lb-note" style="margin:8px 0 0">📌 Đang chỉ hiện <b>${L.length}</b> câu của một lần import để bạn xử lý riêng — các câu import trước đó đã được lưu trong ngân hàng và đang được ẩn. <a href="#" data-bk="show-all">Xem toàn bộ ngân hàng (${all.length} câu)</a></div>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
         <select id="bk-b" title="Lọc theo lần import / file nguồn" style="padding:6px;border:1px solid #93c5fd;border-radius:6px;font-size:11px;max-width:260px;background:#eff6ff"><option value="all" ${st.b === 'all' ? 'selected' : ''}>Nguồn: tất cả (${all.length})</option>${srcOpts}</select>
@@ -1932,7 +1934,7 @@ function openBankManager(onChange, opts) {
       }
       return finish();
     }
-    if (a === 'show-all') { e.preventDefault(); st.b = 'all'; st.p = 0; pinned.clear(); return draw(true); }
+    if (a === 'show-all') { e.preventDefault(); st.b = 'all'; st.x = 'all'; st.p = 0; pinned.clear(); return draw(true); }
     if (a === 'prev') { st.p--; return draw(true); }
     if (a === 'next') { st.p++; return draw(true); }
     if (a === 'sel-all') list().forEach(q => sel.add(q.id));
@@ -2549,7 +2551,8 @@ function initBuilder() {
     const xp = $('#exam-picks');
     if (xp) {
       const cats = new Map(); ex.forEach(e => (cats.get(e.cat) || cats.set(e.cat, []).get(e.cat)).push(e));
-      xp.innerHTML = ex.size ? `<div style="font-size:10px;font-weight:700;color:#334155;margin:2px 0 6px">📑 Đề thi đã import — tick để lấy <u>nguyên đề</u> (mỗi đề tạo thành một mã đề, bỏ qua số câu ở trên):</div>${[...cats].sort((a, b) => a[0].localeCompare(b[0], 'vi')).map(([cat, es]) => `<div style="margin-bottom:6px"><div style="font-size:11px;font-weight:700;color:#1e3a8a;margin-bottom:3px">${esc(cat)}</div><div style="display:flex;flex-wrap:wrap;gap:6px">${es.sort((a, b) => a.no - b.no).map(e => `<label style="display:flex;gap:5px;align-items:center;font-size:11px;background:#fff;border:1px solid ${selExams.has(e.id) ? '#2563eb' : '#cbd5e1'};padding:4px 10px;border-radius:14px;cursor:pointer"><input type="checkbox" data-ex="${esc(e.id)}" ${selExams.has(e.id) ? 'checked' : ''}> ${esc(e.name)} <b style="color:#2563eb">${e.n} câu</b>${e.miss ? `<span style="color:#b91c1c" title="Số câu chưa có đáp án">· ${e.miss} thiếu ĐA</span>` : ''}</label>`).join('')}</div></div>`).join('')}` : '';
+      xp.innerHTML = ex.size ? `<div style="font-size:10px;font-weight:700;color:#334155;margin:2px 0 6px">📑 Đề thi đã import — tick để lấy <u>nguyên đề</u> (mỗi đề tạo thành một mã đề, bỏ qua số câu ở trên):</div>${[...cats].sort((a, b) => a[0].localeCompare(b[0], 'vi')).map(([cat, es]) => `<div style="margin-bottom:6px"><div style="font-size:11px;font-weight:700;color:#1e3a8a;margin-bottom:3px">${esc(cat)}</div><div style="display:flex;flex-wrap:wrap;gap:6px">${es.sort((a, b) => a.no - b.no).map(e => `<label style="display:flex;gap:5px;align-items:center;font-size:11px;background:#fff;border:1px solid ${selExams.has(e.id) ? '#2563eb' : '#cbd5e1'};padding:4px 10px;border-radius:14px;cursor:pointer"><input type="checkbox" data-ex="${esc(e.id)}" ${selExams.has(e.id) ? 'checked' : ''}> ${esc(e.name)} <b style="color:#2563eb">${e.n} câu</b>${e.miss ? `<span style="color:#b91c1c" title="Số câu chưa có đáp án">· ${e.miss} thiếu ĐA</span>` : ''} <button type="button" data-exview="${esc(e.id)}" title="Xem chi tiết từng câu của đề này và sửa đáp án, dạng câu, lời giải" style="border:1px solid #93c5fd;background:#eff6ff;color:#1d4ed8;border-radius:10px;padding:1px 8px;font-size:10px;cursor:pointer">✏️ Xem / sửa</button></label>`).join('')}</div></div>`).join('')}` : '';
+      $$('[data-exview]', xp).forEach(btn => btn.onclick = e => { e.preventDefault(); e.stopPropagation(); openBankManager(renderBank, {exam: btn.dataset.exview}); });   // xem / sửa chi tiết ngay trong màn quản lý ngân hàng
       $$('[data-ex]', xp).forEach(cb => cb.onchange = () => { if (cb.checked) selExams.add(cb.dataset.ex); else selExams.delete(cb.dataset.ex); renderBank(); });
     }
     if (sum && legacyCount()) {
