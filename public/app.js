@@ -436,14 +436,55 @@ const SEC_HINT = [[/đúng\s*[-–\/]?\s*sai/i, 'tf'], [/trả\s*lời\s*ngắn|
 // Tiêu đề dạng câu: "PHẦN I", "PHẦN TRẮC NGHIỆM ĐÚNG SAI", "2. Câu hỏi trắc nghiệm đúng sai", "B. Bài tập tự luận"...
 const PHAN_RE = '^[ \\t]*(?:PH[ẦÀẪẲẢẤA]N\\s+(?:[IVXlI1|]+|\\d|TRẮC|ĐÚNG|TRẢ|TỰ)|(?:[IVX]+|\\d+|[A-D])[.)]\\s+(?:Câu\\s+(?:hỏi\\s+)?)?(?:Trắc\\s*nghiệm|Tự\\s*luận|Bài\\s*tập\\s+(?:trắc|tự)))(?![' + NOLET + '])';
 
-// Tách phần đề và phần bảng đáp án (nếu file có "ĐÁP ÁN" ở cuối)
+// Giáo viên tick “File có kèm lời giải” khi import: 'on' = ép dùng cách tách đề/lời giải theo thứ tự trong file; 'auto' = chỉ dùng khi nhìn thấy dấu hiệu rõ
+let PARSE_PAIRED = 'auto';
+const CAU_RE = /(?:^|\n)[ \t]*(?:Câu|Bài|Question)\s*(\d{1,3})\s*[:.)]/gi;
+// File gồm đề (vài trang đầu) rồi lời giải (từ trang sau), phần lời giải bắt đầu lại bằng chữ “PHẦN I” lần thứ hai và in lại từng câu kèm dòng “Lời giải”.
+// Trả về vị trí bắt đầu phần lời giải (để key bắt đầu ĐÚNG ở đó, gồm cả các tiêu đề PHẦN), hoặc -1.
+function findPairedStart(text, force) {
+  const sol = /\n[ \t]*Lời\s*giải[ \t]*(?:\n|$)/gi;
+  const nSol = from => { sol.lastIndex = from; let n = 0; while (sol.exec(text)) n++; return n; };
+  const cnt = (a, b) => ([...text.slice(a, b).matchAll(CAU_RE)]).length;
+  const heads = [...text.matchAll(new RegExp('^[ \\t]*PH[ẦÀẪẲẢẤA]N\\s+(?:I(?![IVX' + NOLET + '])|1(?!\\d)|TRẮC)[^\\n]*$', 'gim'))];
+  for (let i = 1; i < heads.length; i++) {
+    const st = heads[i].index, before = cnt(heads[0].index, st), after = cnt(st, text.length);
+    if (before < 2) continue;
+    // dấu hiệu rõ: phần sau có nhiều dòng “Lời giải” (ít nhất một nửa số câu của đề) và số câu hai phần xấp xỉ nhau
+    if (force ? nSol(st) >= 1 : nSol(st) >= Math.max(2, Math.round(before * 0.5)) && after >= before * 0.7) return st;
+  }
+  // không có chữ PHẦN I thứ hai: lấy chỗ số câu quay lại 1 ngay trước dòng “Lời giải” đầu tiên của phần sau đề
+  const all = [...text.matchAll(CAU_RE)], firstSol = new RegExp(sol.source, 'i').exec(text);
+  if (firstSol) {
+    const pre = all.filter(m => m.index < firstSol.index);
+    for (let k = pre.length - 1; k > 0; k--) if (+pre[k][1] === 1 && pre.slice(0, k).some(m => +m[1] >= 2)) {
+      const ph = [...text.slice(0, pre[k].index).matchAll(/^[ \t]*PH[ẦÀẪẲẢẤA]N\s+[^\n]*$/gim)].pop();   // tiêu đề PHẦN ngay trước câu 1 (nếu có)
+      const st = ph && !(text.slice(ph.index + ph[0].length, pre[k].index).trim()) ? ph.index : pre[k].index;
+      if (force) return st;
+      // không tick: chỉ nhận khi câu đầu của phần sau chính là câu 1 của đề được in lại và có nhiều dòng “Lời giải”
+      const stem = m => { const a = m.index + m[0].length, e = text.indexOf('\n', a); return text.slice(a, e < 0 ? a + 120 : Math.min(e, a + 120)).toLowerCase().replace(/[^a-zà-ỹ0-9]/g, '').slice(0, 30); };   // dòng đầu của câu hỏi
+      if (stem(pre[k]).length >= 8 && stem(pre[k]) === stem(all[0]) && nSol(pre[k].index) >= Math.max(2, Math.round(k * 0.5))) return st;
+      break;
+    }
+  }
+  return -1;
+}
+
+// Tách phần đề và phần đáp án / lời giải
 function splitKeySection(text) {
   const re = /^[ \t]*(?:BẢNG\s+)?(?:ĐÁP\s*ÁN|HƯỚNG\s+DẪN\s+(?:GIẢI|CHẤM)|LỜI\s+GIẢI)(?:[ \t]+[^\n]{0,90})?[ \t]*[:.]?[ \t]*$/gm;
   let m;
-  while ((m = re.exec(text))) {
-    const before = text.slice(0, m.index);
-    if ((before.match(/(?:^|\n)\s*(?:Câu|Bài|Question)\s*\d+/gi) || []).length >= 3) return {body: before, key: text.slice(m.index + m[0].length)};
+  const hdr = [];
+  while ((m = re.exec(text))) hdr.push(m);
+  // 1) file có dòng tiêu đề riêng (“HƯỚNG DẪN GIẢI”, “ĐÁP ÁN”…) → lấy phần sau tiêu đề đó (nhưng “Lời giải” đứng riêng một dòng giữa từng câu không phải tiêu đề)
+  const lone = x => /^[ \t]*LỜI\s+GIẢI/i.test(x[0]);
+  for (const x of hdr) {
+    if (lone(x) && findPairedStart(text, false) >= 0) break;   // “Lời giải” từng câu của file đề kèm lời giải → xử lý ở bước 2
+    const before = text.slice(0, x.index);
+    if ((before.match(/(?:^|\n)\s*(?:Câu|Bài|Question)\s*\d+/gi) || []).length >= 3) return {body: before, key: text.slice(x.index + x[0].length)};
   }
+  // 2) đề kèm lời giải trong cùng file: lời giải bắt đầu lại từ chữ “PHẦN I” lần thứ hai
+  const ps = findPairedStart(text, PARSE_PAIRED === 'on');
+  if (ps >= 0) return {body: text.slice(0, ps), key: text.slice(ps)};
   return {body: text, key: ''};
 }
 
@@ -516,7 +557,7 @@ function parseKey(key) {
   marks.forEach((mk, i) => {
     const seg = key.slice(mk.index + mk[0].length, i + 1 < marks.length ? marks[i + 1].index : undefined).split(/\n[ \t]*PH[ẦÀẪẲẢẤA]N\s+/)[0].trim();
     const sm = solAfterMarker(seg);
-    let a = extractAns(seg);
+    let a = (sm != null && sm.trim() && extractAns(sm.split(MATHMARK).join(''))) || extractAns(seg);   // đáp án nằm ngay sau chữ “Lời giải” (Chọn D / a) Đúng… / Đáp án: …)
     // phần đáp án in lại cả đề: đoạn nào không nhận ra đáp án (đáp án lấy từ bảng cuối đề) vẫn phải có mục để giữ lời giải và để số phần (run) khớp với phần đề
     if (!a && ((sm != null && sm.trim()) || RESTATED_RE.test(seg))) a = {sol: ''};
     if (a) {
@@ -1386,6 +1427,7 @@ function openSmartImport(onChange) {
     <div id="si-drop" style="margin-top:12px;border:2px dashed #93c5fd;border-radius:12px;padding:22px;text-align:center;background:#f8fbff;cursor:pointer"><div style="font-size:30px">📄</div><b style="font-size:13px">Bấm để chọn file hoặc kéo thả vào đây</b><div style="font-size:11px;color:#667085;margin-top:4px">PDF, ảnh (PNG/JPG) hoặc TXT · chọn được nhiều file</div><div id="si-names" style="font-size:12px;color:#1e40af;margin-top:8px"></div></div>
     <input type="file" id="si-f" accept=".pdf,.txt,.png,.jpg,.jpeg,application/pdf,text/plain,image/png,image/jpeg" multiple hidden>
     <p style="font-size:11px;color:#667085;margin:8px 0">Đáp án và <b>lời giải chi tiết từng câu</b> có thể nằm ngay sau mỗi câu (“Lời giải: …”), ở <b>cuối file đề</b> (“HƯỚNG DẪN GIẢI · Câu 1. Chọn A. …”), hoặc trong <b>file lời giải riêng</b> tải lên cùng lúc (đặt tên có chữ “đáp án” hoặc “lời giải”).</p>
+    <label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;margin:6px 0;padding:8px 10px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:8px"><input type="checkbox" id="si-sol" style="margin-top:2px"> <span><b>📘 File đề có kèm lời giải</b> (đề ở các trang đầu, lời giải ở các trang sau)<br><small style="color:#475467">Tick nếu trong file, phần lời giải bắt đầu lại bằng chữ “PHẦN I” lần thứ hai, mỗi câu có dòng “Lời giải” và đáp án ngay sau đó (Chọn A / a) Đúng / Đáp án: …). Hệ thống đọc đáp án và cắt ảnh lời giải của từng câu gắn vào đúng câu trong đề. Không tick vẫn tự nhận ra khi file có dấu hiệu rõ.</small></span></label>
     <label style="display:flex;gap:8px;font-size:12px;margin:6px 0"><input type="checkbox" id="si-img" checked> Giữ nguyên định dạng: lưu ảnh cắt từng câu và lời giải (công thức, hình vẽ hiện đúng như đề gốc)</label>
     <label id="si-ai-row" hidden style="gap:8px;font-size:12px;margin:6px 0;padding:8px 10px;border:1px solid #c7d2fe;background:#eef2ff;border-radius:8px"><input type="checkbox" id="si-ai"> <span>🤖 <b>Nhờ AI giải đáp án</b> cho các câu chưa đọc được đáp án trong file (đề chụp ảnh, đề không có đáp án). Ảnh câu hỏi được gửi tới <b id="si-ai-prov">dịch vụ AI</b>; đáp án AI có thể sai nên được đánh dấu để bạn xem lại.</span></label>
     <div id="si-ai-off" hidden style="font-size:11px;color:#94a3b8;margin:4px 0">🤖 Giải đáp án bằng AI chưa bật — quản trị viên cần đặt khóa ANTHROPIC_API_KEY trên máy chủ.</div>
@@ -1407,6 +1449,7 @@ function openSmartImport(onChange) {
   const fillTp = () => { $('#si-tpl', m.b).innerHTML = topicsFor($('#si-s', m.b).value, $('#si-g', m.b).value).map(t => `<option value="${esc(t)}">`).join(''); };
   $('#si-s', m.b).onchange = fillTp; $('#si-g', m.b).onchange = fillTp; fillTp();
   $('#si-go', m.b).onclick = () => { const labels = {subject: $('#si-s', m.b).value, grade: $('#si-g', m.b).value, topic: $('#si-tp', m.b).value.trim()}, wi = $('#si-img', m.b).checked;
+    PARSE_PAIRED = $('#si-sol', m.b).checked ? 'on' : 'auto';
     let examOpt = null;
     if ($('#si-exam', m.b).checked) {
       const cat = $('#si-cat', m.b).value.trim(), ef = examFiles(), byName = new Map(), used = new Set();

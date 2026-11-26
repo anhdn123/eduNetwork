@@ -221,3 +221,12 @@ dùng bucket riêng tư, giữ khóa bí mật, và xem lại yêu cầu pháp l
    - Đổi mức phạt mỗi lần ở "Phạt đi muộn · Thưởng điểm" (ô "Vi phạm trong buổi học", áp dụng từ tháng đặt trở đi; 0 = tắt).
    - Điểm trừ vào "Điểm hiện tại": hiện trong thống kê tháng (cột "Vi phạm (lần)" và "Phạt vi phạm", có trong CSV), tab "Quản lý điểm" (lịch sử từng ngày) và tab "Điểm của tôi" của học sinh.
    - Học sinh nghỉ học thì số lần vi phạm bị xóa. Nhập sai (âm, quá 99, không phải số nguyên) bị từ chối. Muốn miễn một khoản: "Miễn" trong lịch sử điểm của học sinh.
+
+18. IMPORT ĐỀ CÓ KÈM LỜI GIẢI TRONG CÙNG FILE
+   - Dạng file: vài trang đầu là đề (PHẦN I / II / III), các trang sau là lời giải bắt đầu lại bằng chữ "PHẦN I" lần thứ hai; mỗi câu được in lại, có dòng "Lời giải" và đáp án ngay sau đó
+     (Phần I: "Chọn D"; Phần II: "a) Đúng. b) Sai. …"; Phần III: "Đáp án: …").
+   - Khi import (nút "Import đề" > chọn file) có ô tick "📘 File đề có kèm lời giải". Tick thì hệ thống ép tách đề / lời giải theo thứ tự trong file:
+     lấy đáp án sau chữ "Lời giải" của từng câu, cắt ảnh lời giải từng câu gắn vào đúng câu trong đề (Phần I, II, III khớp theo số câu của từng phần).
+   - Không tick vẫn tự nhận ra khi dấu hiệu rõ (PHẦN I lặp lại hoặc số câu quay về 1 và câu đầu in lại đúng câu 1 của đề, có nhiều dòng "Lời giải").
+     Hai đề nối nhau không có lời giải thì không bị cắt nhầm.
+   - File có tiêu đề riêng ("HƯỚNG DẪN GIẢI", "ĐÁP ÁN") hoặc có bảng đáp án cuối đề vẫn đọc như trước.

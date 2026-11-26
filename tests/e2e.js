@@ -250,12 +250,29 @@ process.on('exit', cleanup);
     const keyDoc3 = ['PHẦN TRẮC NGHIỆM', 'Câu 1. Nửa đường tròn có số đo bằng:', 'A. B. C. D.', 'Câu 2. Nửa đường tròn có số đo bằng:', 'A. B. C. D.',
       'Câu 3. Cho đường tròn như hình vẽ. Trong mỗi ý a), b), c), d) ở dưới đây, thí sinh chọn đúng hoặc sai.', 'A. Hai điểm chia đường tròn thành 2 cung.', 'B. Cung nhỏ nằm trong góc ở tâm.',
       'C. Số đo cung bằng số đo góc ở tâm.', 'D. Hai cung bằng nhau thì có số đo bằng nhau.'].join('\n');
+    // đề kèm lời giải trong CÙNG file: đề ở đầu, lời giải bắt đầu lại từ chữ “PHẦN I” lần thứ hai (mỗi câu in lại + dòng “Lời giải” + đáp án ngay sau đó)
+    const exam4 = ['PHẦN I. Câu trắc nghiệm nhiều phương án lựa chọn.', 'Câu 1. Hai cộng hai bằng?', 'A. 3. B. 4. C. 5. D. 6.', 'Câu 2. Ba nhân ba bằng?', 'A. 6. B. 9. C. 12. D. 3.',
+      'PHẦN II. Câu trắc nghiệm đúng sai.', 'Câu 1. Xét các mệnh đề:', 'a) 1 + 1 = 2.', 'b) 2 + 2 = 5.', 'c) 3 · 2 = 6.', 'd) 4 : 2 = 3.',
+      'PHẦN III. Câu trắc nghiệm trả lời ngắn.', 'Câu 1. Tính 10 chia 4.', 'Câu 2. Tính 7 chia 2.'];
+    const sol4 = ['PHẦN I. Câu trắc nghiệm nhiều phương án lựa chọn.', 'Câu 1. Hai cộng hai bằng?', 'A. 3. B. 4. C. 5. D. 6.', 'Lời giải', 'Chọn B', 'Ta có 2 + 2 = 4.',
+      'Câu 2. Ba nhân ba bằng?', 'A. 6. B. 9. C. 12. D. 3.', 'Lời giải', 'Chọn B', '3 · 3 = 9.',
+      'PHẦN II. Câu trắc nghiệm đúng sai.', 'Câu 1. Xét các mệnh đề:', 'a) 1 + 1 = 2.', 'b) 2 + 2 = 5.', 'c) 3 · 2 = 6.', 'd) 4 : 2 = 3.', 'Lời giải', 'a) Đúng. 1 + 1 = 2.', 'b) Sai. 2 + 2 = 4.', 'c) Đúng. 3 · 2 = 6.', 'd) Sai. 4 : 2 = 2.',
+      'PHẦN III. Câu trắc nghiệm trả lời ngắn.', 'Câu 1. Tính 10 chia 4.', 'Lời giải', 'Đáp án: 2,5', '10 : 4 = 2,5.', 'Câu 2. Tính 7 chia 2.', 'Lời giải', 'Đáp án: 3,5', '7 : 2 = 3,5.'];
+    const keyDoc4 = [...exam4, ...sol4].join('\n');
+    const keyDoc4b = [...exam4, ...sol4.filter(l => !/^PHẦN/.test(l))].join('\n');             // lời giải không có tiêu đề PHẦN (chỉ số câu quay lại 1)
+    const keyDoc5 = ['PHẦN I. Trắc nghiệm.', 'Câu 1. Đề một câu một?', 'A. 1. B. 2. C. 3. D. 4.', 'Câu 2. Đề một câu hai?', 'A. 1. B. 2. C. 3. D. 4.', 'Câu 3. Đề một câu ba?', 'A. 1. B. 2. C. 3. D. 4.',
+      'PHẦN I. Trắc nghiệm.', 'Câu 1. Đề hai câu một?', 'A. 5. B. 6. C. 7. D. 8.', 'Câu 2. Đề hai câu hai?', 'A. 5. B. 6. C. 7. D. 8.', 'Câu 3. Đề hai câu ba?', 'A. 5. B. 6. C. 7. D. 8.'].join('\n');   // hai đề nối nhau, KHÔNG có lời giải
     const kpAll = await ev(`(async () => { const src = await (await fetch('/app.js')).text(), sc = document.createElement('script');   // app.js nằm trong IIFE: nạp thêm bản có xuất hàm đọc đề để gọi trực tiếp
-      sc.textContent = src.replace(/\\}\\)\\(\\);\\s*$/, 'window.__pq = parseQuestionBank; window.__pk = parseQuickKey;})();'); document.head.append(sc);
+      sc.textContent = src.replace(/\\}\\)\\(\\);\\s*$/, 'window.__pq = parseQuestionBank; window.__pk = parseQuickKey; window.__sp = v => { PARSE_PAIRED = v; };})();'); document.head.append(sc);
       const one = d => window.__pq(d, 'k.pdf', false).questions.map(q => ({t: q.t, ans: q.ans, num: q.num, sol: (q.sol || '').slice(0, 14)}));
       const qk = (k, t) => [...window.__pk(k, t).map];
-      return {a: one(${JSON.stringify(keyDoc)}), b: one(${JSON.stringify(keyDoc2)}), c: one(${JSON.stringify(keyDoc3)}), tf: qk('tf', '61SSSĐ;68?SĐĐ;86Đ???;70????'), sh: qk('short', '1.127;20.?;3.106,2')}; })()`);
+      return {a: one(${JSON.stringify(keyDoc)}), b: one(${JSON.stringify(keyDoc2)}), c: one(${JSON.stringify(keyDoc3)}), p1: one(${JSON.stringify(keyDoc4)}), p2: one(${JSON.stringify(keyDoc4b)}), p3: (window.__sp('on'), one(${JSON.stringify(keyDoc4b)})), n5: one(${JSON.stringify(keyDoc5)}), tf: qk('tf', '61SSSĐ;68?SĐĐ;86Đ???;70????'), sh: qk('short', '1.127;20.?;3.106,2')}; })()`);
     const kp = kpAll.a, kp2 = kpAll.b, kp3 = kpAll.c;
+    const pOk = r => r.length === 5 && r[0].ans === 1 && r[1].ans === 1 && JSON.stringify(r[2].ans) === '[0,1,0,1]' && r[3].ans === '2,5' && r[4].ans === '3,5' && r.every(q => q.sol);
+    check('đề kèm lời giải cùng file (lời giải bắt đầu lại từ “PHẦN I” lần 2): đúng 5 câu, có đáp án TN / Đ/S / TLN và lời giải của từng câu', pOk(kpAll.p1), JSON.stringify(kpAll.p1));
+    check('lời giải không có tiêu đề PHẦN (số câu quay lại 1): tự nhận ra khi in lại đúng câu 1 của đề', pOk(kpAll.p2), JSON.stringify(kpAll.p2));
+    check('tick “File có kèm lời giải” (ép): cùng kết quả', pOk(kpAll.p3), JSON.stringify(kpAll.p3));
+    check('hai đề nối nhau (đều có “PHẦN I”) nhưng KHÔNG có lời giải: giữ nguyên 6 câu, không bị cắt nhầm thành phần lời giải', kpAll.n5.length === 6, JSON.stringify(kpAll.n5.map(q => q.num)));
     check('phương án chỉ là công thức vẫn là trắc nghiệm; hai câu lời dẫn giống hệt không bị bỏ là trùng; “chọn đúng hoặc sai” → Đ/S', kp3.length === 3 && kp3[0].t === 'mcq' && kp3[1].t === 'mcq' && kp3[2].t === 'tf', JSON.stringify(kp3.map(q => q.t + q.num)));
     check('mỗi câu lưu số câu in trong đề (Câu N) để nhập nhanh đáp án theo đúng số câu', kp[0].num === 1 && kp[1].num === 2 && kp[2].num === 1 && kp[4].num === 1 && kp[5].num === 2, JSON.stringify(kp.map(q => q.num)));
     const tfm = new Map(kpAll.tf), shm = new Map(kpAll.sh);
