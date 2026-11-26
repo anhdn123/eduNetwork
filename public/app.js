@@ -3081,7 +3081,8 @@ function bindVarPicker(root, vs, roster, pick, ns, redraw, canChange) {
 }
 
 /* Xem lại từng câu: đáp án đã chọn, đáp án đúng, lời giải. who = “Bạn chọn” (học sinh) hoặc “Học sinh chọn” (giáo viên). */
-function reviewHTML(qs, details, who) {
+// rep (tùy chọn, dùng cho học sinh): {map: {số câu: báo cáo đã gửi}} → mỗi câu chấm tự động có nút “🚩 Báo đáp án sai” hoặc trạng thái báo cáo
+function reviewHTML(qs, details, who, rep) {
   who = who || 'Bạn chọn';
   const has = v => v !== undefined;
   const nOk = details.filter(d => d && d.score === 1).length, nBad = details.filter(d => d && d.score === 0).length;
@@ -3110,7 +3111,13 @@ function reviewHTML(qs, details, who) {
     }
     const sq = {sol: d.sol, solImg: d.solImg, solBad: d.solBad};
     const sol = hasSol(sq) ? `<div class="sol rv-sol"><b>📘 Lời giải chi tiết:</b> ${solBody(sq)}</div>` : (reveal ? '<div class="rv-nosol">Câu này chưa có lời giải chi tiết.</div>' : '');
-    return `<div class="q-item rv-item ${sc == null ? '' : sc === 1 ? 'is-ok' : 'is-bad'}"><div class="qn">Câu ${i + 1}. ${pill}<div style="margin-top:4px">${qBody(q)}</div></div>${body}${sol}</div>`;
+    let rp = '';
+    if (rep && reveal && sc != null) {
+      const x = rep.map && rep.map[i], ST = {pending: ['⏳ Đã báo đáp án sai — đang chờ giáo viên duyệt', '#b45309'], approved: ['✅ Giáo viên đã duyệt và sửa đáp án — điểm đã được tính lại', '#166534'], rejected: ['❌ Giáo viên giữ nguyên đáp án', '#b91c1c']};
+      rp = x ? `<div class="rv-report" style="margin-top:8px;font-size:12px;color:${ST[x.status][1]}"><b>${ST[x.status][0]}</b>${x.resolution && x.status !== 'pending' ? `<div style="color:#475467">Giáo viên: ${esc(x.resolution)}</div>` : ''}${x.status === 'rejected' ? ` <button class="btn btn-outline sm" data-rep="${i}" style="margin-left:6px">Báo lại</button>` : ''}</div>`
+        : `<div class="rv-report" style="margin-top:8px"><button class="btn btn-outline sm" data-rep="${i}" title="Nếu bạn thấy đáp án của câu này bị sai, hãy báo để giáo viên kiểm tra">🚩 Báo đáp án sai</button></div>`;
+    }
+    return `<div class="q-item rv-item ${sc == null ? '' : sc === 1 ? 'is-ok' : 'is-bad'}"><div class="qn">Câu ${i + 1}. ${pill}<div style="margin-top:4px">${qBody(q)}</div></div>${body}${sol}${rp}</div>`;
   }).join('');
 }
 
@@ -3173,7 +3180,7 @@ function runExam(data, o) {
     showResult(res, auto);
   };
   const showResult = (res, auto) => {
-    const rv = res.details ? reviewHTML(res.questions, res.details) : `<div class="lb-note">${esc(res.reveal_note || 'Giáo viên chưa cho xem đáp án chi tiết. Kết quả sẽ được thông báo sau.')} Bạn có thể xem lại bài làm bất cứ lúc nào ở mục <b>Bài của tôi → 📖 Xem lại bài</b>.</div>`;
+    const rv = res.details ? reviewHTML(res.questions, res.details) + ((o.assignmentId || o.submitUrl) ? '<div class="lb-note" style="margin-top:8px">🚩 Thấy đáp án nào sai? Bấm <b>Đóng</b>, rồi vào <b>📖 Xem lại bài</b> (hoặc <b>Xem lại</b> ở lịch sử luyện tập) và bấm <b>Báo đáp án sai</b> ở câu đó — có thể đính kèm ảnh để giáo viên kiểm tra.</div>' : '') : `<div class="lb-note">${esc(res.reveal_note || 'Giáo viên chưa cho xem đáp án chi tiết. Kết quả sẽ được thông báo sau.')} Bạn có thể xem lại bài làm bất cứ lúc nào ở mục <b>Bài của tôi → 📖 Xem lại bài</b>.</div>`;
     b.innerHTML = `<h2>Kết quả · ${esc(data.title)}</h2>${auto ? '<div class="lb-note">⏰ Hết giờ — bài của bạn đã được nộp tự động.</div>' : ''}
       <div style="text-align:center;margin:8px 0 14px">${res.points ? `<div class="res-big">${String(res.score).replace('.', ',')}<small style="font-size:16px;color:#667085"> / ${String(res.max).replace('.', ',')} điểm</small></div>
       <div style="font-size:13px;color:#475467">Quy ra thang 10: <b>${res.score10 == null ? '—' : String(res.score10).replace('.', ',')}</b> · thời gian làm bài <b>${fmtT(res.spent_sec || 0)}</b>${res.duration_min ? ` / ${res.duration_min} phút` : ''}${res.overtime ? ' · <b style="color:#b91c1c">quá giờ</b>' : ''}</div>`

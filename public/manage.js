@@ -10,11 +10,12 @@ let tab = 'classes', classes = [], curClass = null;
 if (me.role === 'admin') $('#tab-teachers').hidden = false;
 $$('#tabs button').forEach(b => b.onclick = () => { tab = b.dataset.tab; $$('#tabs button').forEach(x => x.classList.toggle('on', x === b)); draw(); });
 
-const draw = () => ({classes: drawClasses, attend: drawAttend, practice: drawPractice, bonus: drawBonus, points: drawPoints, assign: drawAssign, parents: drawParents, teachers: drawTeachers})[tab]();
-const hashTab = () => { if (['#practice', '#bonus', '#attend', '#points'].includes(location.hash)) { tab = location.hash.slice(1); $$('#tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === tab)); return true; } };
+const draw = () => ({classes: drawClasses, attend: drawAttend, practice: drawPractice, bonus: drawBonus, points: drawPoints, reports: drawReports, assign: drawAssign, parents: drawParents, teachers: drawTeachers})[tab]();
+const hashTab = () => { if (['#practice', '#bonus', '#attend', '#points', '#reports'].includes(location.hash)) { tab = location.hash.slice(1); $$('#tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === tab)); return true; } };
 hashTab();
 window.addEventListener('hashchange', () => { if (hashTab()) draw(); });
 const fail = e => toast(e.message || 'Có lỗi xảy ra');
+setTimeout(() => refreshReportBadge(), 0);   // số báo cáo chờ duyệt hiện ngay trên tab
 
 /* ---------- Mã QR đăng nhập: máy khác cùng mạng wifi/LAN quét để vào hệ thống, không phải gõ địa chỉ ---------- */
 let SERVER = {lan: false, urls: []}, qrIdx = 0;
@@ -471,6 +472,63 @@ async function drawBonus() {
         <div style="max-height:56vh;overflow:auto"><table class="tbl"><tr><th>Bài luyện tập</th><th>Đúng/Tổng</th><th>Câu được cộng (TN · Đ/S · TLN)</th><th>Câu làm lại</th><th style="text-align:right">Điểm cộng</th><th>Lúc</th></tr>
         ${d.sessions.map(x => `<tr><td>${esc(x.title)}</td><td>${fmtScore(x.score)}/${x.max}</td><td>${x.mcq} · ${x.tf} · ${x.short}</td><td>${x.repeat ? `<span title="Câu đã làm đúng trước đó trong tháng, không cộng thêm">${x.repeat}</span>` : '—'}</td><td style="text-align:right"><b>+${x.points.toLocaleString('vi-VN')}</b></td><td>${fmtDate(x.at)}</td></tr>`).join('')}</table></div>`, true);
     } catch (e) { fail(e); }
+  });
+}
+/* ---------- TAB: báo đáp án sai — học sinh báo (kèm ảnh), giáo viên / quản trị duyệt: sửa đáp án + chấm lại bài đã nộp ---------- */
+const rpv = {status: 'pending'};
+async function refreshReportBadge() {
+  try { const r = await api.get('/api/reports?status=none'); const b = $('#tab-reports'); if (b) b.textContent = r.pending ? `🚩 Báo đáp án sai (${r.pending})` : '🚩 Báo đáp án sai'; return r.pending; } catch (e) { return 0; }
+}
+async function drawReports() {
+  view.innerHTML = '<div class="card empty">Đang tải...</div>';
+  let r;
+  try { r = await api.get('/api/reports?status=' + rpv.status); } catch (e) { return fail(e); }
+  const tb = $('#tab-reports'); if (tb) tb.textContent = r.pending ? `🚩 Báo đáp án sai (${r.pending})` : '🚩 Báo đáp án sai';
+  const LET = 'ABCD', tfs = v => Array.isArray(v) ? v.map((x, k) => `${'abcd'[k]}) ${x === 0 ? 'Đúng' : 'Sai'}`).join(' · ') : '';
+  const ansText = (sn, a) => a == null ? '' : sn.sts ? tfs(a) : sn.t === 'short' ? esc(a) : (a && typeof a === 'object' ? `${LET[a.idx]}${a.text && !sn.img ? '. ' + esc(a.text) : ''}` : Number.isInteger(a) ? LET[a] + (sn.opts && !sn.img ? '. ' + esc(sn.opts[a]) : '') : '');
+  const NAME = {pending: 'Chờ duyệt', approved: 'Đã duyệt', rejected: 'Đã từ chối'};
+  const card = x => { const sn = x.snapshot, tf = !!sn.sts, done = x.status !== 'pending';
+    const pick = tf ? `<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center">${sn.sts.map((s, k) => `<b>${'abcd'[k]})</b><select data-tf="${k}" style="padding:6px;border:1px solid var(--line);border-radius:8px"><option value="0" ${x.proposed && x.proposed[k] === 0 ? 'selected' : ''}>Đúng</option><option value="1" ${x.proposed && x.proposed[k] === 1 ? 'selected' : (!x.proposed && sn.ans[k] === 1 ? 'selected' : '')}>Sai</option></select>`).join('')}</div>`
+      : sn.t === 'short' ? `<input data-short maxlength="60" value="${esc(x.proposed != null ? x.proposed : sn.ans != null ? sn.ans : '')}" style="padding:8px;border:1px solid var(--line);border-radius:8px;width:240px">`
+      : `<div style="display:flex;flex-direction:column;gap:5px">${(sn.opts || []).map((o, j) => `<label style="display:flex;gap:8px;cursor:pointer"><input type="radio" name="o${x.id}" value="${j}" ${x.proposed && x.proposed.idx === j ? 'checked' : ''}><span><b>${LET[j]}.</b> ${sn.img ? '' : esc(o)}${sn.ans === j ? ' <span class="pill bad" style="font-size:10px">đáp án hiện tại</span>' : ''}${x.proposed && x.proposed.idx === j ? ' <span class="pill warn" style="font-size:10px">học sinh đề xuất</span>' : ''}</span></label>`).join('')}</div>`;
+    return `<div class="card" data-r="${x.id}" style="margin-bottom:14px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px"><b>${esc(x.student)}</b><span class="muted" style="font-size:12px">${esc(x.class_name)} · ${esc(x.title)} · câu ${x.qi + 1} · ${fmtDate(x.created_at)}</span>
+        <span class="pill ${x.status === 'approved' ? 'ok' : x.status === 'rejected' ? 'bad' : 'warn'}" style="margin-left:auto">${NAME[x.status]}</span></div>
+      <div style="border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px;max-height:34vh;overflow:auto">${LBX.qBody(sn)}${sn.opts && !sn.img ? `<div style="margin-top:6px">${sn.opts.map((o, j) => `<div><b>${LET[j]}.</b> ${esc(o)}</div>`).join('')}</div>` : ''}${tf && !sn.img ? `<div style="margin-top:6px">${sn.sts.map((s, k) => `<div><b>${'abcd'[k]})</b> ${esc(s)}</div>`).join('')}</div>` : ''}</div>
+      <div style="margin:8px 0;font-size:13px">Đáp án hiện tại: <b style="color:#b91c1c">${ansText(sn, sn.ans) || '—'}</b>${x.proposed != null ? ` · Học sinh đề xuất: <b style="color:#166534">${ansText(sn, x.proposed)}</b>` : ' · <span class="muted">học sinh không đề xuất đáp án</span>'}</div>
+      ${x.note ? `<div class="lb-note" style="margin:0 0 8px"><b>Học sinh ghi:</b> ${esc(x.note)}</div>` : ''}
+      ${x.images.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">${x.images.map(i => `<a href="/api/img/${i}" target="_blank" rel="noopener"><img src="/api/img/${i}" style="height:90px;border-radius:8px;border:1px solid var(--line)" alt="Ảnh học sinh đính kèm"></a>`).join('')}</div>` : ''}
+      ${done ? `<div style="font-size:12px;color:#475467">${x.status === 'approved' ? `Đáp án mới: <b>${ansText(sn, x.new_ans)}</b> · ` : ''}${esc(x.resolution)} · ${fmtDate(x.resolved_at)}${x.status === 'approved' && x.affected && x.affected.submissions != null ? ` · chấm lại ${x.affected.submissions} bài kiểm tra (${x.affected.changed} bài đổi điểm)${x.affected.practice ? `, ${x.affected.practice} bài luyện tập` : ''}` : ''}</div>`
+      : `<b style="font-size:13px">Đáp án đúng là:</b><div style="margin:6px 0 8px">${pick}</div>
+        <input data-note maxlength="500" placeholder="Ghi chú gửi học sinh (tùy chọn)" style="padding:7px 10px;border:1px solid var(--line);border-radius:8px;width:100%;margin-bottom:8px">
+        <div class="lb-row"><button class="btn btn-blue sm" data-ok="1" title="Sửa đáp án ở ngân hàng, mọi đề đã giao và chấm lại các bài đã nộp có câu này">✓ Duyệt và sửa đáp án</button><button class="btn btn-outline sm" data-no="1">✗ Từ chối (giữ đáp án)</button></div>`}</div>`; };
+  view.innerHTML = `<div class="card"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px"><h2 style="margin:0;font-size:18px">🚩 Báo đáp án sai của học sinh</h2>
+      <div class="lb-row" style="margin-left:auto">${[['pending', `Chờ duyệt (${r.pending})`], ['approved', 'Đã duyệt'], ['rejected', 'Đã từ chối'], ['all', 'Tất cả']].map(([k, l]) => `<button class="btn ${rpv.status === k ? 'btn-blue' : 'btn-outline'} sm" data-rs="${k}">${l}</button>`).join('')}</div></div>
+      <p style="font-size:12px;color:#667085;margin:0">Khi duyệt, đáp án được sửa ở ngân hàng câu hỏi và mọi đề đã giao có câu đó; các bài đã nộp được <b>chấm lại</b> nên điểm kiểm tra và điểm thưởng tự cập nhật. Phương án trắc nghiệm đã bị đảo thứ tự ở từng mã đề được đối chiếu theo nội dung.</p></div>
+    <div style="margin-top:12px">${r.reports.length ? r.reports.map(card).join('') : '<div class="card empty">Không có báo cáo nào.</div>'}</div>`;
+  $$('[data-rs]', view).forEach(b => b.onclick = () => { rpv.status = b.dataset.rs; drawReports(); });
+  $$('[data-r]', view).forEach(el => {
+    const id = +el.dataset.r, x = r.reports.find(z => z.id === id), sn = x.snapshot;
+    const body = approve => {
+      const o = {approve, note: ($('[data-note]', el) || {}).value || ''};
+      if (approve) {
+        if (sn.sts) o.answer = $$('[data-tf]', el).map(s => +s.value);
+        else if (sn.t === 'short') o.answer = ($('[data-short]', el).value || '').trim();
+        else { const c = $(`input[name=o${id}]:checked`, el); if (!c) return null; o.answer = {idx: +c.value}; }
+      }
+      return o;
+    };
+    const ok = $('[data-ok]', el), no = $('[data-no]', el);
+    if (ok) ok.onclick = async () => {
+      const o = body(true); if (!o) return toast('Hãy chọn đáp án đúng');
+      if (!confirm('Sửa đáp án ở ngân hàng và các đề đã giao, rồi chấm lại các bài đã nộp có câu này?')) return;
+      ok.disabled = true;
+      try { const res = await api.post(`/api/reports/${id}/resolve`, o), f = res.affected; toast(`Đã sửa đáp án. Chấm lại ${f.submissions} bài kiểm tra (${f.changed} bài đổi điểm).`); drawReports(); } catch (e) { ok.disabled = false; fail(e); }
+    };
+    if (no) no.onclick = async () => {
+      if (!confirm('Từ chối báo cáo này và giữ nguyên đáp án?')) return;
+      try { await api.post(`/api/reports/${id}/resolve`, body(false)); toast('Đã từ chối báo cáo'); drawReports(); } catch (e) { fail(e); }
+    };
   });
 }
 /* ---------- TAB: quản lý điểm — điểm cộng, điểm trừ, điểm hiện tại của cả lớp, xếp hạng, lịch sử từng học sinh ---------- */

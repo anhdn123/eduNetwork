@@ -363,6 +363,13 @@ process.on('exit', cleanup);
     await click('#cl');
     await waitFor("document.querySelector('#v-practice [data-v]')", 8, 'lịch sử luyện tập');
     check('lịch sử luyện tập có 1 bài', (await ev("document.querySelectorAll('#v-practice [data-s]').length")) === 1);
+    // học sinh báo đáp án sai từ màn xem lại bài tự luyện: có nút, hộp báo cáo, gửi xong hiện trạng thái “đang chờ giáo viên duyệt”
+    await click('#v-practice tr[data-s] [data-v]'); await waitFor("document.querySelector('.lb-modal [data-rep]')", 8, 'nút Báo đáp án sai trong màn xem lại');
+    await click('.lb-modal [data-rep]'); await waitFor("document.querySelector('#rp-go')", 8, 'hộp báo đáp án sai');
+    await setv('#rp-note', 'Em thấy đáp án câu này bị sai'); await click('#rp-go');
+    await waitFor("/đang chờ giáo viên duyệt/.test(document.body.innerText)", 10, 'trạng thái báo cáo sau khi gửi');
+    check('học sinh báo đáp án sai: gửi xong câu hiện “đang chờ giáo viên duyệt”', true);
+    await ev('document.querySelectorAll(".lb-overlay").forEach(e=>e.remove())');
 
     // 5. bảng tin
     await nav('index.html');
@@ -407,6 +414,11 @@ process.on('exit', cleanup);
     await click('.lb-modal [data-v]'); await waitFor("/Học sinh chọn/.test(document.body.innerText)", 8, 'xem chi tiết bài luyện tập');
     check('giáo viên xem được chi tiết bài tự luyện tập của học sinh', true);
     await ev('document.querySelectorAll(".lb-overlay").forEach(e=>e.remove())');
+    // tab “Báo đáp án sai”: giáo viên thấy báo cáo của học sinh (số chờ duyệt hiện trên tab)
+    await click('[data-tab=reports]'); await waitFor("document.querySelector('[data-r]')", 10, 'báo cáo đáp án sai của học sinh');
+    const rpt = await ev("({tab: document.getElementById('tab-reports').innerText, txt: document.getElementById('view').innerText, ok: !!document.querySelector('[data-ok]'), no: !!document.querySelector('[data-no]')})");
+    check('giáo viên thấy báo cáo đáp án sai (có ghi chú của học sinh, nút Duyệt / Từ chối, số chờ duyệt trên tab)', /\(1\)/.test(rpt.tab) && /Em thấy đáp án câu này bị sai/.test(rpt.txt) && rpt.ok && rpt.no, JSON.stringify({tab: rpt.tab, ok: rpt.ok, no: rpt.no}));
+    await click('[data-tab=classes]'); await waitFor("document.querySelector('#pt')", 8, 'quay lại tab Lớp & học sinh');
     await click('#pt'); await waitFor("document.querySelector('#psave')", 8, 'cài đặt luyện tập của lớp');
     check('giáo viên mở/đóng chuyên đề luyện tập theo lớp (đang mở 1)', (await ev("document.querySelectorAll('[data-i]:checked').length")) === 1);
     // tab “Mở luyện tập tự do”: tick chuyên đề không vẽ lại danh sách (thanh cuộn không nhảy về đầu), bộ đếm và ô “chọn tất cả” cập nhật

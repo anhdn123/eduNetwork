@@ -216,6 +216,29 @@ CREATE TABLE IF NOT EXISTS point_adjust(           -- giáo viên điều chỉn
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_padj_student ON point_adjust(student_id, month);
+CREATE TABLE IF NOT EXISTS answer_reports(          -- học sinh báo đáp án sai (kèm ảnh); giáo viên/quản trị duyệt thì đáp án được sửa và bài đã nộp được chấm lại
+  id INTEGER PRIMARY KEY,
+  student_id INTEGER NOT NULL,
+  owner_id INTEGER NOT NULL,                    -- giáo viên sở hữu bài/ngân hàng (người duyệt)
+  source TEXT NOT NULL,                         -- assignment | practice
+  source_id INTEGER NOT NULL,                   -- mã lần nộp (assignment) hoặc mã bài luyện tập (practice)
+  assignment_id INTEGER,
+  qi INTEGER NOT NULL,                          -- thứ tự câu trong bài học sinh làm
+  qid TEXT NOT NULL DEFAULT '',                 -- mã câu hỏi trong ngân hàng
+  snapshot TEXT NOT NULL,                       -- câu hỏi học sinh nhìn thấy + đáp án lúc báo (JSON)
+  proposed TEXT,                                -- đáp án học sinh cho là đúng (JSON, có thể trống)
+  note TEXT NOT NULL DEFAULT '',
+  images TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'pending',       -- pending | approved | rejected
+  created_at INTEGER NOT NULL,
+  resolved_by INTEGER,
+  resolved_at INTEGER,
+  resolution TEXT NOT NULL DEFAULT '',
+  new_ans TEXT,
+  affected TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_rep_owner ON answer_reports(owner_id, status);
+CREATE INDEX IF NOT EXISTS idx_rep_stu ON answer_reports(student_id, source, source_id);
 CREATE TABLE IF NOT EXISTS class_schedule(
   class_id INTEGER NOT NULL,
   from_date TEXT NOT NULL,

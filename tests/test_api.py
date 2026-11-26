@@ -1358,6 +1358,124 @@ class ApiTest(unittest.TestCase):
         binh.post("/api/login", {"username": "binh", "password": self.__class__.binh_pw})
         self.assertEqual(binh.post("/api/attendance", {"date": day, "items": [{"student_id": A, "status": "present", "noisy": 1}]})[0], 404)
 
+    def test_zz_answer_reports(self):
+        """Học sinh báo đáp án sai (kèm ảnh): giáo viên duyệt thì đáp án sửa ở ngân hàng + đề đã giao (kể cả mã đề đã đảo phương án), bài đã nộp được chấm lại, điểm thưởng tính lại;
+        từ chối thì giữ nguyên; kiểm tra quyền, trùng lặp, dữ liệu vào."""
+        import struct
+        import zlib
+        lan = self.C()
+        lan.post("/api/login", {"username": "lan", "password": LAN_PW})
+        cid = lan.post("/api/classes", {"name": "BAOSAI", "grade": "9"})[1]["id"]
+        accs = lan.post("/api/students/bulk", {"class_id": cid, "rows": ["Báo Đúng", "Làm Mã Hai"]})[1]["accounts"]
+        A, B = accs[0]["id"], accs[1]["id"]
+        # câu có đáp án SAI trong ngân hàng: trắc nghiệm (đáp án thật là “20”), đúng/sai (thật [0,1,0,1]), trả lời ngắn (thật “7”)
+        q1 = {"id": "rp1", "t": "mcq", "q": "Hai lần mười là", "opts": ["10", "20", "30", "40"], "ans": 0, "sol": "giải"}
+        q2 = {"id": "rp2", "t": "tf", "q": "Xét các ý", "sts": ["a", "b", "c", "d"], "ans": [0, 0, 0, 0]}
+        q3 = {"id": "rp3", "t": "short", "q": "Bảy cộng không", "ans": "5"}
+        lan.post("/api/bank/sync", {"upsert": [q1, q2, q3]})
+        q1b = {**q1, "opts": ["40", "30", "20", "10"], "ans": 3}                                     # mã đề 2: phương án bị đảo
+        body = {"title": "Bài báo sai", "class_id": cid, "dist_mode": "manual", "duration_min": 0, "max_attempts": 1, "show_result": True,
+                "variation_map": {str(A): 0, str(B): 1},
+                "exam": {"title": "Bài báo sai", "variations": [{"code": "M1", "questions": [q1, q2, q3]}, {"code": "M2", "questions": [q1b, q2, q3]}]}}
+        st, r = lan.post("/api/assignments", body)
+        self.assertEqual(st, 200, r)
+        aid = r["id"]
+        sa, sb = self.C(), self.C()
+        sa.post("/api/login", {"username": accs[0]["username"], "password": accs[0]["password"]})
+        sb.post("/api/login", {"username": accs[1]["username"], "password": accs[1]["password"]})
+        sa.post(f"/api/assignments/{aid}/start")
+        ra = sa.post(f"/api/assignments/{aid}/submit", {"answers": [1, [0, 1, 0, 1], "7"]})[1]     # A làm đúng theo đáp án thật → hiện bị chấm sai cả ba
+        sb.post(f"/api/assignments/{aid}/start", {})
+        rb = sb.post(f"/api/assignments/{aid}/submit", {"answers": [2, [0, 0, 0, 0], "5"]})[1]    # B (mã đề 2): chọn “20” = đúng thật; hai câu còn lại đúng theo đáp án sai hiện tại
+        self.assertEqual((ra["score"], rb["score"]), (0.25, 2))
+        sub_a, sub_b = ra["submission_id"], rb["submission_id"]
+
+        def png():
+            def chunk(t, d):
+                return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+            return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(b"\x00\xff\xff\xff")) + chunk(b"IEND", b"")
+        up = lambda cl: cl.post("/api/reports/image", {"data": "data:image/png;base64," + base64.b64encode(png()).decode()})
+        st, im = up(sa)
+        self.assertEqual(st, 200)
+        self.assertEqual(up(lan)[0], 403)                                                             # chỉ học sinh tải ảnh báo cáo
+        self.assertEqual(sa.post("/api/reports/image", {"data": "data:image/gif;base64,AAAA"})[0], 400)
+        base = {"source": "assignment", "source_id": sub_a, "qi": 0}
+        # dữ liệu vào và quyền
+        self.assertEqual(sa.post("/api/reports", {**base})[0], 400)                                  # không có gì để báo
+        self.assertEqual(sa.post("/api/reports", {**base, "proposed": 9})[0], 400)                   # phương án không có
+        self.assertEqual(sa.post("/api/reports", {**base, "note": "x", "images": ["ab" * 12]})[0], 400)   # ảnh không phải của mình
+        self.assertEqual(sa.post("/api/reports", {**base, "note": "x", "qi": 99})[0], 400)
+        self.assertEqual(sb.post("/api/reports", {**base, "note": "x"})[0], 404)                     # bài làm của bạn khác
+        self.assertEqual(sa.post("/api/reports", {**base, "note": "x", "source": "khac"})[0], 400)
+        self.assertEqual(sa.post("/api/reports", {**base, "note": "x", "images": [im["id"]] * 2})[0], 400)
+        st, r1 = sa.post("/api/reports", {**base, "proposed": 1, "note": "Hai lần mười là hai mươi", "images": [im["id"]]})
+        self.assertEqual(st, 200, r1)
+        self.assertEqual(sa.post("/api/reports", {**base, "note": "báo lại"})[0], 409)               # đang chờ duyệt thì không báo trùng
+        r2 = sa.post("/api/reports", {"source": "assignment", "source_id": sub_a, "qi": 1, "proposed": [0, 1, 0, 1]})[1]
+        r3 = sa.post("/api/reports", {"source": "assignment", "source_id": sub_a, "qi": 2, "proposed": " 7 ", "note": "đáp án là 7"})[1]
+        self.assertEqual(sa.post("/api/reports", {"source": "assignment", "source_id": sub_a, "qi": 1, "proposed": [0, 1]})[0], 409)
+        mine = sa.get(f"/api/reports/mine?source=assignment&source_id={sub_a}")[1]["reports"]
+        self.assertEqual(sorted((x["qi"], x["status"]) for x in mine), [(0, "pending"), (1, "pending"), (2, "pending")])
+        # bài chưa cho xem đáp án thì không báo được
+        st, hid = lan.post("/api/assignments", {**body, "title": "Ẩn đáp án", "show_result": 0, "due_at": int(time.time()) + 99999})
+        sa.post(f"/api/assignments/{hid['id']}/start")
+        rh = sa.post(f"/api/assignments/{hid['id']}/submit", {"answers": [3, [1, 1, 1, 1], "0"]})[1]   # làm sai hết: không có điểm thưởng
+        self.assertEqual(sa.post("/api/reports", {"source": "assignment", "source_id": rh["submission_id"], "qi": 0, "note": "x"})[0], 403)
+        # giáo viên thấy báo cáo; giáo viên khác và học sinh thì không
+        lst = lan.get("/api/reports")[1]
+        got = {x["id"]: x for x in lst["reports"]}
+        self.assertEqual((lst["pending"], len(got)), (3, 3))
+        self.assertEqual((got[r1["id"]]["student"], got[r1["id"]]["title"], got[r1["id"]]["images"], got[r1["id"]]["snapshot"]["opts"]), ("Báo Đúng", "Bài báo sai", [im["id"]], ["10", "20", "30", "40"]))
+        self.assertEqual(got[r3["id"]]["proposed"], "7")
+        binh = self.C()
+        binh.post("/api/login", {"username": "binh", "password": self.__class__.binh_pw})
+        self.assertEqual((binh.get("/api/reports")[1]["pending"], binh.get("/api/reports")[1]["reports"]), (0, []))
+        self.assertEqual(binh.post(f"/api/reports/{r1['id']}/resolve", {"approve": True})[0], 404)
+        self.assertEqual(sa.get("/api/reports")[0], 403)
+        self.assertEqual(sa.post(f"/api/reports/{r1['id']}/resolve", {"approve": True})[0], 403)
+        # trước khi duyệt: điểm của A là 0 → không có điểm thưởng bài kiểm tra
+        self.assertEqual(sa.get(f"/api/points/me?month={app.month_key()}")[1]["parts"]["tests"], 0)
+        # duyệt câu 1 (dùng đáp án học sinh đề xuất): sửa ở ngân hàng, cả hai mã đề (mã đề 2 đã đảo phương án), chấm lại cả hai bài
+        st, ap = lan.post(f"/api/reports/{r1['id']}/resolve", {"approve": True, "note": "Cảm ơn em"})
+        self.assertEqual(st, 200, ap)
+        fx = ap["affected"]
+        self.assertEqual((fx["bank"], fx["exams"], fx["submissions"], fx["changed"]), (1, 2, 3, 2))   # 2 đề (cả bài “Ẩn đáp án” cùng câu), 3 bài nộp, 2 bài đổi điểm
+        bank = {q["id"]: q for q in lan.get("/api/bank")[1]["questions"]}
+        self.assertEqual(bank["rp1"]["ans"], 1)
+        ex = lan.get(f"/api/assignments/{aid}")[1]
+        review = lambda cl, sid: cl.get(f"/api/assignments/{aid}/my/{sid}")[1]
+        self.assertEqual(review(sa, sub_a)["score"], 1.25)                                           # A: câu 1 giờ đúng (+1)
+        self.assertEqual(review(sb, sub_b)["score"], 3)                                              # B (mã đề 2): đáp án tính theo nội dung “20” → đúng
+        self.assertEqual([d["key"] for d in review(sb, sub_b)["details"]][:1], [2])                  # mã đề 2: “20” đứng ở vị trí C
+        # duyệt câu 2 với đáp án giáo viên chọn khác đề xuất, từ chối câu 3
+        self.assertEqual(lan.post(f"/api/reports/{r2['id']}/resolve", {"approve": True, "answer": [0, 1, 0]})[0], 400)       # thiếu ý
+        self.assertEqual(lan.post(f"/api/reports/{r2['id']}/resolve", {"approve": True, "answer": [0, 1, 0, 1]})[0], 200)
+        st, rj = lan.post(f"/api/reports/{r3['id']}/resolve", {"approve": False, "note": "Đáp án 5 là đúng, em kiểm tra lại đề"})
+        self.assertEqual((st, rj["status"]), (200, "rejected"))
+        self.assertEqual(review(sa, sub_a)["score"], 2)                                              # câu 2 giờ đúng đủ 4 ý; câu 3 giữ nguyên (sai)
+        self.assertEqual(review(sb, sub_b)["score"], 2.25)                                           # B: câu 2 [0,0,0,0] giờ chỉ đúng 2/4 ý (0,25 điểm) → mất điểm
+        self.assertEqual(lan.post(f"/api/reports/{r1['id']}/resolve", {"approve": True})[0], 409)    # đã xử lý
+        mine = {x["qi"]: x for x in sa.get(f"/api/reports/mine?source=assignment&source_id={sub_a}")[1]["reports"]}
+        self.assertEqual((mine[0]["status"], mine[0]["resolution"], mine[1]["status"], mine[2]["status"], mine[2]["resolution"]),
+                         ("approved", "Cảm ơn em", "approved", "rejected", "Đáp án 5 là đúng, em kiểm tra lại đề"))
+        done = lan.get("/api/reports?status=approved")[1]
+        self.assertEqual(sorted(x["id"] for x in done["reports"]), sorted([r1["id"], r2["id"]]))
+        self.assertEqual((done["reports"][0]["new_ans"] is not None, lan.get("/api/reports")[1]["pending"]), (True, 0))
+        # điểm bài kiểm tra tính lại: A có điểm cao hơn thì được thưởng (bài còn 1 câu để dễ đạt mức thưởng)
+        v = {"code": "T1", "questions": [{"id": "rp9", "t": "mcq", "q": "Một cộng một", "opts": ["1", "2", "3", "4"], "ans": 3}]}
+        lan.post("/api/bank/sync", {"upsert": [v["questions"][0]]})
+        a2 = lan.post("/api/assignments", {"title": "Bài thưởng", "class_id": cid, "dist_mode": "alt", "duration_min": 0, "max_attempts": 1, "show_result": True,
+                                           "exam": {"title": "Bài thưởng", "variations": [v]}})[1]["id"]
+        sa.post(f"/api/assignments/{a2}/start")
+        sub2 = sa.post(f"/api/assignments/{a2}/submit", {"answers": [1]})[1]["submission_id"]          # “2” là đúng thật nhưng đáp án đang sai
+        m0 = app.month_key()
+        self.assertEqual(sa.get(f"/api/points/me?month={m0}")[1]["parts"]["tests"], 0)
+        rr = sa.post("/api/reports", {"source": "assignment", "source_id": sub2, "qi": 0, "proposed": 1, "note": "1 + 1 = 2"})[1]["id"]
+        self.assertEqual(lan.post(f"/api/reports/{rr}/resolve", {"approve": True})[0], 200)
+        pa = sa.get(f"/api/points/me?month={m0}")[1]
+        self.assertEqual(pa["parts"]["tests"], 5000)                                                 # điểm 10/10 → được thưởng sau khi chấm lại
+        self.assertTrue(any(t["title"] == "Bài thưởng" for t in pa["tests"]))
+
     def test_zz_attendance_rules(self):
         """Học sinh mới tạo vẫn có lịch; phút đi muộn; chốt điểm danh; phạt muộn và thưởng điểm theo quy tắc từng tháng."""
         import datetime as dt

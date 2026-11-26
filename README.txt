@@ -230,3 +230,12 @@ dùng bucket riêng tư, giữ khóa bí mật, và xem lại yêu cầu pháp l
    - Không tick vẫn tự nhận ra khi dấu hiệu rõ (PHẦN I lặp lại hoặc số câu quay về 1 và câu đầu in lại đúng câu 1 của đề, có nhiều dòng "Lời giải").
      Hai đề nối nhau không có lời giải thì không bị cắt nhầm.
    - File có tiêu đề riêng ("HƯỚNG DẪN GIẢI", "ĐÁP ÁN") hoặc có bảng đáp án cuối đề vẫn đọc như trước.
+
+19. HỌC SINH BÁO ĐÁP ÁN SAI · GIÁO VIÊN / QUẢN TRỊ DUYỆT
+   - Học sinh xem lại bài (bài kiểm tra khi đã được xem đáp án, hoặc bài tự luyện): mỗi câu chấm tự động có nút "🚩 Báo đáp án sai". Học sinh chọn đáp án mình cho là đúng
+     (có thể bỏ trống), ghi lý do và đính kèm tối đa 3 ảnh (ảnh được thu nhỏ trước khi gửi). Mỗi câu chỉ báo một lần khi đang chờ duyệt; tối đa 30 báo cáo chờ duyệt mỗi học sinh.
+   - Giáo viên / quản trị: tab "🚩 Báo đáp án sai" (số chờ duyệt hiện trên tab) xem câu hỏi, đáp án hiện tại, đề xuất, ghi chú và ảnh của học sinh; chọn đáp án đúng rồi
+     "Duyệt và sửa đáp án" hoặc "Từ chối". Giáo viên chỉ thấy báo cáo của bài / ngân hàng của mình; quản trị thấy tất cả.
+   - Khi duyệt: đáp án được sửa ở ngân hàng câu hỏi, mọi đề đã giao có câu đó (mã đề đã đảo phương án được đối chiếu theo nội dung phương án) và bài tự luyện của lớp;
+     các bài kiểm tra đã nộp được CHẤM LẠI nên điểm kiểm tra và điểm thưởng tự cập nhật. Học sinh thấy trạng thái (chờ duyệt / đã duyệt / từ chối kèm lời giáo viên) ngay trong màn xem lại.
+   - Lưu ý: điểm cộng của bài tự luyện đã được cộng trước đó (điểm thưởng theo từng câu) không tính lại; chỉ điểm số của bài luyện tập được chấm lại.

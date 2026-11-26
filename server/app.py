@@ -1159,6 +1159,268 @@ def r_my_results(c):
     return {"results": res, "avg": round(sum(vals) / len(vals), 2) if vals else None}
 
 
+# ---------- học sinh báo đáp án sai (kèm ảnh) · giáo viên / quản trị duyệt ----------
+REPORT_MAX_PENDING = 30
+REPORT_MAX_IMAGES = 3
+
+
+@route("POST", "/api/reports/image", ("student",))
+def r_report_image(c):
+    """Học sinh tải ảnh đính kèm báo cáo (chụp lời giải / sách / đề gốc…). Tối đa 3 MB, 30 ảnh mỗi ngày."""
+    if c.con.execute("SELECT COUNT(*) n FROM images WHERE owner_id=? AND created_at>?", (c.user["id"], db.now() - 86400)).fetchone()["n"] >= 30:
+        raise ApiError(429, "Bạn đã tải quá nhiều ảnh hôm nay, hãy thử lại vào ngày mai")
+    data = c.body.get("data") or ""
+    m = re.fullmatch(r"data:(image/(?:jpeg|png));base64,([A-Za-z0-9+/=]+)", data)
+    if not m:
+        raise ApiError(400, "Ảnh không hợp lệ (chỉ nhận JPEG/PNG)")
+    raw = base64.b64decode(m.group(2))
+    if len(raw) > 3 * 1024 * 1024:
+        raise ApiError(400, "Ảnh quá lớn (tối đa 3 MB)")
+    iid = secrets.token_hex(12)
+    c.con.execute("INSERT INTO images(id,owner_id,mime,data,created_at) VALUES(?,?,?,?,?)", (iid, c.user["id"], m.group(1), raw, db.now()))
+    return {"id": iid}
+
+
+def _report_question(c, b):
+    """Câu hỏi học sinh báo sai: (nguồn, mã nguồn, mã bài giao, người duyệt, thứ tự câu, câu hỏi). Chỉ báo được khi đã được xem đáp án."""
+    src = b.get("source")
+    qi = need_int(b, "qi", 0, 999)
+    sid = need_int(b, "source_id", 1)
+    if src == "assignment":
+        sub = c.con.execute("SELECT * FROM submissions WHERE id=? AND student_id=? AND submitted_at IS NOT NULL", (sid, c.user["id"])).fetchone()
+        if not sub:
+            raise ApiError(404, "Không tìm thấy bài làm")
+        a, _ = student_assignment(c, sub["assignment_id"])
+        if not can_reveal(a):
+            raise ApiError(403, "Bạn chỉ báo được đáp án sai khi đã được xem đáp án của bài này")
+        qs = json.loads(c.con.execute("SELECT variations FROM exams WHERE id=?", (a["exam_id"],)).fetchone()["variations"])[sub["variation"]]["questions"]
+        owner, aid = a["owner_id"], a["id"]
+    elif src == "practice":
+        p = own_practice(c, sid)
+        if not p["submitted_at"]:
+            raise ApiError(400, "Bài luyện tập chưa nộp")
+        qs = json.loads(p["questions"])
+        owner, aid = _owner_of(c.con, c.user["class_id"]), None
+        if owner is None:
+            raise ApiError(400, "Tài khoản chưa thuộc lớp nào nên không gửi báo cáo được")
+    else:
+        raise ApiError(400, "Nguồn báo cáo không hợp lệ")
+    if qi >= len(qs):
+        raise ApiError(400, "Không có câu này trong bài")
+    q = qs[qi]
+    if not grading.has_key(q):
+        raise ApiError(400, "Câu này không có đáp án chấm tự động nên không báo đáp án được")
+    return src, sid, aid, owner, qi, q
+
+
+def _clean_answer(snap, v, what="Đáp án"):
+    """Kiểm tra đáp án (do học sinh đề xuất hoặc giáo viên chọn) theo đúng dạng câu của ảnh chụp câu hỏi; trả về dạng lưu."""
+    if isinstance(snap.get("sts"), list):
+        if not isinstance(v, list) or len(v) != len(snap["sts"]) or any(x not in (0, 1) or isinstance(x, bool) for x in v):
+            raise ApiError(400, f"{what} đúng/sai phải đủ {len(snap['sts'])} ý, mỗi ý Đúng hoặc Sai")
+        return list(v)
+    if snap.get("t") == "short":
+        t = str(v if v is not None else "").strip()
+        if not t or len(t) > 60:
+            raise ApiError(400, f"{what} trả lời ngắn không được để trống (tối đa 60 ký tự)")
+        return t
+    opts = snap.get("opts") or []
+    i = v.get("idx") if isinstance(v, dict) else v
+    if isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < len(opts):
+        raise ApiError(400, f"{what} trắc nghiệm không hợp lệ")
+    return {"idx": i, "text": str(opts[i])}
+
+
+@route("POST", "/api/reports", ("student",))
+def r_report_create(c):
+    b = c.body
+    src, sid, aid, owner, qi, q = _report_question(c, b)
+    if c.con.execute("SELECT 1 FROM answer_reports WHERE student_id=? AND source=? AND source_id=? AND qi=? AND status='pending'", (c.user["id"], src, sid, qi)).fetchone():
+        raise ApiError(409, "Bạn đã báo câu này rồi, đang chờ giáo viên duyệt")
+    if c.con.execute("SELECT COUNT(*) n FROM answer_reports WHERE student_id=? AND status='pending'", (c.user["id"],)).fetchone()["n"] >= REPORT_MAX_PENDING:
+        raise ApiError(429, f"Bạn đang có {REPORT_MAX_PENDING} báo cáo chờ duyệt, hãy đợi giáo viên xử lý bớt")
+    snap = {k: q[k] for k in ("t", "q", "img", "opts", "sts", "ans") if k in q}
+    note = str(b.get("note") or "").strip()[:1000]
+    imgs = b.get("images") or []
+    if not isinstance(imgs, list) or len(imgs) > REPORT_MAX_IMAGES or len(set(map(str, imgs))) != len(imgs):
+        raise ApiError(400, f"Đính kèm tối đa {REPORT_MAX_IMAGES} ảnh")
+    for i in imgs:
+        if not valid_img_id(i) or not c.con.execute("SELECT 1 FROM images WHERE id=? AND owner_id=?", (i, c.user["id"])).fetchone():
+            raise ApiError(400, "Ảnh đính kèm không hợp lệ")
+    proposed = b.get("proposed")
+    proposed = None if proposed in (None, "") else _clean_answer(snap, proposed, "Đáp án bạn đề xuất")
+    if proposed is None and not note and not imgs:
+        raise ApiError(400, "Hãy ghi đáp án bạn cho là đúng, lý do hoặc đính kèm ảnh")
+    cur = c.con.execute("INSERT INTO answer_reports(student_id, owner_id, source, source_id, assignment_id, qi, qid, snapshot, proposed, note, images, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (c.user["id"], owner, src, sid, aid, qi, str(q.get("id") or ""), json.dumps(snap, ensure_ascii=False),
+                         json.dumps(proposed, ensure_ascii=False) if proposed is not None else None, note, json.dumps(imgs), db.now()))
+    return {"ok": True, "id": cur.lastrowid}
+
+
+@route("GET", "/api/reports/mine", ("student",))
+def r_report_mine(c):
+    """Các báo cáo của học sinh cho một lần nộp / bài luyện tập: để hiện trạng thái ngay trong màn xem lại bài."""
+    src = c.query.get("source")
+    sid = int(c.query["source_id"]) if str(c.query.get("source_id") or "").isdigit() else 0
+    rows = c.con.execute("SELECT id, qi, status, note, resolution, created_at, resolved_at FROM answer_reports WHERE student_id=? AND source=? AND source_id=? ORDER BY id",
+                         (c.user["id"], src, sid)).fetchall()
+    return {"reports": [dict(r) for r in rows]}
+
+
+def _report_dict(con, r):
+    st = con.execute("SELECT name, username, class_id FROM users WHERE id=?", (r["student_id"],)).fetchone()
+    cl = con.execute("SELECT name FROM classes WHERE id=?", (st["class_id"],)).fetchone() if st and st["class_id"] else None
+    a = con.execute("SELECT title FROM assignments WHERE id=?", (r["assignment_id"],)).fetchone() if r["assignment_id"] else None
+    return {"id": r["id"], "student": st["name"] if st else "?", "username": st["username"] if st else "", "class_name": cl["name"] if cl else "",
+            "source": r["source"], "title": a["title"] if a else "Tự luyện tập", "qi": r["qi"], "qid": r["qid"], "snapshot": json.loads(r["snapshot"]),
+            "proposed": json.loads(r["proposed"]) if r["proposed"] is not None else None, "note": r["note"], "images": json.loads(r["images"] or "[]"),
+            "status": r["status"], "created_at": r["created_at"], "resolved_at": r["resolved_at"], "resolution": r["resolution"],
+            "new_ans": json.loads(r["new_ans"]) if r["new_ans"] is not None else None, "affected": json.loads(r["affected"] or "{}")}
+
+
+@route("GET", "/api/reports", TEACHER_ROLES)
+def r_reports(c):
+    status = c.query.get("status") or "pending"
+    where, args = ["1=1"], []
+    if c.user["role"] != "admin":
+        where.append("owner_id=?")
+        args.append(c.user["id"])
+    pending = c.con.execute(f"SELECT COUNT(*) n FROM answer_reports WHERE status='pending' AND {' AND '.join(where)}", args).fetchone()["n"]
+    if status == "none":   # chỉ lấy số báo cáo chờ duyệt (hiện trên tab)
+        return {"pending": pending, "reports": []}
+    if status in ("pending", "approved", "rejected"):
+        where.append("status=?")
+        args.append(status)
+    rows = c.con.execute(f"SELECT * FROM answer_reports WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT 200", args).fetchall()
+    return {"pending": pending, "reports": [_report_dict(c.con, r) for r in rows]}
+
+
+def _set_key(q, snap, new) -> bool:
+    """Đặt đáp án mới cho một bản sao câu hỏi (phương án trắc nghiệm có thể đã bị đảo → đối chiếu theo nội dung). False nếu không khớp."""
+    if isinstance(snap.get("sts"), list):
+        if not isinstance(q.get("sts"), list) or len(q["sts"]) != len(new):
+            return False
+        q["ans"] = list(new)
+    elif snap.get("t") == "short":
+        if q.get("t") != "short":
+            return False
+        q["ans"] = new
+    else:
+        if q.get("t") != "mcq":
+            return False
+        opts, so = q.get("opts") or [], snap.get("opts") or []
+        if opts == so:
+            idx = new["idx"]
+        elif new["text"] and opts.count(new["text"]) == 1:
+            idx = opts.index(new["text"])
+        else:
+            return False
+        q["ans"] = idx
+    q.pop("aiAns", None)   # đáp án này đã được giáo viên xác nhận
+    return True
+
+
+def apply_answer_fix(con, owner, qid, snap, new) -> dict:
+    """Sửa đáp án của câu `qid` ở ngân hàng của giáo viên, mọi đề đã giao và mọi bài tự luyện của lớp; rồi chấm lại các bài đã nộp có câu đó."""
+    out = {"bank": 0, "exams": 0, "submissions": 0, "changed": 0, "practice": 0, "practice_changed": 0, "skipped": 0}
+    pat = f"%{qid}%"
+    r = con.execute("SELECT data FROM bank WHERE owner_id=? AND id=?", (owner, qid)).fetchone()
+    if r:
+        q = json.loads(r["data"])
+        if _set_key(q, snap, new):
+            con.execute("UPDATE bank SET data=?, updated_at=? WHERE owner_id=? AND id=?", (json.dumps(q, ensure_ascii=False), db.now(), owner, qid))
+            out["bank"] = 1
+        else:
+            out["skipped"] += 1
+    for e in con.execute("SELECT id, variations FROM exams WHERE owner_id=? AND variations LIKE ?", (owner, pat)).fetchall():
+        vs, hit = json.loads(e["variations"]), False
+        for v in vs:
+            for q in v.get("questions", []):
+                if q.get("id") == qid:
+                    if _set_key(q, snap, new):
+                        hit = True
+                    else:
+                        out["skipped"] += 1
+        if not hit:
+            continue
+        con.execute("UPDATE exams SET variations=? WHERE id=?", (json.dumps(vs, ensure_ascii=False), e["id"]))
+        out["exams"] += 1
+        for s in con.execute("SELECT s.* FROM submissions s JOIN assignments a ON a.id=s.assignment_id WHERE a.exam_id=? AND s.submitted_at IS NOT NULL", (e["id"],)).fetchall():
+            qs = vs[s["variation"]]["questions"] if s["variation"] < len(vs) else []
+            if not any(q.get("id") == qid for q in qs):
+                continue
+            sc, mx, details = grading.grade(qs, json.loads(s["answers"] or "[]"), reveal=False)   # chấm lại đúng cách lúc nộp bài (phần tự luận do giáo viên chấm riêng)
+            out["submissions"] += 1
+            if abs(sc - (s["score"] or 0)) > 1e-9 or mx != s["max_score"]:
+                out["changed"] += 1
+            con.execute("UPDATE submissions SET score=?, max_score=?, details=? WHERE id=?", (sc, mx, json.dumps(details, ensure_ascii=False), s["id"]))
+    for p in con.execute("SELECT p.* FROM practice p JOIN users u ON u.id=p.student_id JOIN classes k ON k.id=u.class_id WHERE k.owner_id=? AND p.questions LIKE ?", (owner, pat)).fetchall():
+        qs, hit = json.loads(p["questions"]), False
+        for q in qs:
+            if q.get("id") == qid and _set_key(q, snap, new):
+                hit = True
+        if not hit:
+            continue
+        out["practice"] += 1
+        if p["submitted_at"]:
+            answers = json.loads(p["answers"] or "[]")
+            sc, mx, details = grading.grade_points(qs, answers, reveal=True) if p["scheme"] == 1 else grading.grade(qs, answers, reveal=True)
+            if abs(sc - (p["score"] or 0)) > 1e-9:
+                out["practice_changed"] += 1
+            con.execute("UPDATE practice SET questions=?, score=?, max_score=?, details=? WHERE id=?",
+                        (json.dumps(qs, ensure_ascii=False), sc, mx, json.dumps(details, ensure_ascii=False), p["id"]))
+        else:
+            con.execute("UPDATE practice SET questions=? WHERE id=?", (json.dumps(qs, ensure_ascii=False), p["id"]))
+    return out
+
+
+def _same_answer(snap_a, a, snap_b, b) -> bool:
+    """Hai đáp án (của hai báo cáo cùng một câu) có phải là một không; trắc nghiệm so theo nội dung phương án vì thứ tự A-D có thể bị đảo."""
+    if isinstance(snap_a.get("sts"), list):
+        return a == b
+    if snap_a.get("t") == "short":
+        return isinstance(a, str) and isinstance(b, str) and grading.same_short(a, b)
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return False
+    if a.get("text") and b.get("text"):
+        return a["text"] == b["text"]
+    return (snap_a.get("opts") or []) == (snap_b.get("opts") or []) and a.get("idx") == b.get("idx")
+
+
+@route("POST", r"/api/reports/(\d+)/resolve", TEACHER_ROLES)
+def r_report_resolve(c):
+    """Duyệt (đồng ý sửa đáp án) hoặc từ chối một báo cáo. Duyệt: đáp án được sửa ở ngân hàng + các đề đã giao + bài tự luyện, bài đã nộp được chấm lại."""
+    r = c.con.execute("SELECT * FROM answer_reports WHERE id=?", (int(c.p[0]),)).fetchone()
+    if not r or (c.user["role"] != "admin" and r["owner_id"] != c.user["id"]):
+        raise ApiError(404, "Không tìm thấy báo cáo")
+    if r["status"] != "pending":
+        raise ApiError(409, "Báo cáo này đã được xử lý")
+    b = c.body
+    note = str(b.get("note") or "").strip()[:500]
+    now = db.now()
+    if b.get("approve") is not True:
+        c.con.execute("UPDATE answer_reports SET status='rejected', resolved_by=?, resolved_at=?, resolution=? WHERE id=?", (c.user["id"], now, note or "Đáp án hiện tại là đúng", r["id"]))
+        audit(c.con, c.user["id"], "report_reject", f"#{r['id']} · {r['qid']}")
+        return {"ok": True, "status": "rejected"}
+    snap = json.loads(r["snapshot"])
+    given = b.get("answer") if b.get("answer") not in (None, "") else (json.loads(r["proposed"]) if r["proposed"] is not None else None)
+    if given is None:
+        raise ApiError(400, "Hãy chọn đáp án đúng để cập nhật")
+    new = _clean_answer(snap, given, "Đáp án mới")
+    if not r["qid"]:
+        raise ApiError(400, "Câu này không có mã trong ngân hàng nên không tự sửa được")
+    fx = apply_answer_fix(c.con, r["owner_id"], r["qid"], snap, new)
+    c.con.execute("UPDATE answer_reports SET status='approved', resolved_by=?, resolved_at=?, resolution=?, new_ans=?, affected=? WHERE id=?",
+                  (c.user["id"], now, note or "Đã sửa đáp án", json.dumps(new, ensure_ascii=False), json.dumps(fx), r["id"]))
+    # báo cáo khác của cùng câu có cùng đề xuất với đáp án vừa duyệt → coi như đã giải quyết
+    for o in c.con.execute("SELECT id, snapshot, proposed FROM answer_reports WHERE status='pending' AND owner_id=? AND qid=? AND id<>?", (r["owner_id"], r["qid"], r["id"])).fetchall():
+        if o["proposed"] is not None and _same_answer(snap, new, json.loads(o["snapshot"]), json.loads(o["proposed"])):
+            c.con.execute("UPDATE answer_reports SET status='approved', resolved_by=?, resolved_at=?, resolution=?, new_ans=?, affected='{}' WHERE id=?",
+                          (c.user["id"], now, f"Đã sửa đáp án theo báo cáo #{r['id']}", json.dumps(new, ensure_ascii=False), o["id"]))
+    audit(c.con, c.user["id"], "report_approve", f"#{r['id']} · {r['qid']} · chấm lại {fx['submissions']} bài ({fx['changed']} đổi điểm)")
+    return {"ok": True, "status": "approved", "affected": fx}
+
+
 # ---------- học sinh tự luyện tập ----------
 # Giáo viên "mở" các chuyên đề trong ngân hàng của mình cho từng lớp; học sinh của lớp đó tự tạo đề từ các chuyên đề đã mở,
 # làm bài và được chấm ngay (kèm đáp án, lời giải). Câu hỏi được bốc ngẫu nhiên ở máy chủ, học sinh không nhận đáp án trước khi nộp.

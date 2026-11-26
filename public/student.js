@@ -29,19 +29,73 @@ async function draw() {
   $$('[data-rv]').forEach(b => b.onclick = () => review(A.find(x => x.id === +b.closest('[data-a]').dataset.a)).catch(e => toast(e.message)));
 }
 
+/* ---------- Báo đáp án sai: học sinh chọn đáp án mình cho là đúng, ghi lý do, đính kèm ảnh → giáo viên duyệt ---------- */
+const shrinkImage = file => new Promise((ok, no) => {   // thu nhỏ ảnh chụp (cạnh dài tối đa 1600px, JPEG) cho nhẹ trước khi gửi
+  const fr = new FileReader();
+  fr.onerror = () => no(new Error('Không đọc được ảnh'));
+  fr.onload = () => { const im = new Image(); im.onerror = () => no(new Error('Tệp không phải ảnh hợp lệ')); im.onload = () => {
+    const k = Math.min(1, 1600 / Math.max(im.width, im.height)), cv = document.createElement('canvas'); cv.width = Math.round(im.width * k); cv.height = Math.round(im.height * k);
+    const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height); g.drawImage(im, 0, 0, cv.width, cv.height); ok(cv.toDataURL('image/jpeg', 0.85)); }; im.src = fr.result; };
+  fr.readAsDataURL(file);
+});
+function reportDialog({source, source_id, qi, q, d, onDone}) {
+  const tf = LBX.isTfg(q), isImg = !!q.img, files = [];
+  const given = d.given, mine = tf ? (Array.isArray(given) ? given.map(v => v === 0 ? 'Đúng' : v === 1 ? 'Sai' : '—').join(' · ') : '—') : q.opts ? (Number.isInteger(given) ? 'ABCD'[given] : '—') : (given == null || given === '' ? '—' : esc(given));
+  const key = d.key, cur = tf ? (Array.isArray(key) ? key.map(v => v === 0 ? 'Đúng' : 'Sai').join(' · ') : '') : q.opts ? (Number.isInteger(key) ? 'ABCD'[key] : '') : esc(key == null ? '' : key);
+  const pick = tf ? `<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center">${q.sts.map((s, k) => `<b>${'abcd'[k]})</b><select data-tf="${k}" style="padding:6px;border:1px solid var(--line);border-radius:8px"><option value="">— chưa chọn —</option><option value="0">Đúng</option><option value="1">Sai</option></select>`).join('')}</div>`
+    : q.opts ? `<div style="display:flex;flex-direction:column;gap:6px">${q.opts.map((o, j) => `<label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer"><input type="radio" name="rp-opt" value="${j}" style="margin-top:3px"><span><b>${'ABCD'[j]}.</b> ${isImg ? '' : esc(o)}</span></label>`).join('')}</div>`
+    : '<input id="rp-short" maxlength="60" placeholder="Đáp án bạn cho là đúng" style="padding:8px;border:1px solid var(--line);border-radius:8px;width:100%">';
+  const m = modal(`<h2>🚩 Báo đáp án sai · Câu ${qi + 1}</h2>
+    <div style="max-height:30vh;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:8px;font-size:13px">${LBX.qBody(q)}</div>
+    <div style="font-size:12px;color:#475467;margin-bottom:10px">Bạn chọn: <b>${mine}</b>${cur ? ` · Đáp án hiện tại của hệ thống: <b>${cur}</b>` : ''}</div>
+    <b style="font-size:13px">Đáp án bạn cho là đúng</b> <small style="color:#667085">(không biết thì bỏ trống, chỉ ghi lý do / gửi ảnh)</small>
+    <div style="margin:6px 0 10px">${pick}</div>
+    <label class="lb-field"><span>LÝ DO / GIẢI THÍCH (tối đa 1000 ký tự)</span><textarea id="rp-note" maxlength="1000" rows="3" style="width:100%;padding:8px;border:1px solid var(--line);border-radius:8px" placeholder="Ví dụ: Theo bài giải trong sách giáo khoa trang 45 thì đáp án là B…"></textarea></label>
+    <div style="margin:8px 0"><b style="font-size:13px">📎 Ảnh đính kèm</b> <small style="color:#667085">(tối đa 3 ảnh: chụp lời giải, sách, đề gốc…)</small>
+      <div><input type="file" id="rp-f" accept="image/png,image/jpeg,image/*" multiple style="font-size:12px;margin-top:4px"></div><div id="rp-th" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"></div></div>
+    <div class="lb-row"><button class="btn btn-blue" id="rp-go">Gửi báo cáo</button><button class="btn btn-outline" id="rp-x">Hủy</button></div>`, true);
+  const th = $('#rp-th', m.b), draw = () => { th.innerHTML = files.map((f, i) => `<span style="position:relative"><img src="${f}" style="height:64px;border-radius:6px;border:1px solid var(--line)"><button data-rm="${i}" title="Bỏ ảnh" style="position:absolute;top:-6px;right:-6px;border:0;border-radius:50%;background:#dc2626;color:#fff;width:18px;height:18px;cursor:pointer;line-height:18px;padding:0">×</button></span>`).join(''); $$('[data-rm]', th).forEach(b => b.onclick = () => { files.splice(+b.dataset.rm, 1); draw(); }); };
+  $('#rp-f', m.b).onchange = async e => {
+    for (const f of [...e.target.files]) { if (files.length >= 3) { toast('Chỉ đính kèm tối đa 3 ảnh'); break; } try { files.push(await shrinkImage(f)); } catch (er) { toast(er.message); } }
+    e.target.value = ''; draw();
+  };
+  $('#rp-x', m.b).onclick = m.close;
+  $('#rp-go', m.b).onclick = async () => {
+    let proposed = null;
+    if (tf) { const v = $$('[data-tf]', m.b).map(s => s.value); if (v.some(x => x !== '') && v.some(x => x === '')) return toast('Hãy chọn Đúng/Sai cho cả 4 ý, hoặc bỏ trống hết'); if (v.every(x => x !== '')) proposed = v.map(Number); }
+    else if (q.opts) { const r = $('input[name=rp-opt]:checked', m.b); if (r) proposed = +r.value; }
+    else { const t = $('#rp-short', m.b).value.trim(); if (t) proposed = t; }
+    const note = $('#rp-note', m.b).value.trim();
+    if (proposed === null && !note && !files.length) return toast('Hãy chọn đáp án bạn cho là đúng, ghi lý do hoặc đính kèm ảnh');
+    const btn = $('#rp-go', m.b); btn.disabled = true; btn.textContent = 'Đang gửi…';
+    try {
+      const ids = []; for (const f of files) ids.push((await api.post('/api/reports/image', {data: f})).id);
+      await api.post('/api/reports', {source, source_id, qi, proposed, note, images: ids});
+      m.close(); toast('Đã gửi báo cáo. Giáo viên sẽ kiểm tra và cập nhật đáp án nếu đúng.'); onDone && onDone();
+    } catch (e) { btn.disabled = false; btn.textContent = 'Gửi báo cáo'; toast(e.message); }
+  };
+}
+async function attachReports(box, {source, source_id, questions, details, redraw}) {
+  $$('[data-rep]', box).forEach(b => b.onclick = () => reportDialog({source, source_id, qi: +b.dataset.rep, q: questions[+b.dataset.rep], d: details[+b.dataset.rep] || {}, onDone: redraw}));
+}
+async function reportMap(source, source_id) {
+  try { const r = await api.get(`/api/reports/mine?source=${source}&source_id=${source_id}`); const map = {}; r.reports.forEach(x => { map[x.qi] = x; }); return {map}; } catch (e) { return {map: {}}; }
+}
+
 /* Xem lại bài đã nộp: bài làm của mình, đúng/sai từng câu, đáp án đúng và lời giải chi tiết (khi giáo viên cho xem) */
 async function review(a, subId) {
   const subs = (await api.get(`/api/assignments/${a.id}/my`)).submissions;
   if (!subs.length) return toast('Bạn chưa nộp bài này');
-  const id = subId || subs[0].id, r = await api.get(`/api/assignments/${a.id}/my/${id}`);
+  const id = subId || subs[0].id, r = await api.get(`/api/assignments/${a.id}/my/${id}`), rep = await reportMap('assignment', id);
   const m = modal(`<h2>📖 Xem lại · ${esc(r.title)} · ${esc(r.code)}</h2>
     ${subs.length > 1 ? `<div class="lb-tabs" style="margin-bottom:8px">${subs.slice().reverse().map(s => `<button data-sub="${s.id}" class="${s.id === id ? 'on' : ''}">Lần ${s.attempt} · ${fmtScore(s.score10)}</button>`).join('')}</div>` : ''}
     <div style="display:flex;gap:14px;align-items:baseline;flex-wrap:wrap;margin:4px 0 10px"><div class="res-big" style="font-size:34px">${r.score10 == null ? '—' : fmtScore(r.score10)}<small style="font-size:14px;color:#667085"> / 10</small></div>
       <div style="font-size:12px;color:#475467">Lần làm thứ ${r.attempt} · nộp lúc ${fmtDate(r.submitted_at)} · đúng ${fmtScore(r.score)}/${r.max} câu chấm tự động${r.late ? ' · <b style="color:#b91c1c">nộp trễ</b>' : ''}</div></div>
     ${r.reveal ? '<div class="lb-note">Câu <b style="color:#166534">viền xanh</b> là làm đúng, <b style="color:#b91c1c">viền đỏ</b> là làm sai. Đọc kỹ đáp án đúng và <b>📘 lời giải chi tiết</b> để biết mình sai ở đâu.</div>'
       : `<div class="lb-note" style="background:#fff7ed;border-color:#fed7aa;color:#9a3412">${esc(r.reveal_note || 'Giáo viên chưa cho xem đáp án.')} Hiện bạn xem được bài làm của mình và câu nào đúng/sai.</div>`}
-    <div>${LBX.reviewHTML(r.questions, r.details)}</div>`, true);
+    <div>${LBX.reviewHTML(r.questions, r.details, undefined, r.reveal ? rep : undefined)}</div>`, true);
   $$('[data-sub]', m.b).forEach(b => b.onclick = () => review(a, +b.dataset.sub).catch(e => toast(e.message)));
+  if (r.reveal) attachReports(m.b, {source: 'assignment', source_id: id, questions: r.questions, details: r.details, redraw: () => { m.close(); review(a, id).catch(e => toast(e.message)); }});
 }
 
 async function start(a) {
@@ -145,8 +199,9 @@ async function drawPractice() {
   };
   $$('[data-v]', host).forEach(b => b.onclick = async () => {
     try {
-      const r = await api.get('/api/practice/' + b.closest('tr').dataset.s);
-      modal(`<h2>${esc(r.title)}</h2><p style="font-size:13px">${r.points ? `Điểm: <b>${fmtScore(r.score)}</b>/${fmtScore(r.max)} (thang 10: ${fmtScore(r.score10)})` : `Điểm: <b>${fmtScore(r.score10)}</b>/10 · đúng ${fmtScore(r.score)}/${r.max} câu`} · thời gian ${mmss(r.spent_sec || 0)}${r.duration_min ? ` / ${r.duration_min} phút` : ''}</p><div style="max-height:60vh;overflow:auto">${LBX.reviewHTML(r.questions, r.details)}</div>`, true);
+      const pid = +b.closest('tr').dataset.s, r = await api.get('/api/practice/' + pid), rep = await reportMap('practice', pid);
+      const m = modal(`<h2>${esc(r.title)}</h2><p style="font-size:13px">${r.points ? `Điểm: <b>${fmtScore(r.score)}</b>/${fmtScore(r.max)} (thang 10: ${fmtScore(r.score10)})` : `Điểm: <b>${fmtScore(r.score10)}</b>/10 · đúng ${fmtScore(r.score)}/${r.max} câu`} · thời gian ${mmss(r.spent_sec || 0)}${r.duration_min ? ` / ${r.duration_min} phút` : ''}</p><div style="max-height:60vh;overflow:auto">${LBX.reviewHTML(r.questions, r.details, undefined, rep)}</div>`, true);
+      attachReports(m.b, {source: 'practice', source_id: pid, questions: r.questions, details: r.details, redraw: () => { m.close(); b.click(); }});
     } catch (e) { toast(e.message); }
   });
 }
