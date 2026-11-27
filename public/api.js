@@ -136,3 +136,13 @@ LB.ready = (async () => {
   return me;
 })();
 })();
+
+/* Phóng to ảnh câu hỏi trên màn hình (học sinh đọc cho rõ): bề rộng gốc x QZOOM, không vượt khung chứa. Không ảnh hưởng bản in. */
+(function () {
+  const QZOOM = 1.6;
+  document.addEventListener('load', e => {
+    const im = e.target;
+    if (!im || im.tagName !== 'IMG' || !im.classList.contains('q-img') || im.classList.contains('sol-img') || !im.naturalWidth) return;
+    im.style.setProperty('--w', Math.round(im.naturalWidth * QZOOM) + 'px');
+  }, true);
+})();

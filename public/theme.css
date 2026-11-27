@@ -118,3 +118,6 @@ h1,h2,h3,.logo,.section-title,.right-title{font-family:Montserrat,Inter,Arial,sa
 /* ===== Màn hình nhỏ ===== */
 @media(max-width:1100px){.feed-page{grid-template-columns:minmax(0,1fr)}.feed-sidebar,.feed-rightbar{position:static}.hdr-search{max-width:none}}
 @media(max-width:760px){.header{flex-wrap:wrap;height:auto;padding:8px 12px}.nav{order:3;width:100%;overflow-x:auto}.hdr-search{order:2;flex-basis:100%;margin-left:0}:root{--gut:12px}}
+
+/* Ảnh câu hỏi cắt từ PDF thường nhỏ: trên màn hình phóng to 1,6 lần (tối đa bằng bề rộng khung); khi in giữ nguyên */
+@media screen{.q-img:not(.sol-img)[style*="--w"]{width:var(--w)!important}}
