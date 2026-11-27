@@ -2455,11 +2455,71 @@ def r_attendance_stats(c):
 
 
 # ---------- bảng tin ----------
+POST_VIS = ("Công khai", "Người theo dõi", "Riêng tư")
+
+
 def post_visible_sql(u):
-    return "(p.visibility='Công khai' OR p.author_id=:uid OR (p.visibility='Người theo dõi' AND EXISTS(SELECT 1 FROM follows f WHERE f.user_id=:uid AND f.target_id=p.author_id)))"
+    """Điều kiện SQL: người dùng xem được bài. Dùng kèm post_vis_args(u).
+    Công khai: ai cũng xem · Người theo dõi: người đang theo dõi tác giả · Riêng tư: chỉ người được chia sẻ (cả lớp hoặc từng người);
+    tác giả luôn xem được bài của mình; quản trị xem được tất cả; giáo viên xem được bài chia sẻ cho lớp mình quản lý; phụ huynh xem được bài chia sẻ cho con hoặc lớp của con."""
+    return ("(p.visibility='Công khai' OR p.author_id=:uid OR :adm=1"
+            " OR (p.visibility='Người theo dõi' AND EXISTS(SELECT 1 FROM follows f WHERE f.user_id=:uid AND f.target_id=p.author_id))"
+            " OR (p.visibility='Riêng tư' AND EXISTS(SELECT 1 FROM post_shares s WHERE s.post_id=p.id AND ("
+            "(s.kind='user' AND (s.target_id=:uid OR s.target_id IN (SELECT student_id FROM parent_links WHERE parent_id=:uid)))"
+            " OR (s.kind='class' AND (s.target_id=(SELECT class_id FROM users WHERE id=:uid)"
+            " OR s.target_id IN (SELECT id FROM classes WHERE owner_id=:uid)"
+            " OR s.target_id IN (SELECT k.class_id FROM users k JOIN parent_links l ON l.student_id=k.id WHERE l.parent_id=:uid)))))))")
 
 
-def post_dict(con, r, uid):
+def post_vis_args(u):
+    return {"uid": u["id"], "adm": 1 if u["role"] == "admin" else 0}
+
+
+def share_targets(con, user):
+    """Lớp và người mà người dùng được phép chia sẻ bài riêng tư tới: giáo viên → lớp của mình, học sinh trong lớp, phụ huynh của các em và các giáo viên khác; quản trị → tất cả."""
+    cls = [dict(r) for r in visible_classes(con, user)]
+    ids = [k["id"] for k in cls]
+    q = ",".join("?" * len(ids)) or "NULL"
+    studs = [dict(r) for r in con.execute(f"SELECT id, name, class_id FROM users WHERE role='student' AND active=1 AND class_id IN ({q}) ORDER BY name", ids).fetchall()]
+    sids = [s["id"] for s in studs]
+    q2 = ",".join("?" * len(sids)) or "NULL"
+    pars = [dict(r) for r in con.execute(f"SELECT DISTINCT u.id, u.name FROM users u JOIN parent_links l ON l.parent_id=u.id WHERE u.active=1 AND l.student_id IN ({q2}) ORDER BY u.name", sids).fetchall()]
+    teachers = [dict(r) for r in con.execute("SELECT id, name FROM users WHERE role IN ('teacher','admin') AND active=1 AND id<>? ORDER BY name", (user["id"],)).fetchall()]
+    cname = {k["id"]: k["name"] for k in cls}
+    return {"classes": [{"id": k["id"], "name": k["name"], "students": sum(1 for s in studs if s["class_id"] == k["id"])} for k in cls],
+            "students": [{"id": s["id"], "name": s["name"], "class_name": cname.get(s["class_id"], "")} for s in studs],
+            "parents": pars, "teachers": teachers}
+
+
+def clean_shares(con, user, b):
+    """Danh sách chia sẻ (lớp, người) hợp lệ từ yêu cầu; chỉ nhận lớp / người nằm trong phạm vi được phép."""
+    t = share_targets(con, user)
+    ok_c, ok_u = {k["id"] for k in t["classes"]}, {x["id"] for g in ("students", "parents", "teachers") for x in t[g]}
+    out = []
+    for key, kind, ok in (("share_classes", "class", ok_c), ("share_users", "user", ok_u)):
+        v = b.get(key) or []
+        if not isinstance(v, list) or len(v) > 300:
+            raise ApiError(400, "Danh sách chia sẻ không hợp lệ")
+        for i in dict.fromkeys(v):
+            if isinstance(i, bool) or not isinstance(i, int) or i not in ok:
+                raise ApiError(400, "Có lớp hoặc người không nằm trong phạm vi bạn được chia sẻ")
+            out.append((kind, i))
+    return out
+
+
+def set_shares(con, pid, shares):
+    con.execute("DELETE FROM post_shares WHERE post_id=?", (pid,))
+    for kind, i in shares:
+        con.execute("INSERT OR IGNORE INTO post_shares(post_id, kind, target_id) VALUES(?,?,?)", (pid, kind, i))
+
+
+def post_shares_dict(con, pid):
+    cl = [dict(r) for r in con.execute("SELECT k.id, k.name FROM post_shares s JOIN classes k ON k.id=s.target_id WHERE s.post_id=? AND s.kind='class' ORDER BY k.name", (pid,)).fetchall()]
+    us = [dict(r) for r in con.execute("SELECT u.id, u.name, u.role FROM post_shares s JOIN users u ON u.id=s.target_id WHERE s.post_id=? AND s.kind='user' ORDER BY u.name", (pid,)).fetchall()]
+    return {"classes": cl, "users": us}
+
+
+def post_dict(con, r, uid, role=None):
     file = con.execute("SELECT id,name,size FROM files WHERE id=?", (r["file_id"],)).fetchone() if r["file_id"] else None
     return {"id": r["id"], "kind": r["kind"], "title": r["title"], "text": r["text"], "tags": json.loads(r["tags"] or "[]"),
             "visibility": r["visibility"], "created_at": r["created_at"],
@@ -2469,7 +2529,9 @@ def post_dict(con, r, uid):
             "saved": bool(con.execute("SELECT 1 FROM post_saves WHERE post_id=? AND user_id=?", (r["id"], uid)).fetchone()),
             "comments": con.execute("SELECT COUNT(*) n FROM comments WHERE post_id=?", (r["id"],)).fetchone()["n"],
             "followed": bool(con.execute("SELECT 1 FROM follows WHERE user_id=? AND target_id=?", (uid, r["author_id"])).fetchone()),
-            "file": dict(file) if file else None}
+            "file": dict(file) if file else None,
+            "can_edit": r["author_id"] == uid or role == "admin",
+            "shares": post_shares_dict(con, r["id"]) if r["visibility"] == "Riêng tư" and (r["author_id"] == uid or role == "admin") else None}
 
 
 @route("GET", "/api/posts", "any")
@@ -2477,7 +2539,7 @@ def r_posts(c):
     u, q = c.user, c.query
     mode = q.get("mode", "foryou")
     sql = ("SELECT p.*, a.name aname, a.role arole FROM posts p JOIN users a ON a.id=p.author_id WHERE " + post_visible_sql(u))
-    args = {"uid": u["id"]}
+    args = post_vis_args(u)
     if mode == "following":
         sql += " AND (p.author_id=:uid OR EXISTS(SELECT 1 FROM follows f WHERE f.user_id=:uid AND f.target_id=p.author_id))"
     elif mode == "saved":
@@ -2494,7 +2556,7 @@ def r_posts(c):
         sql += " AND p.kind=:kind"
         args["kind"] = q["kind"]
     sql += " ORDER BY p.id DESC LIMIT 60"
-    return {"posts": [post_dict(c.con, r, u["id"]) for r in c.con.execute(sql, args).fetchall()]}
+    return {"posts": [post_dict(c.con, r, u["id"], u["role"]) for r in c.con.execute(sql, args).fetchall()]}
 
 
 def save_file(con, owner, f):
@@ -2528,11 +2590,49 @@ def r_post_new(c):
         raise ApiError(403, "Tài khoản của bạn chỉ đăng được Bài viết hoặc Project học tập")
     text = need_str(b, "text", 5000)
     tags = [str(t).strip()[:30] for t in (b.get("tags") or []) if str(t).strip()][:5]
-    vis = b.get("visibility") if b.get("visibility") in ("Công khai", "Người theo dõi") else "Công khai"
+    vis = b.get("visibility") if b.get("visibility") in POST_VIS else "Công khai"
+    shares = []
+    if vis == "Riêng tư":
+        if u["role"] not in TEACHER_ROLES:
+            raise ApiError(403, "Chỉ giáo viên mới đăng được bài riêng tư")
+        shares = clean_shares(c.con, u, b)
+        if not shares:
+            raise ApiError(400, "Bài riêng tư cần chia sẻ cho ít nhất một lớp hoặc một người")
     fid = save_file(c.con, u["id"], b.get("file")) if b.get("file") else None
     cur = c.con.execute("INSERT INTO posts(author_id,kind,title,text,tags,visibility,file_id,created_at) VALUES(?,?,?,?,?,?,?,?)",
                         (u["id"], kind, need_str(b, "title", 120, False), text, json.dumps(tags, ensure_ascii=False), vis, fid, db.now()))
+    set_shares(c.con, cur.lastrowid, shares)
     return {"id": cur.lastrowid}
+
+
+@route("GET", "/api/share-targets", TEACHER_ROLES)
+def r_share_targets(c):
+    return share_targets(c.con, c.user)
+
+
+@route("PATCH", r"/api/posts/(\d+)", "any")
+def r_post_edit(c):
+    """Đổi quyền xem của bài: công khai / riêng tư (chia sẻ cho lớp hoặc người cụ thể). Chỉ tác giả hoặc quản trị."""
+    p = c.con.execute("SELECT * FROM posts WHERE id=?", (int(c.p[0]),)).fetchone()
+    if not p or (p["author_id"] != c.user["id"] and c.user["role"] != "admin"):
+        raise ApiError(404, "Không tìm thấy bài đăng")
+    b = c.body
+    vis = b.get("visibility")
+    if vis not in POST_VIS:
+        raise ApiError(400, "Quyền xem không hợp lệ")
+    if vis == "Riêng tư":
+        author = c.con.execute("SELECT * FROM users WHERE id=?", (p["author_id"],)).fetchone()
+        if author["role"] not in TEACHER_ROLES:
+            raise ApiError(403, "Chỉ giáo viên mới có bài riêng tư")
+        shares = clean_shares(c.con, c.user if c.user["id"] == p["author_id"] else author, b)
+        if not shares:
+            raise ApiError(400, "Bài riêng tư cần chia sẻ cho ít nhất một lớp hoặc một người")
+    else:
+        shares = []
+    c.con.execute("UPDATE posts SET visibility=? WHERE id=?", (vis, p["id"]))
+    set_shares(c.con, p["id"], shares)
+    audit(c.con, c.user["id"], "post_visibility", f"#{p['id']} → {vis}" + (f" ({len(shares)} nơi)" if shares else ""))
+    return {"ok": True}
 
 
 @route("DELETE", r"/api/posts/(\d+)", "any")
@@ -2548,15 +2648,22 @@ def r_post_del(c):
             except OSError:
                 pass
         c.con.execute("DELETE FROM files WHERE id=?", (p["file_id"],))
-    for t in ("post_likes", "post_saves", "comments"):
+    for t in ("post_likes", "post_saves", "comments", "post_shares"):
         c.con.execute(f"DELETE FROM {t} WHERE post_id=?", (p["id"],))
     c.con.execute("DELETE FROM posts WHERE id=?", (p["id"],))
     return {"ok": True}
 
 
-def toggle(c, table, pid):
-    if not c.con.execute("SELECT 1 FROM posts WHERE id=?", (pid,)).fetchone():
+def visible_post(c, pid):
+    """Bài đăng mà người dùng xem được (công khai, của mình, hoặc được chia sẻ); không thì 404 như thể bài không tồn tại."""
+    r = c.con.execute("SELECT p.* FROM posts p WHERE p.id=:pid AND " + post_visible_sql(c.user), {"pid": pid, **post_vis_args(c.user)}).fetchone()
+    if not r:
         raise ApiError(404, "Không tìm thấy bài đăng")
+    return r
+
+
+def toggle(c, table, pid):
+    visible_post(c, pid)
     cur = c.con.execute(f"DELETE FROM {table} WHERE post_id=? AND user_id=?", (pid, c.user["id"]))
     on = cur.rowcount == 0
     if on:
@@ -2577,6 +2684,7 @@ def r_save(c):
 
 @route("GET", r"/api/posts/(\d+)/comments", "any")
 def r_comments(c):
+    visible_post(c, int(c.p[0]))
     rows = c.con.execute("SELECT m.*, u.name uname, u.role urole FROM comments m JOIN users u ON u.id=m.user_id WHERE m.post_id=? ORDER BY m.id", (int(c.p[0]),)).fetchall()
     pa = c.con.execute("SELECT author_id FROM posts WHERE id=?", (int(c.p[0]),)).fetchone()
     own_post = bool(pa) and pa["author_id"] == c.user["id"]
@@ -2586,8 +2694,7 @@ def r_comments(c):
 
 @route("POST", r"/api/posts/(\d+)/comments", "any")
 def r_comment_new(c):
-    if not c.con.execute("SELECT 1 FROM posts WHERE id=?", (int(c.p[0]),)).fetchone():
-        raise ApiError(404, "Không tìm thấy bài đăng")
+    visible_post(c, int(c.p[0]))
     c.con.execute("INSERT INTO comments(post_id,user_id,text,created_at) VALUES(?,?,?,?)", (int(c.p[0]), c.user["id"], need_str(c.body, "text", 600), db.now()))
     return {"ok": True}
 
@@ -2619,7 +2726,7 @@ def r_file(c):
     if not f:
         raise ApiError(404, "Không có file")
     if f["owner_id"] != c.user["id"] and c.user["role"] != "admin":
-        ok = c.con.execute("SELECT 1 FROM posts p WHERE p.file_id=:fid AND " + post_visible_sql(c.user), {"fid": f["id"], "uid": c.user["id"]}).fetchone()
+        ok = c.con.execute("SELECT 1 FROM posts p WHERE p.file_id=:fid AND " + post_visible_sql(c.user), {"fid": f["id"], **post_vis_args(c.user)}).fetchone()
         if not ok:
             raise ApiError(404, "Không có file")
     p = os.path.join(db.UPLOAD_DIR, os.path.basename(f["path"]))

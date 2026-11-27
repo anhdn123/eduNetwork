@@ -1458,10 +1458,10 @@ function openSmartImport(onChange) {
       <label style="flex:1;font-size:11px;color:#475467">MÔN<select id="si-s" style="${sel}">${SUBJECTS.map(s => `<option ${s === sub ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label></div>
     <label style="display:block;margin-top:10px;font-size:11px;color:#475467">CHUYÊN ĐỀ<input id="si-tp" list="si-tpl" placeholder="Chọn gợi ý hoặc tự nhập — để trống thì hệ thống tự đoán theo nội dung câu" style="${sel}"><datalist id="si-tpl"></datalist></label>
     <label style="display:flex;gap:8px;align-items:center;font-size:12px;margin:12px 0 4px;cursor:pointer"><input type="checkbox" id="si-exam"> <b>📑 Đây là các đề thi</b> <span style="color:#667085">(mỗi file là một đề — lưu riêng từng đề để giao nguyên đề; câu vẫn được xếp vào chuyên đề)</span></label>
-    <div id="si-exbox" hidden style="border:1px solid #bfdbfe;background:#f8fbff;border-radius:10px;padding:10px;margin-bottom:6px">
+    <div id="si-exbox" hidden style="border:1px solid #c9cdf5;background:#f7f8ff;border-radius:10px;padding:10px;margin-bottom:6px">
       <label style="display:block;font-size:11px;color:#475467">NHÓM ĐỀ (chọn hoặc tự nhập)<input id="si-cat" list="si-catl" placeholder="VD: Đề giữa kì 1" style="${sel}"><datalist id="si-catl">${['Đề giữa kì 1', 'Đề cuối kì 1', 'Đề giữa kì 2', 'Đề cuối kì 2', 'Đề kiểm tra 15 phút', 'Đề kiểm tra 1 tiết', 'Đề thi vào 10', 'Đề ôn tập'].map(x => `<option value="${x}">`).join('')}</datalist></label>
       <div style="font-size:11px;color:#475467;margin:8px 0 4px">Số và tên từng đề (số đề dùng khi nhập đáp án dạng <b>De1.I.01.A</b>):</div><div id="si-exrows" style="font-size:12px;color:#94a3b8">Chọn file ở bên dưới để đặt tên từng đề.</div></div>
-    <div id="si-drop" style="margin-top:12px;border:2px dashed #93c5fd;border-radius:12px;padding:22px;text-align:center;background:#f8fbff;cursor:pointer"><div style="font-size:30px">📄</div><b style="font-size:13px">Bấm để chọn file hoặc kéo thả vào đây</b><div style="font-size:11px;color:#667085;margin-top:4px">PDF, ảnh (PNG/JPG) hoặc TXT · chọn được nhiều file</div><div id="si-names" style="font-size:12px;color:#1e40af;margin-top:8px"></div></div>
+    <div id="si-drop" style="margin-top:12px;border:2px dashed #a5aaf0;border-radius:12px;padding:22px;text-align:center;background:#f7f8ff;cursor:pointer"><div style="font-size:30px">📄</div><b style="font-size:13px">Bấm để chọn file hoặc kéo thả vào đây</b><div style="font-size:11px;color:#667085;margin-top:4px">PDF, ảnh (PNG/JPG) hoặc TXT · chọn được nhiều file</div><div id="si-names" style="font-size:12px;color:#2a2b86;margin-top:8px"></div></div>
     <input type="file" id="si-f" accept=".pdf,.txt,.png,.jpg,.jpeg,application/pdf,text/plain,image/png,image/jpeg" multiple hidden>
     <p style="font-size:11px;color:#667085;margin:8px 0">Đáp án và <b>lời giải chi tiết từng câu</b> có thể nằm ngay sau mỗi câu (“Lời giải: …”), ở <b>cuối file đề</b> (“HƯỚNG DẪN GIẢI · Câu 1. Chọn A. …”), hoặc trong <b>file lời giải riêng</b> tải lên cùng lúc (đặt tên có chữ “đáp án” hoặc “lời giải”).</p>
     <label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;margin:6px 0;padding:8px 10px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:8px"><input type="checkbox" id="si-sol" style="margin-top:2px"> <span><b>📘 File đề có kèm lời giải</b> (đề ở các trang đầu, lời giải ở các trang sau)<br><small style="color:#475467">Tick nếu trong file, phần lời giải bắt đầu lại bằng chữ “PHẦN I” lần thứ hai, mỗi câu có dòng “Lời giải” và đáp án ngay sau đó (Chọn A / a) Đúng / Đáp án: …). Hệ thống đọc đáp án và cắt ảnh lời giải của từng câu gắn vào đúng câu trong đề. Không tick vẫn tự nhận ra khi file có dấu hiệu rõ.</small></span></label>
@@ -1481,8 +1481,8 @@ function openSmartImport(onChange) {
   $('#si-exam', m.b).onchange = drawEx;
   const drop = $('#si-drop', m.b), inp = $('#si-f', m.b);
   drop.onclick = () => inp.click(); inp.onchange = () => set(inp.files);
-  drop.ondragover = e => { e.preventDefault(); drop.style.background = '#e0f2fe'; }; drop.ondragleave = () => { drop.style.background = '#f8fbff'; };
-  drop.ondrop = e => { e.preventDefault(); drop.style.background = '#f8fbff'; set(e.dataTransfer.files); };
+  drop.ondragover = e => { e.preventDefault(); drop.style.background = '#e0f2fe'; }; drop.ondragleave = () => { drop.style.background = '#f7f8ff'; };
+  drop.ondrop = e => { e.preventDefault(); drop.style.background = '#f7f8ff'; set(e.dataTransfer.files); };
   const fillTp = () => { $('#si-tpl', m.b).innerHTML = topicsFor($('#si-s', m.b).value, $('#si-g', m.b).value).map(t => `<option value="${esc(t)}">`).join(''); };
   $('#si-s', m.b).onchange = fillTp; $('#si-g', m.b).onchange = fillTp; fillTp();
   $('#si-go', m.b).onclick = () => { const labels = {subject: $('#si-s', m.b).value, grade: $('#si-g', m.b).value, topic: $('#si-tp', m.b).value.trim()}, wi = $('#si-img', m.b).checked;
@@ -1545,13 +1545,13 @@ async function openCropTool(file, defaults, onChange) {
   $('#cp-t', b).onchange = ansUI; ansUI();
   const drawPieces = () => {
     $('#cp-n', b).textContent = pieces.length;
-    $('#cp-pieces', b).innerHTML = pieces.length ? pieces.map((p, i) => `<span style="font-size:11px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:2px 8px">Tr.${p.page} <a href="#" data-x="${i}" style="color:#b91c1c;text-decoration:none" title="Bỏ vùng này">✕</a></span>`).join('') : '<span style="font-size:11px;color:#98a2b3">Chưa chọn vùng nào — hãy kéo chuột trên trang.</span>';
+    $('#cp-pieces', b).innerHTML = pieces.length ? pieces.map((p, i) => `<span style="font-size:11px;background:#eef0ff;border:1px solid #c9cdf5;border-radius:12px;padding:2px 8px">Tr.${p.page} <a href="#" data-x="${i}" style="color:#b91c1c;text-decoration:none" title="Bỏ vùng này">✕</a></span>`).join('') : '<span style="font-size:11px;color:#98a2b3">Chưa chọn vùng nào — hãy kéo chuột trên trang.</span>';
     $$('[data-x]', b).forEach(a => a.onclick = e => { e.preventDefault(); pieces.splice(+a.dataset.x, 1); drawPieces(); drawBoxes(); });
   };
   const drawBoxes = () => {
     $$('.cp-sel', box).forEach(x => x.remove());
     pieces.forEach((p, i) => { if (p.page !== page) return; const d = document.createElement('div'); d.className = 'cp-sel';
-      d.style.cssText = `position:absolute;left:${p.fx * 100}%;top:${p.fy * 100}%;width:${p.fw * 100}%;height:${p.fh * 100}%;border:2px solid #2563eb;background:rgba(37,99,235,.12);pointer-events:none;line-height:1;font:700 11px sans-serif;color:#1d4ed8`;
+      d.style.cssText = `position:absolute;left:${p.fx * 100}%;top:${p.fy * 100}%;width:${p.fw * 100}%;height:${p.fh * 100}%;border:2px solid #2a2b86;background:rgba(37,99,235,.12);pointer-events:none;line-height:1;font:700 11px sans-serif;color:#2a2b86`;
       d.textContent = ' ' + (i + 1); box.append(d); });
   };
   const show = async n => {
@@ -1827,7 +1827,7 @@ function openBankManager(onChange, opts) {
     const aiN = all.filter(q => q.aiAns).length, noans = all.filter(q => !hasAns(q)).length, off = st.p * PER, nSel = all.filter(q => sel.has(q.id)).length;
     const rows = L.slice(off, off + PER).map((q, ri) => {
       const on = sel.has(q.id);
-      return `<div class="bk-row" data-id="${esc(q.id)}" style="border:1px solid ${on ? '#60a5fa' : hasAns(q) ? '#e2e8f0' : '#fca5a5'};border-radius:8px;padding:8px;margin-bottom:6px;background:${on ? '#eff6ff' : hasAns(q) ? '#fff' : '#fff7f7'}">
+      return `<div class="bk-row" data-id="${esc(q.id)}" style="border:1px solid ${on ? '#60a5fa' : hasAns(q) ? '#e2e8f0' : '#fca5a5'};border-radius:8px;padding:8px;margin-bottom:6px;background:${on ? '#eef0ff' : hasAns(q) ? '#fff' : '#fff7f7'}">
         <label style="display:flex;gap:6px;align-items:center;font-size:11px;margin-bottom:4px;cursor:pointer"><input type="checkbox" data-sel="${esc(q.id)}" ${on ? 'checked' : ''}> <b>#${off + ri + 1}</b> <span style="color:#667085">${TYL[q.t]}${q.lv ? ' · ' + (LVL.find(x => x[0] === q.lv) || [0, ''])[1] : ''}</span></label>
         ${imgq(q) ? `<img src="${imgSrc(q.img)}" style="max-width:100%;display:block;border:1px solid #e2e8f0;border-radius:4px"><div style="font-size:9px;color:#98a2b3;margin-top:2px">🖼 Ảnh cắt từ PDF — phương án A/B/C/D nằm trong ảnh</div>` : `<div data-f="stem" contenteditable="true" title="Bấm vào để sửa nội dung" style="font-size:11px;line-height:1.5;outline:none;border-bottom:1px dashed #e2e8f0">${q.q}</div>
         ${isTfg(q) ? `<div style="font-size:11px;margin:3px 0">${q.sts.map((s, i) => `<div><b>${'abcd'[i]})</b> <span data-f="st" data-k="${i}" contenteditable="true" style="outline:none;border-bottom:1px dashed #e2e8f0">${esc(s)}</span></div>`).join('')}</div>` : ''}
@@ -1859,11 +1859,11 @@ function openBankManager(onChange, opts) {
       + (groups.has('none') ? `<option value="none" ${st.b === 'none' ? 'selected' : ''}>Câu cũ / thêm tay (${groups.get('none').n})</option>` : '');
     const scoped = st.b !== 'all';
     b.innerHTML = `<div id="bk-head" style="position:sticky;top:0;z-index:3;background:#fff;padding:6px 0 8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-bottom:1px solid #e2e8f0"></div>
-      ${st.ids ? `<div class="lb-note" style="margin:8px 0 0;background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a">📚 Đang xem <b>${esc(st.title)}</b> (${all.filter(q => st.ids.has(q.id)).length} câu). Bấm vào từng câu để xem chi tiết, sửa đáp án, dạng câu, chuyên đề, lời giải rồi bấm <b>Lưu thay đổi</b>. <a href="#" data-bk="show-all">Xem toàn bộ ngân hàng</a></div>` : ''}
-      ${st.x !== 'all' ? `<div class="lb-note" style="margin:8px 0 0;background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a">📑 Đang xem <b>${esc(((all.find(q => q.examId === st.x) || {}).examCat || 'Đề thi') + ' · ' + ((all.find(q => q.examId === st.x) || {}).examName || ''))}</b> (${all.filter(q => q.examId === st.x).length} câu, đúng thứ tự trong đề). Bấm vào từng câu để xem chi tiết, sửa đáp án, dạng câu, lời giải rồi bấm <b>Lưu thay đổi</b>. <a href="#" data-bk="show-all">Xem toàn bộ ngân hàng</a></div>` : ''}
+      ${st.ids ? `<div class="lb-note" style="margin:8px 0 0;background:#eef0ff;border-color:#c9cdf5;color:#2a2b86">📚 Đang xem <b>${esc(st.title)}</b> (${all.filter(q => st.ids.has(q.id)).length} câu). Bấm vào từng câu để xem chi tiết, sửa đáp án, dạng câu, chuyên đề, lời giải rồi bấm <b>Lưu thay đổi</b>. <a href="#" data-bk="show-all">Xem toàn bộ ngân hàng</a></div>` : ''}
+      ${st.x !== 'all' ? `<div class="lb-note" style="margin:8px 0 0;background:#eef0ff;border-color:#c9cdf5;color:#2a2b86">📑 Đang xem <b>${esc(((all.find(q => q.examId === st.x) || {}).examCat || 'Đề thi') + ' · ' + ((all.find(q => q.examId === st.x) || {}).examName || ''))}</b> (${all.filter(q => q.examId === st.x).length} câu, đúng thứ tự trong đề). Bấm vào từng câu để xem chi tiết, sửa đáp án, dạng câu, lời giải rồi bấm <b>Lưu thay đổi</b>. <a href="#" data-bk="show-all">Xem toàn bộ ngân hàng</a></div>` : ''}
       ${scoped ? `<div class="lb-note" style="margin:8px 0 0">📌 Đang chỉ hiện <b>${L.length}</b> câu của một lần import để bạn xử lý riêng — các câu import trước đó đã được lưu trong ngân hàng và đang được ẩn. <a href="#" data-bk="show-all">Xem toàn bộ ngân hàng (${all.length} câu)</a></div>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
-        <select id="bk-b" title="Lọc theo lần import / file nguồn" style="padding:6px;border:1px solid #93c5fd;border-radius:6px;font-size:11px;max-width:260px;background:#eff6ff"><option value="all" ${st.b === 'all' ? 'selected' : ''}>Nguồn: tất cả (${all.length})</option>${srcOpts}</select>
+        <select id="bk-b" title="Lọc theo lần import / file nguồn" style="padding:6px;border:1px solid #a5aaf0;border-radius:6px;font-size:11px;max-width:260px;background:#eef0ff"><option value="all" ${st.b === 'all' ? 'selected' : ''}>Nguồn: tất cả (${all.length})</option>${srcOpts}</select>
         ${scoped ? `<button class="btn btn-outline" data-bk="del-batch" style="font-size:10px;padding:5px 10px;color:#b91c1c;border-color:#fca5a5" title="Xóa mọi câu thuộc lần import / file đang chọn ở ô Nguồn">🗑 Xóa cả file import này (${all.filter(q => st.b === 'none' ? !q.batch : q.batch === st.b).length} câu)</button>` : ''}
         <select id="bk-f" style="padding:6px;border:1px solid #cbd5e1;border-radius:6px;font-size:11px">
           <option value="all" ${st.f === 'all' ? 'selected' : ''}>Tất cả (${all.length})</option>
@@ -1885,8 +1885,8 @@ function openBankManager(onChange, opts) {
         <button class="btn btn-outline" data-bk="del-noans" style="font-size:10px;padding:5px 10px">Xóa câu chưa có đáp án</button>
         <button class="btn btn-outline" data-bk="del-all" style="font-size:10px;padding:5px 10px;color:#b91c1c">Xóa toàn bộ</button>
       </div>
-      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:8px;margin-bottom:8px">
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11px;margin-bottom:6px"><b style="color:#1e40af">☑ Chọn nhiều câu:</b>
+      <div style="background:#eef0ff;border:1px solid #c9cdf5;border-radius:8px;padding:8px;margin-bottom:8px">
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11px;margin-bottom:6px"><b style="color:#2a2b86">☑ Chọn nhiều câu:</b>
           <button class="btn btn-outline" data-bk="sel-all" style="font-size:10px;padding:4px 9px">Tất cả ${L.length} câu đang lọc</button>
           <button class="btn btn-outline" data-bk="sel-page" style="font-size:10px;padding:4px 9px">Chỉ trang này</button>
           <button class="btn btn-outline" data-bk="sel-none" style="font-size:10px;padding:4px 9px">Bỏ chọn</button>
@@ -2557,7 +2557,7 @@ function initBuilder() {
   const drawLvGrid = () => {
     const g = $('#lv-grid'); if (!g) return;
     g.innerHTML = `<table class="tbl" style="font-size:11px;width:auto"><tr><th>Dạng câu</th>${LV4.map(([, n]) => `<th>${n}</th>`).join('')}</tr>
-      ${MTYPES.map(t => `<tr><td><b>${TYN[t]}</b></td>${LV4.map(([lv], j) => `<td><input type="number" min="0" max="50" value="${LV_DEF[t][j]}" data-lm="${t}:${lv}" style="width:52px;padding:5px;border:1px solid var(--line);border-radius:6px"><div data-lav="${t}:${lv}" style="font-size:9px;color:#1e40af;margin-top:2px"></div></td>`).join('')}</tr>`).join('')}</table>
+      ${MTYPES.map(t => `<tr><td><b>${TYN[t]}</b></td>${LV4.map(([lv], j) => `<td><input type="number" min="0" max="50" value="${LV_DEF[t][j]}" data-lm="${t}:${lv}" style="width:52px;padding:5px;border:1px solid var(--line);border-radius:6px"><div data-lav="${t}:${lv}" style="font-size:9px;color:#2a2b86;margin-top:2px"></div></td>`).join('')}</tr>`).join('')}</table>
       <div class="muted" style="font-size:10px;margin-top:4px">Số câu mỗi dạng sẽ bằng tổng các mức. Câu chưa gắn mức độ được tính là “Thông hiểu” — vào “Quản lý & sửa đáp án” để gắn mức cho câu hỏi.</div>`;
     $$('[data-lm]', g).forEach(i => i.oninput = renderBank);
   };
@@ -2580,7 +2580,7 @@ function initBuilder() {
     [...selTopics].forEach(t => { if (!tc.has(t)) selTopics.delete(t); });
     const tp = $('#topic-picks');
     if (tp) {
-      tp.innerHTML = use && tc.size ? `<div style="font-size:10px;font-weight:700;color:#334155;margin:2px 0 6px">Chọn chuyên đề lấy câu hỏi (tick nhiều chuyên đề; bỏ trống = lấy tất cả):</div><div style="display:flex;flex-wrap:wrap;gap:6px">${[...tc].sort((a, b) => a[0].localeCompare(b[0], 'vi')).map(([t, n]) => `<label style="display:flex;gap:5px;align-items:center;font-size:11px;background:#fff;border:1px solid ${selTopics.has(t) ? '#2563eb' : '#cbd5e1'};padding:4px 10px;border-radius:14px;cursor:pointer"><input type="checkbox" data-tp="${esc(t)}" ${selTopics.has(t) ? 'checked' : ''}> ${esc(t || '(Chưa gắn chuyên đề)')} <b style="color:#2563eb">${n}</b> <button type="button" data-tpview="${esc(t)}" title="Xem chi tiết từng câu của chuyên đề này và sửa đáp án, dạng câu, lời giải" style="border:1px solid #93c5fd;background:#eff6ff;color:#1d4ed8;border-radius:10px;padding:1px 8px;font-size:10px;cursor:pointer">✏️ Xem / sửa</button></label>`).join('')}</div>` : '';
+      tp.innerHTML = use && tc.size ? `<div style="font-size:10px;font-weight:700;color:#334155;margin:2px 0 6px">Chọn chuyên đề lấy câu hỏi (tick nhiều chuyên đề; bỏ trống = lấy tất cả):</div><div style="display:flex;flex-wrap:wrap;gap:6px">${[...tc].sort((a, b) => a[0].localeCompare(b[0], 'vi')).map(([t, n]) => `<label style="display:flex;gap:5px;align-items:center;font-size:11px;background:#fff;border:1px solid ${selTopics.has(t) ? '#2a2b86' : '#cbd5e1'};padding:4px 10px;border-radius:14px;cursor:pointer"><input type="checkbox" data-tp="${esc(t)}" ${selTopics.has(t) ? 'checked' : ''}> ${esc(t || '(Chưa gắn chuyên đề)')} <b style="color:#2a2b86">${n}</b> <button type="button" data-tpview="${esc(t)}" title="Xem chi tiết từng câu của chuyên đề này và sửa đáp án, dạng câu, lời giải" style="border:1px solid #a5aaf0;background:#eef0ff;color:#2a2b86;border-radius:10px;padding:1px 8px;font-size:10px;cursor:pointer">✏️ Xem / sửa</button></label>`).join('')}</div>` : '';
       $$('[data-tpview]', tp).forEach(btn => btn.onclick = e => {   // xem / sửa chi tiết các câu của chuyên đề (theo Môn + Khối đang chọn) ngay trong màn quản lý ngân hàng
         e.preventDefault(); e.stopPropagation();
         const t = btn.dataset.tpview, ids = bankPool({...cfg(), bankTopics: []}).filter(q => (q.topic || '') === t).map(q => q.id);
@@ -2595,7 +2595,7 @@ function initBuilder() {
     const xp = $('#exam-picks');
     if (xp) {
       const cats = new Map(); ex.forEach(e => (cats.get(e.cat) || cats.set(e.cat, []).get(e.cat)).push(e));
-      xp.innerHTML = ex.size ? `<div style="font-size:10px;font-weight:700;color:#334155;margin:2px 0 6px">📑 Đề thi đã import — tick để lấy <u>nguyên đề</u> (mỗi đề tạo thành một mã đề, bỏ qua số câu ở trên):</div>${[...cats].sort((a, b) => a[0].localeCompare(b[0], 'vi')).map(([cat, es]) => `<div style="margin-bottom:6px"><div style="font-size:11px;font-weight:700;color:#1e3a8a;margin-bottom:3px">${esc(cat)}</div><div style="display:flex;flex-wrap:wrap;gap:6px">${es.sort((a, b) => a.no - b.no).map(e => `<label style="display:flex;gap:5px;align-items:center;font-size:11px;background:#fff;border:1px solid ${selExams.has(e.id) ? '#2563eb' : '#cbd5e1'};padding:4px 10px;border-radius:14px;cursor:pointer"><input type="checkbox" data-ex="${esc(e.id)}" ${selExams.has(e.id) ? 'checked' : ''}> ${esc(e.name)} <b style="color:#2563eb">${e.n} câu</b>${e.miss ? `<span style="color:#b91c1c" title="Số câu chưa có đáp án">· ${e.miss} thiếu ĐA</span>` : ''} <button type="button" data-exview="${esc(e.id)}" title="Xem chi tiết từng câu của đề này và sửa đáp án, dạng câu, lời giải" style="border:1px solid #93c5fd;background:#eff6ff;color:#1d4ed8;border-radius:10px;padding:1px 8px;font-size:10px;cursor:pointer">✏️ Xem / sửa</button></label>`).join('')}</div></div>`).join('')}` : '';
+      xp.innerHTML = ex.size ? `<div style="font-size:10px;font-weight:700;color:#334155;margin:2px 0 6px">📑 Đề thi đã import — tick để lấy <u>nguyên đề</u> (mỗi đề tạo thành một mã đề, bỏ qua số câu ở trên):</div>${[...cats].sort((a, b) => a[0].localeCompare(b[0], 'vi')).map(([cat, es]) => `<div style="margin-bottom:6px"><div style="font-size:11px;font-weight:700;color:#2a2b86;margin-bottom:3px">${esc(cat)}</div><div style="display:flex;flex-wrap:wrap;gap:6px">${es.sort((a, b) => a.no - b.no).map(e => `<label style="display:flex;gap:5px;align-items:center;font-size:11px;background:#fff;border:1px solid ${selExams.has(e.id) ? '#2a2b86' : '#cbd5e1'};padding:4px 10px;border-radius:14px;cursor:pointer"><input type="checkbox" data-ex="${esc(e.id)}" ${selExams.has(e.id) ? 'checked' : ''}> ${esc(e.name)} <b style="color:#2a2b86">${e.n} câu</b>${e.miss ? `<span style="color:#b91c1c" title="Số câu chưa có đáp án">· ${e.miss} thiếu ĐA</span>` : ''} <button type="button" data-exview="${esc(e.id)}" title="Xem chi tiết từng câu của đề này và sửa đáp án, dạng câu, lời giải" style="border:1px solid #a5aaf0;background:#eef0ff;color:#2a2b86;border-radius:10px;padding:1px 8px;font-size:10px;cursor:pointer">✏️ Xem / sửa</button></label>`).join('')}</div></div>`).join('')}` : '';
       $$('[data-exview]', xp).forEach(btn => btn.onclick = e => { e.preventDefault(); e.stopPropagation(); openBankManager(renderBank, {exam: btn.dataset.exview}); });   // xem / sửa chi tiết ngay trong màn quản lý ngân hàng
       $$('[data-ex]', xp).forEach(cb => cb.onchange = () => { if (cb.checked) selExams.add(cb.dataset.ex); else selExams.delete(cb.dataset.ex); renderBank(); });
     }
@@ -2707,8 +2707,8 @@ function initBuilder() {
           <button class="btn btn-outline" id="on">💻 Làm thử online (${esc(curExam.code)})</button>
         </div>
 
-        <div class="dist-matrix-box lb-sticky-foot" style="text-align:center;background:#f8fbff">
-          <b style="font-size:12px;color:#1e3a8a">${c.kindKey === 'personal' ? '🎯 Giao bài cá nhân hóa cho lớp' : '🎯 Giao đề này cho lớp học'}</b>
+        <div class="dist-matrix-box lb-sticky-foot" style="text-align:center;background:#f7f8ff">
+          <b style="font-size:12px;color:#2a2b86">${c.kindKey === 'personal' ? '🎯 Giao bài cá nhân hóa cho lớp' : '🎯 Giao đề này cho lớp học'}</b>
           <p style="font-size:11px;color:#64748b;margin:4px 0 10px">${c.kindKey === 'personal' ? 'Mỗi học sinh sẽ nhận đúng một trong ' + variations.length + ' mức, hệ thống tự xếp theo điểm trung bình của em. Bạn xem lại câu hỏi từng mức ở các thẻ phía trên trước khi giao.' : 'Học sinh đăng nhập bằng tài khoản được cấp để làm online (có đồng hồ, tự chấm điểm). Bạn vẫn có thể in đề cho học sinh làm trên giấy.'}</p>
           <button class="btn btn-blue" id="btn-confirm-distribute">📤 Giao bài cho lớp…</button>
           ${c.kindKey === 'topic' ? '<button class="btn btn-outline" id="btn-open-practice" style="margin-left:6px">🎯 Mở luyện tập tự do cho lớp…</button>' : ''}
@@ -2980,11 +2980,11 @@ async function openAssign(title, variations, c) {
     const pool = bankPool(c), have = (t, lv) => pool.filter(q => q.t === t && lvOf(q) === lv).length;
     const mins = Math.max(0, ...lvRoster.map(s => { const e = lvEff(s); return e ? MTYPES.reduce((n, t) => n + MIN_PER[t] * LV4.reduce((x, [lv]) => x + (+e[t][lv] || 0), 0), 0) : 0; }));
     lvBox.innerHTML = `<div class="dist-matrix-box" style="margin:0 0 10px">
-      <div style="font-size:12px;font-weight:700;color:#1e3a8a;margin-bottom:4px">1. Mặc định cho cả lớp (số câu mỗi em)</div>
+      <div style="font-size:12px;font-weight:700;color:#2a2b86;margin-bottom:4px">1. Mặc định cho cả lớp (số câu mỗi em)</div>
       <div id="lv-def">${lvGrid('ld', (t, lv) => lvDef[t][lv])}</div>
-      <div style="font-size:10px;color:#1e40af;margin:4px 0">Ngân hàng đang có (đúng môn/khối/chuyên đề đã chọn): ${LV4.map(([lv, n]) => `${n} <b>${MTYPES.reduce((x, t) => x + have(t, lv), 0)}</b>`).join(' · ')}</div>
+      <div style="font-size:10px;color:#2a2b86;margin:4px 0">Ngân hàng đang có (đúng môn/khối/chuyên đề đã chọn): ${LV4.map(([lv, n]) => `${n} <b>${MTYPES.reduce((x, t) => x + have(t, lv), 0)}</b>`).join(' · ')}</div>
       <div style="margin-bottom:8px"><button type="button" class="btn btn-outline sm" id="lv-reset">↺ Cho mọi học sinh dùng mặc định lớp</button></div>
-      <div style="font-size:12px;font-weight:700;color:#1e3a8a;margin-bottom:4px">2. Chỉnh riêng từng học sinh <span style="font-weight:400;color:#475467">(bấm tên để sửa; để tất cả = 0 thì không giao cho em đó)</span></div>
+      <div style="font-size:12px;font-weight:700;color:#2a2b86;margin-bottom:4px">2. Chỉnh riêng từng học sinh <span style="font-weight:400;color:#475467">(bấm tên để sửa; để tất cả = 0 thì không giao cho em đó)</span></div>
       <div style="max-height:260px;overflow:auto">${lvRoster.map(s => { const e = lvEff(s); return `<details data-sid="${s.id}" ${lvOpen.has(s.id) ? 'open' : ''} style="border:1px solid #e2e8f0;border-radius:8px;padding:6px 8px;margin-bottom:4px;background:${lvStu[s.id] ? '#fffbeb' : '#fff'}"><summary style="cursor:pointer;font-size:12px"><b>${esc(s.name)}</b> — <span data-sum>${matTotal(e)} câu · ${esc(matSummary(e))}</span> <span data-tag></span></summary>
         <div data-grid="${s.id}" style="margin-top:6px">${lvGrid('ls', (t, lv) => e[t][lv])}</div>
         <button type="button" class="btn btn-outline sm" data-back="${s.id}" style="margin-top:4px" ${lvStu[s.id] ? '' : 'hidden'}>↺ Dùng mặc định lớp</button></details>`; }).join('')}</div>
@@ -3103,7 +3103,7 @@ function balancedPick(n, roster, pick, only) {
 }
 function varPickerHTML(vs, roster, pick, ns, lock) {
   const opt = (v, cur, label) => `<option value="${v}" ${String(cur) === String(v) ? 'selected' : ''}>${label}</option>`;
-  return `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;font-size:11px"><b style="color:#1e3a8a">Chia nhanh:</b>
+  return `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;font-size:11px"><b style="color:#2a2b86">Chia nhanh:</b>
       <button type="button" class="btn btn-outline sm" data-${ns}="rand">🎲 Ngẫu nhiên đều</button>
       <button type="button" class="btn btn-outline sm" data-${ns}="alt">↹ Xen kẽ theo danh sách</button>
       ${vs.map((v, i) => `<button type="button" class="btn btn-outline sm" data-${ns}="all" data-v="${i}">Cả lớp ${esc(v.code)}</button>`).join('')}
@@ -3244,7 +3244,24 @@ function runExam(data, o) {
   }
 }
 
-function printPage(html) {
+/* Đầu trang / cuối trang của đề in: đầu = mã QR vào hệ thống + địa chỉ web; cuối = dòng “Made by …”. */
+const PRINT_FOOT = 'Made by Nguyệt Anh : 0966092547';
+const IS_LOCAL = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/i.test(location.hostname);
+let PRINT_URL = null;   // chạy trên máy cá nhân: địa chỉ mạng nội bộ của máy chủ (lấy từ /api/server-info) để học sinh quét QR vào được
+if (IS_LOCAL && window.LB && LB.api) LB.api.get('/api/server-info').then(r => { if (r && r.urls && r.urls[0]) PRINT_URL = r.urls[0]; }).catch(() => { /* chưa đăng nhập: bỏ qua */ });
+const printUrl = () => PRINT_URL || (IS_LOCAL ? '' : location.origin + '/login.html');
+function printHeadHTML() {
+  const u = printUrl(), qr = u && window.QR ? QR.svg(u, {px: 64}) : '';
+  return `<div class="print-run-head">${qr}<div><b>Learning by AI</b> — làm bài online và xem điểm tại:<br><span class="print-run-url">${u ? esc(u.replace(/^https?:\/\//, '')) : '(địa chỉ do giáo viên cung cấp)'}</span>${qr ? '<br><small>Quét mã QR bằng camera điện thoại để vào hệ thống</small>' : ''}</div></div>`;
+}
+const printFootHTML = () => `<div class="print-run-foot">${esc(PRINT_FOOT)}</div>`;
+// run = true: đầu/cuối trang lặp lại trên MỌI trang in (bảng có thead/tfoot: trình duyệt tự lặp lại và chừa chỗ cho chúng ở từng trang);
+// run = false (in kèm phiếu trả lời chấm ảnh, cần giữ nguyên lề phiếu): đầu ở đầu mỗi đề, cuối ở cuối mỗi đề
+const printWrap = (inner, run) => run
+  ? `<div class="print-exam"><table class="print-run-table"><thead><tr><td>${printHeadHTML()}</td></tr></thead><tfoot><tr><td>${printFootHTML()}</td></tr></tfoot><tbody><tr><td>${inner}</td></tr></tbody></table></div>`
+  : `<div class="print-exam">${printHeadHTML().replace('print-run-head', 'print-flow-head')}${inner}${printFootHTML().replace('print-run-foot', 'print-flow-foot')}</div>`;
+
+function printPage(html, run) {
   let p = $('#lb-print');
   if (!p) { p = document.createElement('div'); p.id = 'lb-print'; document.body.append(p); }
   p.innerHTML = html;
@@ -3256,14 +3273,16 @@ function printPage(html) {
   imgs.forEach(i => { i.onload = i.onerror = done; });
   setTimeout(go, 6000);
 }
-function printExam(title, qs, ans) { printPage(examPrintHTML(title, qs, ans)); }
+function printExam(title, qs, ans) { printPage(printWrap(examPrintHTML(title, qs, ans), true), true); }
 /* In nhiều mã đề một lúc; mỗi mã đề kết thúc bằng PHIẾU TRẢ LỜI (có 4 mốc góc để chấm bằng ảnh) */
 function printExams(items, o) {
   o = o || {};
+  const run = !(o.sheet && !o.ans);   // có phiếu trả lời chấm ảnh thì giữ nguyên lề của phiếu (đầu/cuối chỉ in ở mỗi đề)
   printPage(items.map(it => {
-    const t = `${it.title} — ${it.code}`;
-    return `<div class="print-exam">${examPrintHTML(t, it.questions, !!o.ans)}${o.sheet && !o.ans ? `<div class="print-sheet">${OMR.sheetSVG(OMR.layout(it.questions), {title: t, code: it.code})}</div>` : ''}</div>`;
-  }).join(''));
+    const t = `${it.title} — ${it.code}`, sheet = o.sheet && !o.ans ? `<div class="print-sheet">${OMR.sheetSVG(OMR.layout(it.questions), {title: t, code: it.code})}</div>` : '';
+    return run ? printWrap(examPrintHTML(t, it.questions, !!o.ans) + sheet, true)
+      : `<div class="print-exam">${printHeadHTML().replace('print-run-head', 'print-flow-head')}${examPrintHTML(t, it.questions, !!o.ans)}${printFootHTML().replace('print-run-foot', 'print-flow-foot')}${sheet}</div>`;   // phiếu trả lời nằm cùng khối nhưng sang trang riêng (không có đầu/cuối, giữ nguyên lề phiếu)
+  }).join(''), run);
 }
 
 /* ---------- Chấm bài bằng ảnh phiếu trả lời ---------- */

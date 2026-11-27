@@ -265,3 +265,15 @@ dùng bucket riêng tư, giữ khóa bí mật, và xem lại yêu cầu pháp l
    - Bài làm bị gắn cờ "⚠ Quá nhanh" (nền cam) khi trung bình dưới 15 giây mỗi câu (đổi bằng biến LBAI_FAST_SEC_PER_Q), hoặc chưa bằng 35% thời gian trung vị của lớp.
      Có ô "Chỉ hiện bài làm quá nhanh" để lọc. Xem bài làm của học sinh cũng hiện thời gian và cờ. Tệp CSV có thêm thời gian làm (giây), giây mỗi câu, cờ quá nhanh.
    - Lưu ý: thời gian tính cả lúc học sinh mở bài mà để đó (bài không giới hạn thời gian có thể thành hàng giờ); cờ chỉ là gợi ý để giáo viên xem lại, không tự trừ điểm.
+
+23. ĐỀ IN CÓ ĐẦU TRANG VÀ CUỐI TRANG
+   - Đầu trang: mã QR vào hệ thống (địa chỉ đăng nhập) và địa chỉ web. Cuối trang: dòng "Made by Nguyệt Anh : 0966092547". Áp dụng cho mọi bản in đề / đáp án từ AI Copilot và từ tab "Bài đã giao".
+   - In thường: đầu và cuối lặp lại ở MỌI trang. In kèm phiếu trả lời chấm ảnh: đầu ở đầu mỗi đề, cuối ở cuối mỗi đề, còn trang phiếu giữ nguyên để chấm ảnh không lệch.
+   - Địa chỉ trong QR lấy theo địa chỉ đang mở trang (vd. https://learning-by-ai.fly.dev). Chạy trên máy cá nhân thì dùng địa chỉ mạng nội bộ của máy chủ; nếu không có thì chỉ in dòng chữ không có QR.
+   - Muốn đổi dòng "Made by …": sửa hằng PRINT_FOOT trong public/app.js.
+
+24. GIAO DIỆN MỚI VÀ BÀI ĐĂNG CÔNG KHAI / RIÊNG TƯ
+   - Giao diện mọi màn hình theo bộ nhận diện (#2a2b86 / #fcaf16, Montserrat + Inter), lề trái phải hẹp; lớp phủ nằm ở public/theme.css (nạp sau style.css, app.css). Đầu trang có ô tìm kiếm chung và chuông thông báo.
+   - Bảng tin 3 cột: bên trái hồ sơ + liên kết, giữa bài đăng (Nổi bật / Mới nhất), bên phải giáo viên nổi bật. Học sinh và phụ huynh xem được bảng tin.
+   - Giáo viên khi đăng chọn "Công khai (publish)" hoặc "Riêng tư". Riêng tư thì chọn cả lớp hoặc từng người (học sinh, phụ huynh, giáo viên khác). Bài đã đăng đổi quyền xem bằng nút "Quyền xem".
+   - Người không được chia sẻ không thấy bài, không thích / lưu / bình luận và không tải được tệp đính kèm (trả về như bài không tồn tại). Quản trị xem được tất cả.

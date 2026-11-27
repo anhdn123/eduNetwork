@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Learning by AI · Bảng tin</title>
-<link rel="stylesheet" href="style.css"><link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="style.css"><link rel="stylesheet" href="app.css"><link rel="stylesheet" href="theme.css">
 </head>
 <body data-roles="admin,teacher,student,parent">
-<div class="topbar"><span>LEARNING BY AI · EDUCATION SOCIAL NETWORK</span><span>Kết nối · Chia sẻ · Cá nhân hóa · Đồng hành</span></div>
+<div class="topbar"></div>
 <header class="header"><a class="logo" href="index.html">Learning <span>by AI</span></a><nav class="nav"></nav><div class="header-actions"></div></header>
 
 <main class="feed-page">
   <aside class="feed-sidebar">
-    <div class="sidebar-profile"><div class="avatar avatar-lg" id="sp-av"></div><div><b id="sp-name"></b><span id="sp-role"></span></div></div>
+    <div class="sidebar-profile"><div class="avatar avatar-lg" id="sp-av"></div><div><b id="sp-name"></b><span id="sp-role" class="role-pill"></span></div></div>
     <div class="side-section">
       <div class="side-title">BẢNG TIN</div>
       <a class="side-link active" href="#" data-mode="foryou"><span>⌂</span>Dành cho bạn</a>
@@ -21,21 +21,22 @@
       <a class="side-link" href="#" data-mode="mine"><span>✎</span>Bài của tôi</a>
     </div>
     <div class="side-section" id="side-todo"></div>
-    <div class="sidebar-note"><b>Quyền riêng tư</b><p>Dữ liệu học sinh (điểm số, bài làm) không bao giờ xuất hiện trên bảng tin; chỉ giáo viên của lớp và phụ huynh của em đó xem được.</p></div>
   </aside>
 
   <section class="feed-main">
-    <div class="feed-heading"><div><div class="eyebrow feed-eyebrow">EDUCATION SOCIAL NETWORK</div><h1>Bảng tin</h1><p id="feed-sub">Tin mới nhất phù hợp với bạn</p></div></div>
-    <div class="searchbar" style="margin-bottom:12px"><input id="q" placeholder="Tìm bài viết, tài liệu, thẻ..." style="width:100%;padding:11px 14px;border:1px solid var(--line);border-radius:10px;font:inherit"></div>
+    <div class="feed-heading"><div><div class="eyebrow feed-eyebrow">MẠNG XÃ HỘI GIÁO DỤC</div><h1>Bảng tin</h1><p id="feed-sub">Tin mới nhất phù hợp với bạn</p></div>
+      <div class="seg" id="seg"><button class="on" data-seg="foryou">Nổi bật</button><button data-seg="latest">Mới nhất</button></div></div>
     <div class="composer card">
       <div class="composer-row"><div class="mini-avatar" id="cp-av"></div><button class="composer-input" id="cp-open">Bạn muốn chia sẻ điều gì về giáo dục?</button></div>
-      <div class="composer-actions"><button data-k="Bài viết">▧ <span>Bài viết</span></button><button data-k="Video bài giảng" class="t-only">▶ <span>Video bài giảng</span></button><button data-k="Tài liệu" class="t-only">▣ <span>Tài liệu</span></button><button data-k="Project học tập">✦ <span>Project học tập</span></button></div>
+      <div class="composer-actions"><button data-k="Bài viết"><i class="ci ci-post">≡</i> <span>Bài viết</span></button><button data-k="Video bài giảng" class="t-only"><i class="ci ci-video">▣</i> <span>Video bài giảng</span></button><button data-k="Tài liệu" class="t-only"><i class="ci ci-doc">▤</i> <span>Tài liệu</span></button><button data-k="Project học tập"><i class="ci ci-proj">◈</i> <span>Project học tập</span></button><button class="btn btn-blue composer-go" id="cp-go">Đăng bài</button></div>
     </div>
     <div id="feed"></div>
   </section>
 
-  <aside class="feed-rightbar">
-    <div class="right-card card"><div class="right-title">Giáo viên nổi bật</div><div id="sug"></div><a class="btn btn-outline" style="width:100%;margin-top:8px;text-align:center" href="teachers.html">Xem tất cả giáo viên</a></div>
+  <aside class="feed-rightbar" id="rightbar">
+    <div class="right-card card"><div class="right-title"><span>Giáo viên nổi bật</span><a href="teachers.html">Xem tất cả</a></div><div id="sug"></div><a class="btn btn-outline" id="invite" style="width:100%;margin-top:8px;text-align:center" href="manage.html#teachers">Mời giáo viên</a></div>
+    <div id="side-promo"></div>
+    <div class="privacy-card"><b>🛡 Quyền riêng tư</b><p>Dữ liệu học sinh (điểm số, bài làm) không bao giờ xuất hiện trên bảng tin; chỉ giáo viên của lớp và phụ huynh của em đó xem được.</p></div>
   </aside>
 </main>
 
@@ -44,25 +45,35 @@
 <script>
 (async () => {
   const {$, $$, esc, api} = LB;
-  await LB.ready; const me = LB.me;
+  await LB.ready; const me = LB.me, teacher = me.role === 'teacher' || me.role === 'admin';
   $('#sp-av').textContent = $('#cp-av').textContent = LB.initials(me.name);
   $('#sp-name').textContent = me.name; $('#sp-role').textContent = LB.ROLE_VN[me.role] + (me.class_name ? ' · Lớp ' + me.class_name : '');
   if (me.role === 'student' || me.role === 'parent') $$('.t-only').forEach(b => b.remove());
-  const todo = $('#side-todo');
-  if (me.role === 'student') api.get('/api/assignments').then(r => { const n = r.assignments.filter(a => !a.closed && a.attempts < a.max_attempts).length; todo.innerHTML = `<div class="side-title">VIỆC CẦN LÀM</div><a class="side-link" href="students.html"><span>📝</span>${n} bài cần làm</a><a class="side-link" href="students.html#practice"><span>🎯</span>Tự luyện tập</a>`; });
-  else if (me.role === 'teacher' || me.role === 'admin') todo.innerHTML = '<div class="side-title">QUẢN LÝ</div><a class="side-link" href="manage.html"><span>🏫</span>Lớp & học sinh</a><a class="side-link" href="manage.html#attend"><span>📋</span>Điểm danh hôm nay</a><a class="side-link" href="teacher-builder.html"><span>✦</span>Tạo đề (AI Copilot)</a><a class="side-link" href="manage.html#practice"><span>🎯</span>Mở luyện tập tự do</a>';
-  else todo.innerHTML = '<div class="side-title">CON CỦA TÔI</div><a class="side-link" href="parents.html"><span>👨‍👩‍👧</span>Xem kết quả của con</a>';
+  const todo = $('#side-todo'), promo = $('#side-promo');
+  if (me.role === 'student') {
+    api.get('/api/assignments').then(r => { const n = r.assignments.filter(a => !a.closed && a.attempts < a.max_attempts).length; todo.innerHTML = `<div class="side-title">VIỆC CẦN LÀM</div><a class="side-link" href="students.html"><span>📝</span>${n} bài cần làm</a><a class="side-link" href="students.html#practice"><span>🎯</span>Tự luyện tập</a><a class="side-link" href="students.html#points"><span>⭐</span>Điểm của tôi</a>`; });
+    promo.innerHTML = '<div class="promo-card"><div class="promo-tag">✦ LUYỆN TẬP</div><h3>Làm bài và tự luyện cùng hệ thống</h3><p>Xem bài giáo viên giao, tự tạo đề luyện tập và theo dõi điểm của bạn.</p><a class="btn promo-btn" href="students.html">Vào Bài của tôi →</a></div>';
+  } else if (teacher) {
+    todo.innerHTML = '<div class="side-title">QUẢN LÝ</div><a class="side-link" href="manage.html"><span>🏫</span>Lớp & học sinh</a><a class="side-link" href="manage.html#attend"><span>📋</span>Điểm danh hôm nay</a><a class="side-link" href="teacher-builder.html"><span>✦</span>Tạo đề<em class="ai-tag">AI</em></a><a class="side-link" href="manage.html#practice"><span>🎯</span>Mở luyện tập tự do</a><a class="side-link" href="manage.html#points"><span>🏅</span>Quản lý điểm</a><a class="side-link" href="manage.html#reports"><span>🚩</span>Báo đáp án sai</a>';
+    promo.innerHTML = '<div class="promo-card"><div class="promo-tag">✦ AI COPILOT</div><h3>Soạn đề kiểm tra cùng AI</h3><p>Chọn lớp, chủ đề và mức độ; AI Copilot gợi ý bộ câu hỏi để bạn chỉnh sửa và giao bài.</p><a class="btn promo-btn" href="teacher-builder.html">Tạo đề mới →</a></div>';
+  } else {
+    todo.innerHTML = '<div class="side-title">CON CỦA TÔI</div><a class="side-link" href="parents.html"><span>👨‍👩‍👧</span>Xem kết quả của con</a>';
+  }
+  if (me.role !== 'admin') $('#invite').remove();
 
-  const params = {mode: 'foryou', q: ''}; let reload;
-  const names = {foryou: 'Tin phù hợp với bạn', latest: 'Mới nhất', following: 'Từ những người bạn theo dõi', saved: 'Bài viết đã lưu', mine: 'Bài đăng của bạn'};
+  const params = {mode: 'foryou', q: new URLSearchParams(location.search).get('q') || ''}; let reload;
+  const names = {foryou: 'Tin mới nhất phù hợp với bạn', latest: 'Mới nhất', following: 'Từ những người bạn theo dõi', saved: 'Bài viết đã lưu', mine: 'Bài đăng của bạn'};
   reload = await LBFeed.mount($('#feed'), params);
-  $$('[data-mode]').forEach(a => a.onclick = e => { e.preventDefault(); params.mode = a.dataset.mode; $$('[data-mode]').forEach(x => x.classList.toggle('active', x === a)); $('#feed-sub').textContent = names[params.mode]; reload(); });
-  let t; $('#q').oninput = e => { clearTimeout(t); t = setTimeout(() => { params.q = e.target.value.trim(); reload(); }, 300); };
+  const setMode = mode => { params.mode = mode; $$('[data-mode]').forEach(x => x.classList.toggle('active', x.dataset.mode === mode)); $$('[data-seg]').forEach(x => x.classList.toggle('on', x.dataset.seg === mode)); $('#feed-sub').textContent = names[mode]; reload(); };
+  $$('[data-mode]').forEach(a => a.onclick = e => { e.preventDefault(); setMode(a.dataset.mode); });
+  $$('[data-seg]').forEach(b => b.onclick = () => setMode(b.dataset.seg));
+  window.addEventListener('lb-search', e => { params.q = (e.detail || '').trim(); reload(); });   // ô tìm kiếm ở đầu trang
   $('#cp-open').onclick = () => LBFeed.composer(me, reload);
-  $$('.composer-actions button').forEach(b => b.onclick = () => LBFeed.composer(me, reload));
+  $('#cp-go').onclick = () => LBFeed.composer(me, reload);
+  $$('.composer-actions button[data-k]').forEach(b => b.onclick = () => LBFeed.composer(me, reload));
 
   const dir = (await api.get('/api/directory/teachers')).teachers.filter(t => t.id !== me.id).slice(0, 4);
-  $('#sug').innerHTML = dir.length ? dir.map(t => `<div class="suggestion"><div class="mini-avatar teacher-av">${esc(LB.initials(t.name))}</div><div><b><a href="teachers.html?id=${t.id}" style="color:inherit;text-decoration:none">${esc(t.name)}</a></b><span>${esc(t.subject || 'Giáo viên')}</span></div><button data-f="${t.id}">${t.followed ? '✓' : '+ Theo dõi'}</button></div>`).join('') : '<div class="empty" style="padding:10px">Chưa có giáo viên nào.</div>';
+  $('#sug').innerHTML = dir.length ? dir.map(t => `<div class="suggestion"><div class="mini-avatar teacher-av">${esc(LB.initials(t.name))}</div><div><b><a href="teachers.html?id=${t.id}" style="color:inherit;text-decoration:none">${esc(t.name)}</a></b><span>${esc(t.subject || 'Giáo viên')}</span></div><button data-f="${t.id}">${t.followed ? '✓' : '+ Theo dõi'}</button></div>`).join('') : '<div class="sug-empty"><div class="sug-ic">👤</div><span>Chưa có giáo viên nào. Mời đồng nghiệp tham gia để cùng chia sẻ.</span></div>';
   $$('[data-f]').forEach(b => b.onclick = async () => { try { const r = await api.post('/api/follow/' + b.dataset.f); b.textContent = r.on ? '✓' : '+ Theo dõi'; reload(); } catch (e) { LB.toast(e.message); } });
 })();
 </script>

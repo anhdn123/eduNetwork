@@ -1525,6 +1525,89 @@ class ApiTest(unittest.TestCase):
         r2 = lan.get(f"/api/assignments/{a2}/results")[1]
         self.assertEqual((r2["median_sec"], r2["fast_n"]), (None, 0))
 
+    def test_zz_private_posts(self):
+        """Bảng tin: giáo viên chọn bài công khai hay riêng tư; riêng tư chia sẻ được cho lớp hoặc người cụ thể (học sinh, phụ huynh, giáo viên); người ngoài không xem, không thích, không bình luận được."""
+        lan, binh, adm = self.C(), self.C(), self.C()
+        lan.post("/api/login", {"username": "lan", "password": LAN_PW})
+        binh.post("/api/login", {"username": "binh", "password": self.__class__.binh_pw})
+        adm.post("/api/login", {"username": "admin", "password": ADMIN_PW})
+        c1 = lan.post("/api/classes", {"name": "RT1", "grade": "9"})[1]["id"]
+        c2 = lan.post("/api/classes", {"name": "RT2", "grade": "9"})[1]["id"]
+        a1 = lan.post("/api/students/bulk", {"class_id": c1, "rows": ["Học Một", "Học Hai"]})[1]["accounts"]
+        a2 = lan.post("/api/students/bulk", {"class_id": c2, "rows": ["Học Ba"]})[1]["accounts"]
+        par = lan.post("/api/parents", {"name": "Phụ huynh Một", "student_id": a1[0]["id"]})[1]["account"]
+        login = lambda acc: (lambda cl: (cl.post("/api/login", {"username": acc["username"], "password": acc["password"]}), cl)[1])(self.C())
+        s1, s2, s3, pr = login(a1[0]), login(a1[1]), login(a2[0]), login(par)
+        ids = lambda cl, q="": {x["id"] for x in cl.get("/api/posts?mode=latest" + q)[1]["posts"]}
+        everyone = (s1, s2, s3, pr, binh, adm, lan)
+        # công khai: ai cũng thấy
+        pub = lan.post("/api/posts", {"text": "Bài công khai", "visibility": "Công khai"})[1]["id"]
+        self.assertTrue(all(pub in ids(x) for x in everyone))
+        # riêng tư cho lớp RT1: học sinh lớp đó, phụ huynh của em đó, quản trị và tác giả thấy; lớp khác và giáo viên khác thì không
+        st, r = lan.post("/api/posts", {"text": "Chỉ lớp RT1", "visibility": "Riêng tư", "share_classes": [c1]})
+        self.assertEqual(st, 200, r)
+        p1 = r["id"]
+        self.assertEqual([p1 in ids(x) for x in (s1, s2, pr, adm, lan)], [True] * 5)
+        self.assertEqual([p1 in ids(x) for x in (s3, binh)], [False, False])
+        # riêng tư cho một người: chỉ người đó
+        p2 = lan.post("/api/posts", {"text": "Riêng cho Học Ba", "visibility": "Riêng tư", "share_users": [a2[0]["id"]]})[1]["id"]
+        self.assertEqual([p2 in ids(x) for x in (s3, lan, adm)], [True] * 3)
+        self.assertEqual([p2 in ids(x) for x in (s1, s2, pr, binh)], [False] * 4)
+        # giáo viên khác được chọn làm người nhận
+        p3 = binh.post("/api/posts", {"text": "Gửi cô Lan", "visibility": "Riêng tư", "share_users": [lan.get("/api/me")[1]["user"]["id"]]})[1]["id"]
+        self.assertEqual([p3 in ids(x) for x in (lan, binh)], [True, True])
+        self.assertFalse(p3 in ids(s1))
+        # kiểm tra dữ liệu: thiếu người nhận, ngoài phạm vi, học sinh không đăng riêng tư được
+        self.assertEqual(lan.post("/api/posts", {"text": "x", "visibility": "Riêng tư"})[0], 400)
+        self.assertEqual(binh.post("/api/posts", {"text": "x", "visibility": "Riêng tư", "share_classes": [c1]})[0], 400)              # lớp của giáo viên khác
+        self.assertEqual(binh.post("/api/posts", {"text": "x", "visibility": "Riêng tư", "share_users": [a1[0]["id"]]})[0], 400)         # học sinh không thuộc lớp của mình
+        self.assertEqual(lan.post("/api/posts", {"text": "x", "visibility": "Riêng tư", "share_classes": ["1"]})[0], 400)
+        self.assertEqual(s1.post("/api/posts", {"text": "x", "visibility": "Riêng tư", "share_users": [a1[1]["id"]]})[0], 403)
+        # người không được xem thì cũng không thích / lưu / bình luận / đọc bình luận được (như bài không tồn tại)
+        for cl in (s3, binh):
+            self.assertEqual(cl.post(f"/api/posts/{p1}/like")[0], 404)
+            self.assertEqual(cl.post(f"/api/posts/{p1}/save")[0], 404)
+            self.assertEqual(cl.get(f"/api/posts/{p1}/comments")[0], 404)
+            self.assertEqual(cl.post(f"/api/posts/{p1}/comments", {"text": "xin chào"})[0], 404)
+        self.assertEqual(s1.post(f"/api/posts/{p1}/comments", {"text": "Em đã xem"})[0], 200)
+        self.assertEqual(s1.post(f"/api/posts/{p1}/like")[0], 200)
+        # tệp đính kèm của bài riêng tư cũng được bảo vệ
+        import base64 as b64
+        pf = lan.post("/api/posts", {"text": "Có tệp", "visibility": "Riêng tư", "share_classes": [c1], "file": {"name": "tai-lieu.txt", "data": b64.b64encode(b"bi mat").decode()}})[1]["id"]
+        fid = lan.get("/api/posts?mode=mine")[1]["posts"][0]["file"]["id"]
+        self.assertEqual((s1.get(f"/api/files/{fid}", raw=True)[0], s3.get(f"/api/files/{fid}", raw=True)[0]), (200, 404))
+        # thông tin chia sẻ chỉ tác giả / quản trị thấy; học sinh chỉ thấy là riêng tư
+        mine = {x["id"]: x for x in lan.get("/api/posts?mode=mine")[1]["posts"]}
+        self.assertEqual([k["name"] for k in mine[p1]["shares"]["classes"]], ["RT1"])
+        self.assertEqual((mine[p1]["visibility"], mine[p1]["can_edit"]), ("Riêng tư", True))
+        seen = {x["id"]: x for x in s1.get("/api/posts?mode=latest")[1]["posts"]}
+        self.assertEqual((seen[p1]["visibility"], seen[p1]["shares"], seen[p1]["can_edit"]), ("Riêng tư", None, False))
+        self.assertIsNotNone({x["id"]: x for x in adm.get("/api/posts?mode=latest")[1]["posts"]}[p1]["shares"])
+        # đổi quyền xem: riêng tư → công khai → riêng tư cho lớp khác; chỉ tác giả / quản trị
+        self.assertEqual(lan.call("PATCH", f"/api/posts/{p1}", {"visibility": "Công khai"})[0], 200)
+        self.assertTrue(p1 in ids(s3) and p1 in ids(binh))
+        self.assertEqual(lan.call("PATCH", f"/api/posts/{p1}", {"visibility": "Riêng tư", "share_classes": [c2]})[0], 200)
+        self.assertEqual([p1 in ids(x) for x in (s3, s1, binh)], [True, False, False])
+        self.assertEqual(lan.call("PATCH", f"/api/posts/{p1}", {"visibility": "Riêng tư"})[0], 400)                                    # không có nơi chia sẻ
+        self.assertEqual(lan.call("PATCH", f"/api/posts/{p1}", {"visibility": "Bí mật"})[0], 400)
+        self.assertEqual(binh.call("PATCH", f"/api/posts/{p1}", {"visibility": "Công khai"})[0], 404)
+        self.assertEqual(s3.call("PATCH", f"/api/posts/{p1}", {"visibility": "Công khai"})[0], 404)
+        self.assertEqual(adm.call("PATCH", f"/api/posts/{p1}", {"visibility": "Riêng tư", "share_classes": [c1]})[0], 200)            # quản trị chỉnh được
+        self.assertEqual([p1 in ids(x) for x in (s1, s3)], [True, False])
+        # danh sách nơi có thể chia sẻ: giáo viên → lớp mình, học sinh của mình, phụ huynh, giáo viên khác; học sinh không gọi được
+        t = lan.get("/api/share-targets")[1]
+        self.assertEqual(sorted(k["name"] for k in t["classes"] if k["name"].startswith("RT")), ["RT1", "RT2"])
+        self.assertEqual({x["name"] for x in t["students"] if x["class_name"].startswith("RT")}, {"Học Một", "Học Hai", "Học Ba"})
+        self.assertIn("Phụ huynh Một", [x["name"] for x in t["parents"]])
+        self.assertIn("Thầy Bình", [x["name"] for x in t["teachers"]])
+        self.assertFalse(any(x["name"] == "Học Một" for x in binh.get("/api/share-targets")[1]["students"]))
+        self.assertEqual(s1.get("/api/share-targets")[0], 403)
+        # xóa bài thì xóa luôn danh sách chia sẻ
+        self.assertEqual(lan.call("DELETE", f"/api/posts/{p2}")[0], 200)
+        con = db.connect()
+        self.assertEqual(con.execute("SELECT COUNT(*) n FROM post_shares WHERE post_id=?", (p2,)).fetchone()["n"], 0)
+        con.close()
+
     def test_zz_attendance_rules(self):
         """Học sinh mới tạo vẫn có lịch; phút đi muộn; chốt điểm danh; phạt muộn và thưởng điểm theo quy tắc từng tháng."""
         import datetime as dt

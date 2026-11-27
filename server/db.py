@@ -145,6 +145,12 @@ CREATE TABLE IF NOT EXISTS posts(
   file_id INTEGER,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS post_shares(              -- bài đăng "Riêng tư" chia sẻ cho lớp hoặc người cụ thể
+  post_id INTEGER NOT NULL,
+  kind TEXT NOT NULL CHECK(kind IN ('class','user')),
+  target_id INTEGER NOT NULL,
+  PRIMARY KEY(post_id, kind, target_id)
+);
 CREATE TABLE IF NOT EXISTS post_likes(post_id INTEGER NOT NULL, user_id INTEGER NOT NULL, PRIMARY KEY(post_id, user_id));
 CREATE TABLE IF NOT EXISTS post_saves(post_id INTEGER NOT NULL, user_id INTEGER NOT NULL, PRIMARY KEY(post_id, user_id));
 CREATE TABLE IF NOT EXISTS comments(

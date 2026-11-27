@@ -78,15 +78,43 @@ function renderHeader(me) {
   const nav = $('.nav'), act = $('.header-actions');
   const page = location.pathname.split('/').pop() || 'index.html';
   if (nav) nav.innerHTML = (NAV[me.role === 'admin' ? 'teacher' : me.role] || []).map(([h, t]) => `<a href="${h}" class="${h === page ? 'active' : ''}">${t}</a>`).join('');
+  // ô tìm kiếm chung: ở Bảng tin lọc ngay bài viết, ở trang khác thì chuyển về Bảng tin kèm từ khóa
+  if (nav && !$('#hdr-q')) {
+    nav.insertAdjacentHTML('afterend', `<form class="hdr-search" id="hdr-q" role="search"><span class="hs-ic">⌕</span><input type="search" placeholder="Tìm bài viết, tài liệu, thẻ..." autocomplete="off" value="${esc(page === 'index.html' ? (new URLSearchParams(location.search).get('q') || '') : '')}"></form>`);
+    const fire = v => { if (page === 'index.html') window.dispatchEvent(new CustomEvent('lb-search', {detail: v})); else location.href = 'index.html' + (v ? '?q=' + encodeURIComponent(v) : ''); };
+    let t; $('#hdr-q input').oninput = e => { if (page !== 'index.html') return; clearTimeout(t); t = setTimeout(() => fire(e.target.value.trim()), 300); };
+    $('#hdr-q').onsubmit = e => { e.preventDefault(); fire($('#hdr-q input').value.trim()); };
+  }
   if (act) {
-    act.innerHTML = `<div class="user-chip"><button class="avatar" id="uchip" aria-label="Tài khoản">${esc(initials(me.name))}</button>
+    act.innerHTML = `<div class="bell-wrap"><button class="icon-btn bell" id="bell" aria-label="Thông báo" title="Thông báo">🔔<i class="bell-n" hidden></i></button><div class="bell-menu" id="bellm" hidden></div></div>
+      <div class="user-chip"><button class="avatar" id="uchip" aria-label="Tài khoản">${esc(initials(me.name))}</button>
       <div class="user-menu" id="umenu" hidden><div class="um-name">${esc(me.name)}</div><div class="um-role">${ROLE_VN[me.role]}${me.class_name ? ' · Lớp ' + esc(me.class_name) : ''} · @${esc(me.username)}</div>
       <button id="um-pw">Đổi mật khẩu</button><button id="um-out">Đăng xuất</button></div></div>`;
     $('#uchip').onclick = e => { e.stopPropagation(); $('#umenu').hidden = !$('#umenu').hidden; };
     document.addEventListener('click', () => { const m = $('#umenu'); if (m) m.hidden = true; });
     $('#um-pw').onclick = () => changePasswordModal(false);
     $('#um-out').onclick = logout;
+    $('#bell').onclick = e => { e.stopPropagation(); $('#bellm').hidden = !$('#bellm').hidden; };
+    document.addEventListener('click', e => { const m = $('#bellm'); if (m && !m.contains(e.target)) m.hidden = true; });
+    loadBell(me);
   }
+}
+/* Chuông thông báo: giáo viên → báo đáp án sai chờ duyệt; học sinh → bài cần làm. Chưa có gì thì hiện “Chưa có thông báo mới”. */
+async function loadBell(me) {
+  const items = [];
+  try {
+    if (me.role === 'teacher' || me.role === 'admin') {
+      const r = await api.get('/api/reports?status=none');
+      if (r.pending) items.push([`🚩 ${r.pending} báo đáp án sai đang chờ duyệt`, 'manage.html#reports', r.pending]);
+    } else if (me.role === 'student') {
+      const r = await api.get('/api/assignments'), now = Date.now() / 1000;
+      const n = r.assignments.filter(a => !a.closed && a.attempts < a.max_attempts && !(a.due_at && a.due_at < now)).length;
+      if (n) items.push([`📝 ${n} bài đang chờ bạn làm`, 'students.html', n]);
+    }
+  } catch (e) { /* không tải được thông báo: bỏ qua */ }
+  const total = items.reduce((s, x) => s + x[2], 0), b = $('#bell .bell-n'), m = $('#bellm');
+  if (b && total) { b.textContent = total > 9 ? '9+' : total; b.hidden = false; }
+  if (m) m.innerHTML = '<div class="bm-title">Thông báo</div>' + (items.length ? items.map(([t, h]) => `<a href="${h}">${t}</a>`).join('') : '<div class="bm-empty">Chưa có thông báo mới</div>');
 }
 
 const LB = {$, $$, esc, toast, modal, api, fmtDate, fmtScore, initials, download, csvCell, ROLE_VN, HOME, me: null, publicPage: false, logout, changePasswordModal};

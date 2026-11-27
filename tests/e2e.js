@@ -113,6 +113,7 @@ process.on('exit', cleanup);
     await click('#pr-all'); await sleep(800);
     const pr = await ev('window.__print||""');
     check('in tất cả mã đề: có 4 đề', (pr.match(/class="print-exam"/g) || []).length === 4);
+    check('đề in có đầu trang (QR/địa chỉ web) và cuối trang “Made by Nguyệt Anh : 0966092547” ở mỗi đề', (pr.match(/Made by Nguyệt Anh : 0966092547/g) || []).length === 4 && (pr.match(/Learning by AI<\/b> — làm bài online/g) || []).length === 4);
     check('mỗi đề kèm phiếu trả lời (4 phiếu)', (pr.match(/class="print-sheet"/g) || []).length === 4);
     check('phiếu có 4 mốc góc + ô tròn', /<svg[^>]*omr-sheet-svg/.test(pr) && (pr.match(/<circle/g) || []).length > 200);
     // giao bài
