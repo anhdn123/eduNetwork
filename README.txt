@@ -277,3 +277,10 @@ dùng bucket riêng tư, giữ khóa bí mật, và xem lại yêu cầu pháp l
    - Bảng tin 3 cột: bên trái hồ sơ + liên kết, giữa bài đăng (Nổi bật / Mới nhất), bên phải giáo viên nổi bật. Học sinh và phụ huynh xem được bảng tin.
    - Giáo viên khi đăng chọn "Công khai (publish)" hoặc "Riêng tư". Riêng tư thì chọn cả lớp hoặc từng người (học sinh, phụ huynh, giáo viên khác). Bài đã đăng đổi quyền xem bằng nút "Quyền xem".
    - Người không được chia sẻ không thấy bài, không thích / lưu / bình luận và không tải được tệp đính kèm (trả về như bài không tồn tại). Quản trị xem được tất cả.
+
+25. IMPORT FILE NHIỀU CHUYÊN ĐỀ (BỘ ĐỀ THEO BÀI HỌC)
+   - Khi import đề, tick "📚 File có nhiều chuyên đề / bài học": hệ thống tự tách theo tiêu đề "§1 …", "CHUYÊN ĐỀ 2: …", "BÀI 3: …". Mỗi tiêu đề là một chuyên đề; các câu đứng sau tiêu đề thuộc chuyên đề đó.
+   - Tên chuyên đề lấy từ tiêu đề, chuẩn hóa chữ hoa/thường ("ĐƠN THỨC NHIỀU BIẾN" → "Đơn thức nhiều biến"). Các tiêu đề cùng tên (vd. 3 bài "Hằng đẳng thức đáng nhớ") được gộp làm một chuyên đề. Tiêu đề dài bị ngắt dòng được nối lại.
+   - Tự bỏ biểu tượng bút đứng đầu câu ("L Câu 1.") và các dòng đầu / chân trang lặp lại ("Năm học … Trang 6/163").
+   - Chuyên đề mới tự hiện trong danh sách chuyên đề luyện tập, nút Xem / sửa; đổi tên hàng loạt trong "Quản lý ngân hàng" (ô Chuyên đề ở thanh thao tác hàng loạt).
+   - Không dùng chung với chế độ "Đây là các đề thi" (mỗi chế độ tách theo một kiểu).

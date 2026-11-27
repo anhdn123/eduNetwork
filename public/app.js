@@ -482,6 +482,37 @@ function findExamSegments(text) {
   return good.map(g => { const m = /^[ \t]*ĐỀ\s*SỐ\s*(\d+)[ \t]*$/m.exec(text.slice(g.start, g.end)); return {start: g.start, label: m ? +m[1] : null}; });
 }
 
+// File gồm NHIỀU CHUYÊN ĐỀ / BÀI HỌC nối tiếp (vd. “Bộ đề kiểm tra theo bài học”: §1 …, §2 …; hoặc “CHUYÊN ĐỀ 3: …”): mỗi tiêu đề mở đầu một chuyên đề,
+// các câu hỏi đứng sau tiêu đề thuộc chuyên đề đó. Chỉ dùng khi tick “File có nhiều chuyên đề”. Trả về [{start, title}], rỗng nếu file không có ≥ 2 tiêu đề.
+let PARSE_TOPICS = false;
+const PROPER = [['pythagore', 'Pythagore'], ['thalès', 'Thalès'], ['thales', 'Thales'], ['viète', 'Viète'], ['viet', 'Viet'], ['euclid', 'Euclid'], ['newton', 'Newton'], ['ohm', 'Ohm']];
+function niceTitle(raw) {   // “ĐƠN THỨC NHIỀU BIẾN. ĐA THỨC” / “Hằng Đẳng Thức Đáng Nhớ” → “Đơn thức nhiều biến. Đa thức” (cùng tên thì gộp làm một chuyên đề)
+  let s = String(raw || '').replace(/\s+/g, ' ').replace(/[\s.…·]+\d{1,3}\s*$/, '').replace(/[ .…·]{3,}/g, ' ').trim();
+  s = s.toLowerCase();
+  s = s.replace(/^\s*([a-zà-ỹ])/, (m, c) => c.toUpperCase()).replace(/([.!?]\s+)([a-zà-ỹ])/g, (m, a, c) => a + c.toUpperCase()).replace(/[\s.]+$/, '');
+  PROPER.forEach(([lo, up]) => { s = s.replace(new RegExp('(^|[^a-zà-ỹ])' + lo + '(?![a-zà-ỹ])', 'gi'), (m, a) => a + up); });
+  return s.replace(/\s+([,.;:])/g, '$1').replace(/\s*-\s*/g, ' - ').replace(/ - (?=\d)/g, '-').trim();
+}
+function dropRepeatedLines(text) {   // bỏ các dòng lặp ≥ 6 lần (khi bỏ chữ số): đầu / chân trang “Năm học … Trang 6/163”, “Kiểm tra theo bài học”. Giữ các dòng PHẦN, §, Câu, phương án.
+  const norm = l => l.replace(/\d+/g, '#').replace(/\s+/g, ' ').trim(), cnt = new Map(), lines = text.split('\n');
+  lines.forEach(l => { const k = norm(l); if (k.length >= 8) cnt.set(k, (cnt.get(k) || 0) + 1); });
+  return lines.filter(l => { const k = norm(l); return !(cnt.get(k) >= 6 && !/PH[ẦÀẪẲẢẤA]N|§|CHƯƠNG|^\s*(?:Câu|Bài|[A-D][.)]|[a-d]\))\s/i.test(l)); }).join('\n');
+}
+function findTopicSegments(text) {
+  const heads = [], re = new RegExp('^[ \\t]*(?:§[ \\t]*\\d{1,3}|(?:CHUYÊN\\s*ĐỀ|CHỦ\\s*ĐỀ|BÀI\\s*HỌC)[ \\t]*\\d{1,3}[ \\t]*[:.\\-–][ \\t]*|Chuyên\\s*đề[ \\t]*\\d{1,3}[ \\t]*[:.\\-–][ \\t]*|BÀI[ \\t]*\\d{1,3}[ \\t]*[:.\\-–][ \\t]*)[ \\t]*[.:\\-–]?[ \\t]*([^\\n]{3,140})$', 'gm');
+  let m;
+  while ((m = re.exec(text))) {
+    let title = m[1].trim();
+    if (/^(?:Câu|Bài)\s*\d/i.test(title) || /\.{4,}|(?:\. ){3,}/.test(title)) continue;   // dòng mục lục (“… . . . 25”) hoặc câu hỏi
+    if (!/[A-Za-zÀ-ỹ]{3}/.test(title)) continue;
+    // tiêu đề dài bị ngắt dòng: nối thêm dòng kế tiếp nếu cũng toàn chữ hoa và không phải “PHẦN …” / “Câu …”
+    const rest = text.slice(m.index + m[0].length), nx = /^\n[ \t]*([^\n]{2,80})(?=\n|$)/.exec(rest);
+    if (nx && nx[1] === nx[1].toUpperCase() && /[A-ZÀ-Ỹ]{2}/.test(nx[1]) && !/^(?:[A-D]\.|PH[ẦA]N\b|CÂU\b|CHƯƠNG\b|§)/i.test(nx[1].trim())) title += ' ' + nx[1].trim();
+    heads.push({start: m.index, title: niceTitle(title)});
+  }
+  return heads.length >= 2 ? heads : [];
+}
+
 // Tách phần đề và phần đáp án / lời giải
 function splitKeySection(text) {
   const re = /^[ \t]*(?:BẢNG\s+)?(?:ĐÁP\s*ÁN|HƯỚNG\s+DẪN\s+(?:GIẢI|CHẤM)|LỜI\s+GIẢI)(?:[ \t]+[^\n]{0,90})?[ \t]*[:.]?[ \t]*$/gm;
@@ -693,7 +724,9 @@ const bankKey = q => bankBase(q) + (q.num != null && q.src ? '|' + q.src + '#' +
 const bankKeyLegacy = q => bankBase(q) + '|@' + (q.src || '');   // câu import từ bản cũ chưa lưu số câu: chỉ khớp với câu cùng file
 
 function parseQuestionBank(raw, src, hasLines) {
-  const text = String(raw || '').replace(/\r/g, '').replace(/ /g, ' ').replace(/[ \t]+/g, ' ');
+  let text = String(raw || '').replace(/\r/g, '').replace(/ /g, ' ').replace(/[ \t]+/g, ' ');
+  text = text.replace(/^[ 	]*[Ll¤✎✍]\s+(?=(?:Câu|Bài)\s*\d{1,3}\s*[:.)])/gm, '');   // biểu tượng cây bút ở đầu mỗi câu (“✎ Câu 1.”) đọc ra thành chữ “L”
+  if (PARSE_TOPICS) text = dropRepeatedLines(text);   // đầu / chân trang lặp lại ở mọi trang
   // vị trí dòng (để cắt ảnh từ PDF): lineOf(off) = số dòng đứng trước vị trí off
   const nl = []; for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) nl.push(i);
   const lineOf = off => { let lo = 0, hi = nl.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (nl[mid] < off) lo = mid + 1; else hi = mid; } return lo; };
@@ -701,6 +734,8 @@ function parseQuestionBank(raw, src, hasLines) {
   const {body, key} = splitKeySection(text);
   const segs = PARSE_MULTI && !key ? findExamSegments(text) : [];   // nhiều đề trong một file (chỉ khi không có phần lời giải riêng)
   const segOf = off => { let k = -1; segs.forEach((g, i) => { if (g.start <= off) k = i; }); return k; };
+  const tsegs = PARSE_TOPICS ? findTopicSegments(text) : [];   // nhiều chuyên đề trong một file
+  const topicAt = off => { let t = ''; tsegs.forEach(g => { if (g.start <= off) t = g.title; }); return t; };
   const secs = [];
   for (const m of body.matchAll(new RegExp(PHAN_RE + '[^\\n]*(?:\\n(?![ \\t]*(?:Câu|Bài|Question)\\s*\\d)[^\\n]*)?', 'gim'))) {
     const hit = SEC_HINT.find(h => h[0].test(m[0]));
@@ -811,13 +846,14 @@ function parseQuestionBank(raw, src, hasLines) {
       delete q.grp;
       q.num = n;   // số câu in trong đề (“Câu 61.”): để nhập nhanh đáp án theo đúng số câu thay vì thứ tự trong danh sách
       if (segs.length) q._seg = segOf(mk.index);
+      if (tsegs.length) { const tp = topicAt(mk.index); if (tp) q._tp = tp; }
       const k = bankKey({...q, src}) + (segs.length ? '|s' + q._seg : ''); if (seen.has(k)) return; seen.add(k);
       out.push({id: 'b' + Date.now().toString(36) + (BID++), src, ...q});
     });
   });
   const stats = {total: out.length, noAns: out.filter(q => !hasAns(q)).length};
   ORD.forEach(t => { stats[t] = out.filter(q => q.t === t).length; });
-  return {questions: out, stats, segs};
+  return {questions: out, stats, segs, topics: tsegs};
 }
 function parseExamTextFromWeb(raw) { return parseQuestionBank(raw, 'web').questions; }
 
@@ -1357,7 +1393,7 @@ async function detectUnderlined(ext, qs, kExt, kOff, dbg) {
   return n;
 }
 
-async function importSmart(files, labels, withImg, onChange, examOpt, aiOn) {
+async function importSmart(files, labels, withImg, onChange, examOpt, aiOn, multiTopic) {
   const m = modal(`<h2>⬆ Đang import đề mới</h2><div class="lb-prog"><span id="ip" style="width:0%"></span></div><div id="il" class="crawl-console" style="display:block;max-height:240px;overflow:auto"></div><div id="idone"></div>`, 1);
   const b = m.b, logBox = $('#il', b), bar = $('#ip', b);
   const log = (t, c = '') => { const d = document.createElement('div'); if (c) d.className = c; d.textContent = t; logBox.append(d); logBox.scrollTop = logBox.scrollHeight; };
@@ -1381,11 +1417,18 @@ async function importSmart(files, labels, withImg, onChange, examOpt, aiOn) {
       else if (keys.length && !kf) log('⚠ Có nhiều file đề nhưng số file đáp án không khớp — bỏ qua file đáp án riêng, chỉ đọc đáp án nằm trong file đề.', 'warn');
       if (text.replace(/\s/g, '').length < 40) { log('✗ Không đọc được chữ trong file này (ảnh quá mờ hoặc file rỗng).', 'err'); continue; }
       PARSE_DEFAULT = labels.subject === 'Ngữ văn' ? 'essay' : 'short';
-      PARSE_MULTI = !!examOpt;
-      let res; try { res = parseQuestionBank(text, f.name, !!((ext || kExt) && withImg)); } finally { PARSE_MULTI = false; }
+      PARSE_MULTI = !!examOpt; PARSE_TOPICS = !!multiTopic && !examOpt;
+      let res; try { res = parseQuestionBank(text, f.name, !!((ext || kExt) && withImg)); } finally { PARSE_MULTI = false; PARSE_TOPICS = false; }
       if (!res.questions.length) { log('✗ Không nhận diện được câu hỏi nào (cần dạng "Câu 1. ... A. ... B. ..." hoặc có nhãn Câu/Bài).', 'err'); continue; }
       const topicOf = buildTopicIndex(labels, batchId);
-      res.questions.forEach(q => { Object.assign(q, labels); q.batch = batchId; q.at = batchAt; if (!q.topic) q.topic = topicOf(q) || guessTopic(labels.subject, labels.grade, q); });
+      res.questions.forEach(q => { const tp = q._tp; delete q._tp; Object.assign(q, labels); if (tp) q.topic = tp; q.batch = batchId; q.at = batchAt; if (!q.topic) q.topic = topicOf(q) || guessTopic(labels.subject, labels.grade, q); });
+      if (multiTopic && !examOpt) {   // một file chứa nhiều chuyên đề: mỗi tiêu đề (§n …, CHUYÊN ĐỀ n: …) mở một chuyên đề, cùng tên thì gộp
+        const cnt = new Map(); res.questions.forEach(q => { if (q.topic) cnt.set(q.topic, (cnt.get(q.topic) || 0) + 1); });
+        if (res.topics && res.topics.length) {
+          log(`   📚 File có ${res.topics.length} tiêu đề → tự tách thành ${cnt.size} chuyên đề (môn ${labels.subject} · khối ${labels.grade}):`, 'ok');
+          [...cnt].forEach(([t, n]) => log(`      • ${t}: ${n} câu`, 'ok'));
+        } else log('⚠ Không tìm thấy tiêu đề chuyên đề (dạng “§1 …”, “CHUYÊN ĐỀ 1: …”, “BÀI 1: …”) — các câu được xếp vào một chuyên đề chung.', 'warn');
+      }
       const eo = examOpt && examOpt.byName.get(f.name);
       if (eo && res.segs && res.segs.length > 1) {   // một file chứa nhiều đề: mỗi “PHẦN I” mở đầu một đề; số đề lấy từ “ĐỀ SỐ n” (trùng số thì lấy số trống nhỏ nhất kế tiếp)
         const used = new Set(), nos = res.segs.map(g => { let no = g.label && !used.has(g.label) ? g.label : 0; if (!no) { no = 1; while (used.has(no)) no++; } used.add(no); return no; });
@@ -1458,6 +1501,7 @@ function openSmartImport(onChange) {
       <label style="flex:1;font-size:11px;color:#475467">MÔN<select id="si-s" style="${sel}">${SUBJECTS.map(s => `<option ${s === sub ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label></div>
     <label style="display:block;margin-top:10px;font-size:11px;color:#475467">CHUYÊN ĐỀ<input id="si-tp" list="si-tpl" placeholder="Chọn gợi ý hoặc tự nhập — để trống thì hệ thống tự đoán theo nội dung câu" style="${sel}"><datalist id="si-tpl"></datalist></label>
     <label style="display:flex;gap:8px;align-items:center;font-size:12px;margin:12px 0 4px;cursor:pointer"><input type="checkbox" id="si-exam"> <b>📑 Đây là các đề thi</b> <span style="color:#667085">(mỗi file là một đề — lưu riêng từng đề để giao nguyên đề; câu vẫn được xếp vào chuyên đề)</span></label>
+    <label id="si-multirow" style="display:flex;gap:8px;align-items:center;font-size:12px;margin:4px 0;cursor:pointer"><input type="checkbox" id="si-multi"> <b>📚 File có nhiều chuyên đề / bài học</b> <span style="color:#667085">(tự tách theo tiêu đề “§1 …”, “CHUYÊN ĐỀ 2: …”, “BÀI 3: …” — mỗi tiêu đề là một chuyên đề, cùng tên thì gộp)</span></label>
     <div id="si-exbox" hidden style="border:1px solid #c9cdf5;background:#f7f8ff;border-radius:10px;padding:10px;margin-bottom:6px">
       <label style="display:block;font-size:11px;color:#475467">NHÓM ĐỀ (chọn hoặc tự nhập)<input id="si-cat" list="si-catl" placeholder="VD: Đề giữa kì 1" style="${sel}"><datalist id="si-catl">${['Đề giữa kì 1', 'Đề cuối kì 1', 'Đề giữa kì 2', 'Đề cuối kì 2', 'Đề kiểm tra 15 phút', 'Đề kiểm tra 1 tiết', 'Đề thi vào 10', 'Đề ôn tập'].map(x => `<option value="${x}">`).join('')}</datalist></label>
       <div style="font-size:11px;color:#475467;margin:8px 0 4px">Số và tên từng đề (số đề dùng khi nhập đáp án dạng <b>De1.I.01.A</b>):</div><div id="si-exrows" style="font-size:12px;color:#94a3b8">Chọn file ở bên dưới để đặt tên từng đề.</div></div>
@@ -1478,7 +1522,7 @@ function openSmartImport(onChange) {
     $('#si-exrows', m.b).innerHTML = ef.length ? ef.map((f, i) => `<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px"><input type="number" min="1" max="99" value="${i + 1}" data-exno="${i}" title="Số đề" style="width:56px;padding:6px;border:1px solid #cbd5e1;border-radius:6px"><input data-exnm="${i}" maxlength="60" value="${esc(f.name.replace(/\.[^.]+$/, '').replace(/_+/g, ' ').trim().slice(0, 60))}" style="flex:1;padding:6px;border:1px solid #cbd5e1;border-radius:6px"></div>`).join('') : '<span style="color:#94a3b8">Chọn file ở bên dưới để đặt tên từng đề.</span>';
   };
   const set = fl => { files = [...fl].filter(f => /\.(pdf|txt|png|jpe?g)$/i.test(f.name) || /^(application\/pdf|text\/plain|image\/)/.test(f.type)); $('#si-names', m.b).innerHTML = files.map(f => '• ' + esc(f.name)).join('<br>'); $('#si-go', m.b).disabled = !files.length; drawEx(); };
-  $('#si-exam', m.b).onchange = drawEx;
+  $('#si-exam', m.b).onchange = () => { drawEx(); const on = $('#si-exam', m.b).checked; $('#si-multi', m.b).disabled = on; if (on) $('#si-multi', m.b).checked = false; $('#si-multirow', m.b).style.opacity = on ? .5 : 1; };
   const drop = $('#si-drop', m.b), inp = $('#si-f', m.b);
   drop.onclick = () => inp.click(); inp.onchange = () => set(inp.files);
   drop.ondragover = e => { e.preventDefault(); drop.style.background = '#e0f2fe'; }; drop.ondragleave = () => { drop.style.background = '#f7f8ff'; };
@@ -1500,7 +1544,7 @@ function openSmartImport(onChange) {
     }
     const aiOn = !!($('#si-ai', m.b) && $('#si-ai', m.b).checked && !$('#si-ai-row', m.b).hidden);
     if (aiOn && !confirm(aiConsent(AI_ST))) return;
-    m.close(); importSmart(files, labels, wi, onChange, examOpt, aiOn); };
+    m.close(); importSmart(files, labels, wi, onChange, examOpt, aiOn, !!($('#si-multi', m.b) && $('#si-multi', m.b).checked)); };
 }
 
 /* ---- Cắt câu hỏi thủ công từ PDF / ảnh (dùng được cả với PDF scan không có lớp chữ) ----
