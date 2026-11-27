@@ -20,6 +20,7 @@ import urllib.request
 PROVIDERS = ("gemini", "claude")
 GEMINI_MODEL = os.environ.get("LBAI_AI_MODEL_GEMINI") or "gemini-3.8-flash"            # model Flash mạnh nhất còn miễn phí theo bảng giá của Google (đổi bằng biến này nếu Google đổi tên)
 CLAUDE_MODEL = os.environ.get("LBAI_AI_MODEL_CLAUDE") or "claude-opus-5-5"
+GEMINI_FALLBACK = [m.strip() for m in (os.environ.get("LBAI_AI_MODEL_GEMINI_FALLBACK") or "gemini-2.5-flash").split(",") if m.strip()]   # model dự phòng khi model chính không tồn tại
 GEMINI_BASE = (os.environ.get("GEMINI_BASE_URL") or "https://generativelanguage.googleapis.com").rstrip("/")
 EFFORT = os.environ.get("LBAI_AI_EFFORT") or "high"                                    # chỉ dùng cho Claude
 TIMEOUT = float(os.environ.get("LBAI_AI_TIMEOUT") or 85)                               # giây cho mỗi lần gọi (proxy của máy chủ web thường cắt sau ~100 giây)
@@ -155,7 +156,7 @@ def _items_text(it):
 
 
 # ---------------------------------------------------------------- Gemini (REST, chỉ dùng thư viện chuẩn)
-def _gemini_call(items, parts=None, system=None):
+def _gemini_call(items, parts=None, system=None, timeout=None):
     key = (os.environ.get("GEMINI_API_KEY") or "").strip().strip("\"' ")   # bỏ khoảng trắng / dấu nháy dán thừa
     if not key:
         raise AiError(503, "Chưa bật AI: quản trị viên cần đặt biến môi trường GEMINI_API_KEY (khóa miễn phí lấy tại Google AI Studio) trên máy chủ.")
@@ -171,12 +172,13 @@ def _gemini_call(items, parts=None, system=None):
         parts.append({"text": "Giải tất cả các câu trên. " + JSON_FORMAT})
     body = {"system_instruction": {"parts": [{"text": system or SYSTEM}]}, "contents": [{"role": "user", "parts": parts}],
             "generationConfig": {"responseMimeType": "application/json"}}
-    url = f"{GEMINI_BASE}/v1beta/models/{GEMINI_MODEL}:generateContent"
+    models = [GEMINI_MODEL] + [m for m in GEMINI_FALLBACK if m != GEMINI_MODEL]   # model chính; nếu Google báo không có model đó thì thử model dự phòng
+    url = f"{GEMINI_BASE}/v1beta/models/{models[0]}:generateContent"
 
     def post(b):
         req = urllib.request.Request(url, data=json.dumps(b).encode("utf-8"), method="POST",
                                      headers={"Content-Type": "application/json", "x-goog-api-key": key})
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        with urllib.request.urlopen(req, timeout=timeout or TIMEOUT) as r:
             return json.loads(r.read().decode("utf-8"))
 
     def err_msg(e):
@@ -205,6 +207,10 @@ def _gemini_call(items, parts=None, system=None):
                 raise AiError(429, "Đã chạm giới hạn của gói miễn phí Gemini (theo phút hoặc theo ngày) — chờ ít phút rồi thử lại, hoặc để mai.")
             if e.code in (401, 403) or (e.code == 400 and "API_KEY_INVALID" in (msg + str(getattr(e, "reason", "")))) or (e.code == 400 and "api key" in msg.lower()):
                 raise AiError(502, "Khóa Gemini không hợp lệ hoặc không có quyền — quản trị viên kiểm tra GEMINI_API_KEY.")
+            if e.code == 404 and len(models) > 1:
+                models.pop(0)
+                url = f"{GEMINI_BASE}/v1beta/models/{models[0]}:generateContent"
+                continue
             if e.code == 404:
                 raise AiError(502, f"Không tìm thấy model Gemini “{GEMINI_MODEL}” — đặt LBAI_AI_MODEL_GEMINI theo tên model hiện hành của Google.")
             raise AiError(502, f"Dịch vụ Gemini lỗi ({e.code}). {msg}".strip())
@@ -226,7 +232,7 @@ def _gemini_call(items, parts=None, system=None):
 
 
 # ---------------------------------------------------------------- Claude (SDK chính thức, tùy chọn)
-def _claude_call(items, content=None, system=None, schema=None):
+def _claude_call(items, content=None, system=None, schema=None, timeout=None):
     if anthropic is None:
         raise AiError(503, "Máy chủ chưa cài thư viện AI cho Claude (pip install -r requirements.txt).")
     if not (_has("ANTHROPIC_API_KEY") or _has("ANTHROPIC_AUTH_TOKEN")):
@@ -241,7 +247,7 @@ def _claude_call(items, content=None, system=None, schema=None):
             else:
                 content.append({"type": "text", "text": _items_text(it) + "\nĐề (văn bản):\n" + (it.get("text") or "")[:6000]})
         content.append({"type": "text", "text": "Giải tất cả các câu trên và trả về JSON theo đúng định dạng yêu cầu, mỗi câu một mục với đúng id đã cho."})
-    client = anthropic.Anthropic(timeout=TIMEOUT, max_retries=1)
+    client = anthropic.Anthropic(timeout=timeout or TIMEOUT, max_retries=1)
     try:
         resp = client.messages.create(
             model=CLAUDE_MODEL, max_tokens=16000, system=system or SYSTEM,
@@ -313,6 +319,7 @@ def solve(user_id, items):
 
 
 # ---------------------------------------------------------------- Hỏi bài: học sinh gửi đề (ảnh / chữ), AI giải thích từng bước
+TUTOR_TIMEOUT = float(os.environ.get("LBAI_HELP_TIMEOUT") or 170)       # hỏi bài chạy nền (không bị proxy cắt) nên cho AI nhiều thời gian hơn
 TUTOR_HOURLY = int(os.environ.get("LBAI_HELP_HOURLY") or 12)          # số lần hỏi AI mỗi học sinh mỗi giờ
 TUTOR_SYSTEM = """Bạn là gia sư thân thiện cho học sinh Việt Nam (THCS – THPT), giỏi mọi môn, đặc biệt Toán. Học sinh gửi ảnh chụp hoặc chữ của một bài tập để nhờ giải.
 Hãy đọc kỹ đề, tự giải cẩn thận rồi kiểm tra lại kết quả. Viết lời giải bằng tiếng Việt, dễ hiểu cho học sinh: mỗi bước một dòng (phân cách bằng ký tự xuống dòng \\n), giải thích ngắn gọn vì sao làm vậy, viết công thức bằng ký hiệu thông thường (√, ^, /, π, ∠, ≤, ≥…), tối đa 3000 ký tự.
@@ -347,7 +354,7 @@ def tutor(user_id, images, text="", subject=""):
         for mime, data in images:
             parts.append({"inline_data": {"mime_type": mime, "data": base64.standard_b64encode(data).decode("ascii")}})
         parts.append({"text": "Hãy giải bài này. " + TUTOR_JSON})
-        raw = _gemini_call(None, parts=parts, system=TUTOR_SYSTEM)
+        raw = _gemini_call(None, parts=parts, system=TUTOR_SYSTEM, timeout=TUTOR_TIMEOUT)
     else:
         content = [{"type": "text", "text": intro}]
         if text:
@@ -355,7 +362,7 @@ def tutor(user_id, images, text="", subject=""):
         for mime, data in images:
             content.append({"type": "image", "source": {"type": "base64", "media_type": mime, "data": base64.standard_b64encode(data).decode("ascii")}})
         content.append({"type": "text", "text": "Hãy giải bài này và trả về JSON theo đúng định dạng."})
-        raw = _claude_call(None, content=content, system=TUTOR_SYSTEM, schema=TUTOR_SCHEMA)
+        raw = _claude_call(None, content=content, system=TUTOR_SYSTEM, schema=TUTOR_SCHEMA, timeout=TUTOR_TIMEOUT)
     t = re.sub(r"^```(?:json)?\s*|\s*```$", "", (raw or "").strip())
     try:
         d = json.loads(t)

@@ -258,6 +258,7 @@ CREATE TABLE IF NOT EXISTS help_requests(          -- học sinh hỏi bài (ả
   ai_conf TEXT,
   ai_note TEXT,
   ai_error TEXT,
+  ai_pending INTEGER NOT NULL DEFAULT 0,         -- 1 = AI đang giải (chạy nền, học sinh thấy “AI đang giải…”)
   asked_teacher INTEGER NOT NULL DEFAULT 0,
   teacher_id INTEGER,
   teacher_answer TEXT NOT NULL DEFAULT '',
@@ -333,6 +334,9 @@ def init():
     # nâng cấp CSDL cũ: thêm cột số phút đi muộn cho bảng điểm danh
     if "late_min" not in [r[1] for r in con.execute("PRAGMA table_info(attendance)").fetchall()]:
         con.execute("ALTER TABLE attendance ADD COLUMN late_min INTEGER NOT NULL DEFAULT 0")
+    hcols = [r[1] for r in con.execute("PRAGMA table_info(help_requests)").fetchall()]
+    if hcols and "ai_pending" not in hcols:
+        con.execute("ALTER TABLE help_requests ADD COLUMN ai_pending INTEGER NOT NULL DEFAULT 0")
     # bài được giao có được cộng điểm / bị trừ điểm hay không (giáo viên tick riêng từng loại ở tab Bài đã giao); mặc định có cả hai
     cols = [r[1] for r in con.execute("PRAGMA table_info(assignments)").fetchall()]
     for col in ("count_bonus", "count_penalty"):

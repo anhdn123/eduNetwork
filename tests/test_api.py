@@ -1625,6 +1625,14 @@ class ApiTest(unittest.TestCase):
         script = {"mode": "high"}
         calls = []
 
+        def wait(cl, hid):   # AI chạy nền: chờ đến khi hết "đang giải" rồi trả về câu hỏi
+            for _ in range(100):
+                x = {y["id"]: y for y in cl.get("/api/help")[1]["requests"]}[hid]
+                if not x["pending"]:
+                    return x
+                time.sleep(0.05)
+            self.fail("AI nền không kết thúc")
+
         def fake_tutor(uid, images, text="", subject=""):
             calls.append((len(images), text, subject))
             if script["mode"] == "err":
@@ -1641,16 +1649,18 @@ class ApiTest(unittest.TestCase):
             self.assertEqual(s2.post("/api/help", {"text": "x", "images": [im]})[0], 400)                      # ảnh của bạn khác
             self.assertEqual(lan.post("/api/help/image", {"data": png})[0], 403)
             # AI trả lời chắc chắn → trạng thái ai, kèm lời giải; ảnh + chữ + môn được chuyển cho AI
-            st, r = s1.post("/api/help", {"text": "Giải phương trình x + 1 = 4", "images": [im], "subject": "Toán"})
-            self.assertEqual((st, r["status"], r["ai"]["answer"], r["ai"]["conf"]), (200, "ai", "x = 3", "high"), r)
+            st, r0 = s1.post("/api/help", {"text": "Giải phương trình x + 1 = 4", "images": [im], "subject": "Toán"})
+            self.assertEqual((st, r0["pending"]), (200, True))                                                  # trả về ngay, AI chạy nền
+            r = wait(s1, r0["id"])
+            self.assertEqual((r["status"], r["ai"]["answer"], r["ai"]["conf"]), ("ai", "x = 3", "high"), r)
             self.assertEqual(calls[-1], (1, "Giải phương trình x + 1 = 4", "Toán"))
             h_ai = r["id"]
             # AI không chắc → chuyển giáo viên; AI lỗi / chưa bật → cũng chuyển giáo viên
             script["mode"] = "low"
-            h_low = s1.post("/api/help", {"text": "đề khó"})[1]
+            h_low = wait(s1, s1.post("/api/help", {"text": "đề khó"})[1]["id"])
             self.assertEqual((h_low["status"], h_low["ai"]["conf"]), ("waiting", "low"))
             script["mode"] = "err"
-            h_err = s2.post("/api/help", {"text": "đề lỗi"})[1]
+            h_err = wait(s2, s2.post("/api/help", {"text": "đề lỗi"})[1]["id"])
             self.assertEqual((h_err["status"], h_err["ai"], "hạn mức" in h_err["ai_error"]), ("waiting", None, True))
             ai.configured = lambda: False
             h_off = s2.post("/api/help", {"text": "AI tắt"})[1]

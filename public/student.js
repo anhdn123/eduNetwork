@@ -245,7 +245,7 @@ async function drawPoints() {
 
 /* ---------- Hỏi bài: tải ảnh đề / gõ câu hỏi → AI giải từng bước; chưa hiểu hoặc AI không chắc thì nhờ thầy cô ---------- */
 const HELP_ST = {ai: ['🤖 AI đã giải', 'ok'], waiting: ['⏳ Đang chờ thầy cô', 'warn'], answered: ['✅ Thầy cô đã trả lời', 'ok'], closed: ['Đã hiểu', '']};
-let helpPics = [];
+let helpPics = [], helpTimer = null;
 async function drawHelp() {
   const host = $('#v-help');
   if (!host.dataset.init) {
@@ -274,7 +274,7 @@ async function drawHelp() {
         const ids = []; for (const p of helpPics) ids.push((await api.post('/api/help/image', {data: p})).id);
         const r = await api.post('/api/help', {text, images: ids, subject: $('#hp-s', host).value});
         helpPics = []; drawPics(); $('#hp-t', host).value = '';
-        msg.textContent = r.status === 'ai' ? '✅ AI đã giải xong — xem lời giải bên dưới.' : '⏳ AI chưa chắc chắn hoặc đang bận nên câu hỏi đã chuyển cho thầy cô của lớp.';
+        msg.textContent = r.pending ? '✅ Đã gửi! AI đang giải bài — lời giải sẽ tự hiện ở bên phải (thường dưới 1 phút), bạn có thể làm việc khác.' : '⏳ AI chưa được bật nên câu hỏi đã chuyển cho thầy cô của lớp.';
       } catch (e) { msg.textContent = ''; toast(e.message); }
       go.disabled = false; loadHelp();
     };
@@ -284,7 +284,7 @@ async function drawHelp() {
 async function loadHelp() {
   const host = $('#hp-list'); let r;
   try { r = await api.get('/api/help'); } catch (e) { return toast(e.message); }
-  const card = x => { const [lb, cl] = HELP_ST[x.status] || ['', ''];
+  const card = x => { const [lb, cl] = x.pending ? ['🤖 AI đang giải bài…', 'warn'] : (HELP_ST[x.status] || ['', '']);
     return `<div class="card" style="margin-bottom:12px" data-h="${x.id}">
       <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><span class="pill ${cl}">${lb}</span><small class="muted">${esc(x.subject)} · ${fmtDate(x.created_at)}</small></div>
       ${x.text ? `<p style="white-space:pre-wrap;margin:8px 0;font-size:13px">${esc(x.text)}</p>` : ''}
@@ -292,7 +292,8 @@ async function loadHelp() {
       ${x.teacher_answer ? `<div style="background:#ecfdf3;border:1px solid #abefc6;border-radius:10px;padding:10px;margin:8px 0"><b style="font-size:12px;color:#067647">👩‍🏫 ${esc(x.teacher_name || 'Thầy cô')} trả lời</b><div style="white-space:pre-wrap;font-size:13px;margin-top:4px">${esc(x.teacher_answer)}</div></div>` : ''}
       ${x.verified ? '<div style="font-size:12px;color:#067647;margin:6px 0">✅ Thầy cô đã kiểm tra: lời giải của AI là đúng.</div>' : ''}
       ${x.ai && x.ai.solution ? `<details ${x.status === 'ai' || (x.verified && !x.seen) ? 'open' : ''} style="background:#f5f6ff;border:1px solid #d9dcfb;border-radius:10px;padding:10px;margin:8px 0"><summary style="cursor:pointer;font-weight:700;font-size:13px">🤖 Lời giải của AI${x.ai.answer ? ': ' + esc(x.ai.answer) : ''} ${x.ai.conf === 'medium' ? '<small style="color:#b45309">(AI chưa thật chắc — hãy kiểm tra lại)</small>' : ''}</summary><div style="white-space:pre-wrap;font-size:13px;margin-top:8px;line-height:1.6">${esc(x.ai.solution)}</div>${x.ai.note ? `<div class="muted" style="font-size:12px;margin-top:6px">💡 ${esc(x.ai.note)}</div>` : ''}</details>` : ''}
-      ${x.status === 'waiting' && x.ai_error ? `<div class="muted" style="font-size:12px;margin:6px 0">${esc(x.ai_error)}</div>` : ''}
+      ${x.pending ? '<div class="muted" style="font-size:12px;margin:6px 0">⏳ AI đang đọc đề và giải, vui lòng chờ — trang tự cập nhật.</div>' : ''}
+      ${x.status === 'waiting' && !x.pending && x.ai_error ? `<div class="muted" style="font-size:12px;margin:6px 0">${esc(x.ai_error)}</div>` : ''}
       ${x.status === 'waiting' && x.ai && !x.ai.answer ? `<div class="muted" style="font-size:12px;margin:6px 0">AI chưa chắc chắn nên đã chuyển cho thầy cô${x.ai.note ? ': ' + esc(x.ai.note) : ''}.</div>` : ''}
       <div class="lb-row" style="margin-top:8px">${x.status === 'ai' ? '<button class="btn btn-outline sm" data-ask>🙋 Nhờ thầy cô giúp</button>' : ''}${x.status === 'ai' || x.status === 'answered' ? '<button class="btn btn-outline sm" data-ok>👍 Đã hiểu</button>' : ''}<button class="btn btn-outline sm" data-del style="color:#b42318">Xóa</button></div></div>`; };
   host.innerHTML = r.requests.length ? r.requests.map(card).join('') : '<div class="card empty">Bạn chưa hỏi câu nào. Hãy gửi đề bài đầu tiên nhé!</div>';
@@ -304,6 +305,7 @@ async function loadHelp() {
     if (d) d.onclick = () => { if (confirm('Xóa câu hỏi này?')) run(() => api.del('/api/help/' + id)); };
     if (x.status === 'answered' && !x.seen) api.post(`/api/help/${id}/seen`).catch(() => {});
   });
+  clearTimeout(helpTimer); if (r.requests.some(x => x.pending)) helpTimer = setTimeout(() => { if (!$('#v-help').hidden) loadHelp(); }, 4000);   // AI chạy nền: tự cập nhật đến khi xong
   const tb = $('#stabs [data-t="help"]'); if (tb) tb.textContent = r.unseen ? `🙋 Hỏi bài (${r.unseen} trả lời mới)` : '🙋 Hỏi bài';
 }
 

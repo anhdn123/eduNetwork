@@ -486,7 +486,7 @@ async function drawHelp() {
   const tb = $('#tab-help'); if (tb) tb.textContent = r.waiting ? `🙋 Hỏi bài (${r.waiting})` : '🙋 Hỏi bài';
   const ST = {ai: ['🤖 AI đã giải', 'ok'], waiting: ['⏳ Chờ giáo viên', 'warn'], answered: ['✅ Đã trả lời', 'ok'], closed: ['Học sinh đã hiểu', '']};
   const chips = [['waiting', `⏳ Chờ giáo viên${r.waiting ? ' (' + r.waiting + ')' : ''}`], ['ai', '🤖 AI đã giải'], ['answered', '✅ Đã trả lời'], ['closed', 'Đã hiểu'], ['all', 'Tất cả']];
-  const card = x => { const [lb, cl] = ST[x.status] || ['', ''];
+  const card = x => { const [lb, cl] = x.pending ? ['🤖 AI đang giải', 'warn'] : (ST[x.status] || ['', '']);
     return `<div class="card" style="margin-bottom:12px" data-h="${x.id}">
       <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><div><b>${esc(x.student)}</b> <span class="muted" style="font-size:12px">· Lớp ${esc(x.class_name || '—')} · ${esc(x.subject)} · ${fmtDate(x.created_at)}</span></div><span class="pill ${cl}">${lb}</span></div>
       ${x.text ? `<p style="white-space:pre-wrap;margin:8px 0;font-size:13px">${esc(x.text)}</p>` : ''}

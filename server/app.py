@@ -1270,7 +1270,7 @@ def _help_dict(con, r, teacher=False):
     d = {"id": r["id"], "subject": r["subject"], "text": r["text"], "images": json.loads(r["images"] or "[]"), "status": r["status"], "asked_teacher": bool(r["asked_teacher"]),
          "created_at": r["created_at"], "answered_at": r["answered_at"], "teacher_answer": r["teacher_answer"], "verified": bool(r["teacher_verified"]), "seen": bool(r["student_seen"]),
          "ai": ({"answer": r["ai_answer"] or "", "solution": r["ai_solution"] or "", "conf": r["ai_conf"] or "low", "note": r["ai_note"] or ""} if r["ai_conf"] else None),
-         "ai_error": r["ai_error"] or ""}
+         "ai_error": r["ai_error"] or "", "pending": bool(r["ai_pending"])}
     if r["teacher_id"]:
         t = con.execute("SELECT name FROM users WHERE id=?", (r["teacher_id"],)).fetchone()
         d["teacher_name"] = t["name"] if t else ""
@@ -1296,6 +1296,30 @@ def r_help_image(c):
     return r_report_image(c)
 
 
+def _help_run_ai(hid, uid, blobs, text, subject):
+    """Chạy nền: cho AI giải rồi ghi kết quả. AI chắc chắn → trạng thái ai; không chắc / lỗi → chuyển giáo viên."""
+    res, err = None, ""
+    try:
+        res = ai.tutor(uid, blobs, text, subject)
+    except ai.AiError as e:
+        err = e.msg
+    except Exception as e:   # pragma: no cover - lỗi bất ngờ: vẫn phải chuyển cho giáo viên, không để học sinh chờ mãi
+        err = "AI gặp lỗi (" + type(e).__name__ + ")"
+    status = "ai" if res and res["answer"] and res["solution"] and res["conf"] != "low" else "waiting"
+    con = db.connect()
+    try:
+        con.execute("UPDATE help_requests SET status=?, ai_answer=?, ai_solution=?, ai_conf=?, ai_note=?, ai_error=?, ai_pending=0 WHERE id=? AND ai_pending=1 AND status='waiting'",
+                    (status, res and res["answer"], res and res["solution"], res and res["conf"], res and res["note"], err, hid))
+        con.commit()
+    finally:
+        con.close()
+
+
+def _help_expire(con):
+    """Câu hỏi nhờ AI quá 4 phút mà chưa có kết quả (máy chủ khởi động lại giữa chừng…) → chuyển cho giáo viên."""
+    con.execute("UPDATE help_requests SET ai_pending=0, ai_error='AI trả lời quá lâu — câu hỏi đã chuyển cho thầy cô.' WHERE ai_pending=1 AND created_at<?", (db.now() - 240,))
+
+
 @route("POST", "/api/help", ("student",))
 def r_help_new(c):
     """Học sinh gửi đề (ảnh đã tải qua /api/help/image và / hoặc chữ). AI giải ngay; nếu AI không chắc hoặc chưa bật thì chuyển cho giáo viên của lớp."""
@@ -1314,22 +1338,20 @@ def r_help_new(c):
         raise ApiError(400, "Hãy chụp / tải ảnh đề bài hoặc gõ nội dung câu hỏi")
     if c.con.execute("SELECT COUNT(*) n FROM help_requests WHERE student_id=? AND created_at>?", (c.user["id"], db.now() - 86400)).fetchone()["n"] >= HELP_DAILY:
         raise ApiError(429, f"Hôm nay bạn đã hỏi {HELP_DAILY} câu rồi, hãy thử lại vào ngày mai")
-    res, err = None, ""
-    if ai.configured():
-        try:
-            res = ai.tutor(c.user["id"], blobs, text, subject)
-        except ai.AiError as e:
-            err = e.msg
-    else:
-        err = "AI chưa được bật — câu hỏi đã gửi cho thầy cô."
-    status = "ai" if res and res["answer"] and res["solution"] and res["conf"] != "low" else "waiting"   # AI không chắc / không có đáp án → giáo viên hỗ trợ
-    cur = c.con.execute("INSERT INTO help_requests(student_id, class_id, subject, text, images, status, ai_answer, ai_solution, ai_conf, ai_note, ai_error, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (c.user["id"], c.user["class_id"], subject, text, json.dumps(imgs), status, res and res["answer"], res and res["solution"], res and res["conf"], res and res["note"], err, db.now()))
-    return _help_dict(c.con, c.con.execute("SELECT * FROM help_requests WHERE id=?", (cur.lastrowid,)).fetchone())
+    use_ai = ai.configured()
+    err = "" if use_ai else "AI chưa được bật — câu hỏi đã gửi cho thầy cô."
+    cur = c.con.execute("INSERT INTO help_requests(student_id, class_id, subject, text, images, status, ai_error, ai_pending, created_at) VALUES(?,?,?,?,?,'waiting',?,?,?)",
+                        (c.user["id"], c.user["class_id"], subject, text, json.dumps(imgs), err, 1 if use_ai else 0, db.now()))
+    hid = cur.lastrowid
+    c.con.commit()   # câu hỏi đã được ghi trước khi luồng nền chạy
+    if use_ai:
+        threading.Thread(target=_help_run_ai, args=(hid, c.user["id"], blobs, text, subject), daemon=True).start()
+    return _help_dict(c.con, c.con.execute("SELECT * FROM help_requests WHERE id=?", (hid,)).fetchone())
 
 
 @route("GET", "/api/help", ("student", "teacher", "admin"))
 def r_help_list(c):
+    _help_expire(c.con)
     if c.user["role"] == "student":
         rows = c.con.execute("SELECT * FROM help_requests WHERE student_id=? ORDER BY id DESC LIMIT 100", (c.user["id"],)).fetchall()
         unseen = c.con.execute("SELECT COUNT(*) n FROM help_requests WHERE student_id=? AND status='answered' AND student_seen=0", (c.user["id"],)).fetchone()["n"]
@@ -1341,13 +1363,15 @@ def r_help_list(c):
             return {"requests": [], "waiting": 0}
         where.append(f"class_id IN ({','.join('?' * len(ids))})")
         args += ids
-    waiting = c.con.execute(f"SELECT COUNT(*) n FROM help_requests WHERE status='waiting' AND {' AND '.join(where)}", args).fetchone()["n"]
+    waiting = c.con.execute(f"SELECT COUNT(*) n FROM help_requests WHERE status='waiting' AND ai_pending=0 AND {' AND '.join(where)}", args).fetchone()["n"]
     st = c.query.get("status") or "waiting"
     if st == "none":   # chỉ lấy số câu đang chờ (hiện trên tab / chuông)
         return {"requests": [], "waiting": waiting}
     if st in ("waiting", "ai", "answered", "closed"):
         where.append("status=?")
         args.append(st)
+        if st == "waiting":
+            where.append("ai_pending=0")   # đang chờ AI thì chưa cần giáo viên
     rows = c.con.execute(f"SELECT * FROM help_requests WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT 200", args).fetchall()
     return {"requests": [_help_dict(c.con, r, True) for r in rows], "waiting": waiting}
 
@@ -1399,7 +1423,7 @@ def r_help_answer(c):
         raise ApiError(400, "Câu này AI chưa có lời giải để xác nhận")
     if not text and not approve:
         raise ApiError(400, "Hãy nhập lời giải / hướng dẫn cho học sinh")
-    c.con.execute("UPDATE help_requests SET status='answered', teacher_id=?, teacher_answer=?, teacher_verified=?, student_seen=0, answered_at=? WHERE id=?",
+    c.con.execute("UPDATE help_requests SET status='answered', ai_pending=0, teacher_id=?, teacher_answer=?, teacher_verified=?, student_seen=0, answered_at=? WHERE id=?",
                   (c.user["id"], text, 1 if approve else 0, db.now(), r["id"]))
     audit(c.con, c.user["id"], "help_answer", f"#{r['id']}")
     return {"ok": True}
