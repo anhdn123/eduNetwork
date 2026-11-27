@@ -258,3 +258,10 @@ dùng bucket riêng tư, giữ khóa bí mật, và xem lại yêu cầu pháp l
      Máy tính phải bật lúc 23:30; nếu tắt thì tác vụ chạy ngay khi máy bật lại. Chạy tay bất kỳ lúc nào:  powershell -ExecutionPolicy Bypass -File tools\fly-backup.ps1
    - Khôi phục: giải nén tệp .tgz (tar -xzf lbai-Mon.tgz) được lbai.db và thư mục uploads; đưa lên ổ đĩa Fly (/data) khi ứng dụng đang dừng, rồi khởi động lại.
    - Bản sao lưu chứa dữ liệu học sinh (tên, điểm, bài làm): giữ máy tính và thư mục lbai-backups an toàn, không chia sẻ ra ngoài.
+
+22. ĐO THỜI GIAN LÀM BÀI · PHÁT HIỆN KHOANH BỪA
+   - Bảng "Kết quả" của từng bài đã giao (tab "Bài đã giao" > "Kết quả") có cột "Thời gian làm": từ lúc học sinh bấm "Bắt đầu làm bài" đến lúc nộp, kèm số giây trung bình mỗi câu.
+     Phía trên có thời gian làm trung vị của lớp (khi có ít nhất 4 bài đã nộp).
+   - Bài làm bị gắn cờ "⚠ Quá nhanh" (nền cam) khi trung bình dưới 15 giây mỗi câu (đổi bằng biến LBAI_FAST_SEC_PER_Q), hoặc chưa bằng 35% thời gian trung vị của lớp.
+     Có ô "Chỉ hiện bài làm quá nhanh" để lọc. Xem bài làm của học sinh cũng hiện thời gian và cờ. Tệp CSV có thêm thời gian làm (giây), giây mỗi câu, cờ quá nhanh.
+   - Lưu ý: thời gian tính cả lúc học sinh mở bài mà để đó (bài không giới hạn thời gian có thể thành hàng giờ); cờ chỉ là gợi ý để giáo viên xem lại, không tự trừ điểm.

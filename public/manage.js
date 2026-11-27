@@ -744,23 +744,27 @@ async function editVariations(a) {
   };
   draw();
 }
+const fmtDur = sec => { if (sec == null) return '—'; const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60; return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`; };   // thời gian làm bài: m:ss hoặc h:mm:ss
 async function showResults(a) {
-  const rs = (await api.get(`/api/assignments/${a.id}/results`)).results;
+  const R = await api.get(`/api/assignments/${a.id}/results`), rs = R.results;
   const st = {done: '<span class="pill ok">Đã nộp</span>', doing: '<span class="pill warn">Đang làm</span>', todo: '<span class="pill">Chưa làm</span>'};
-  const m = modal(`<h2>Kết quả · ${esc(a.title)}</h2><p style="font-size:12px;color:#667085;margin:0 0 8px">Lớp ${esc(a.class_name)} · ${a.submitted}/${a.total} đã nộp · điểm TB ${fmtScore(a.avg)} (thang 10, chỉ tính câu chấm tự động; tự luận giáo viên chấm riêng)</p>
-    <div style="max-height:52vh;overflow:auto"><table class="tbl"><tr><th>Học sinh</th><th>Mã đề</th><th>Trạng thái</th><th>Điểm (10)</th><th>Nộp lúc</th><th></th></tr>
-    ${rs.map(r => `<tr><td><b>${esc(r.name)}</b></td><td>${esc(r.code || '—')}</td><td>${st[r.status]}${r.late ? ' <span class="pill bad">Trễ</span>' : ''}</td><td><b>${fmtScore(r.score10)}</b>${r.max ? ` <small style="color:#667085">(${fmtScore(r.score)}/${r.max} câu)</small>` : ''}</td><td>${fmtDate(r.submitted_at)}</td>
+  const m = modal(`<h2>Kết quả · ${esc(a.title)}</h2><p style="font-size:12px;color:#667085;margin:0 0 8px">Lớp ${esc(a.class_name)} · ${a.submitted}/${a.total} đã nộp · điểm TB ${fmtScore(a.avg)} (thang 10, chỉ tính câu chấm tự động; tự luận giáo viên chấm riêng)${R.median_sec != null ? ` · thời gian làm trung vị <b>${fmtDur(R.median_sec)}</b>` : ''}</p>
+    <label style="display:flex;gap:6px;align-items:center;font-size:12px;margin:0 0 8px;cursor:pointer"><input type="checkbox" id="rfast"> Chỉ hiện bài làm <b style="color:#b45309">quá nhanh</b> (nghi khoanh bừa: dưới ${R.fast_sec_per_q} giây/câu hoặc chưa bằng 35% thời gian trung vị của lớp) — ${R.fast_n} bài</label>
+    <div style="max-height:52vh;overflow:auto"><table class="tbl"><tr><th>Học sinh</th><th>Mã đề</th><th>Trạng thái</th><th>Điểm (10)</th><th title="Từ lúc bấm Bắt đầu làm bài đến lúc nộp">Thời gian làm</th><th>Nộp lúc</th><th></th></tr>
+    ${rs.map(r => `<tr data-fast="${r.fast ? 1 : 0}" style="${r.fast ? 'background:#fff7ed' : ''}"><td><b>${esc(r.name)}</b></td><td>${esc(r.code || '—')}</td><td>${st[r.status]}${r.late ? ' <span class="pill bad">Trễ</span>' : ''}</td><td><b>${fmtScore(r.score10)}</b>${r.max ? ` <small style="color:#667085">(${fmtScore(r.score)}/${r.max} câu)</small>` : ''}</td>
+      <td style="white-space:nowrap">${r.spent_sec == null ? '<span style="color:#98a2b3">—</span>' : `<b>${fmtDur(r.spent_sec)}</b><div style="font-size:10px;color:#667085">${r.sec_per_q} giây/câu</div>`}${r.fast ? ` <span class="pill bad" title="${esc(r.fast_why)}">⚠ Quá nhanh</span>` : ''}</td><td>${fmtDate(r.submitted_at)}</td>
       <td>${r.sub_id ? `<button class="btn btn-outline sm" data-sub="${r.sub_id}">Xem bài</button>` : ''}</td></tr>`).join('')}</table></div>
     <div class="lb-row" style="margin-top:12px"><button class="btn btn-blue" id="rcsv">⬇ Xuất CSV</button></div>`, true);
-  $('#rcsv', m.b).onclick = () => download(`ket-qua-${a.id}.csv`, 'Học sinh,Tên đăng nhập,Mã đề,Trạng thái,Điểm (thang 10),Số câu đúng,Số câu chấm,Nộp lúc\n' +
-    rs.map(r => [r.name, r.username, r.code || '', r.status, r.score10 == null ? '' : r.score10, r.score == null ? '' : r.score, r.max == null ? '' : r.max, r.submitted_at ? fmtDate(r.submitted_at) : ''].map(csvCell).join(',')).join('\n'));
+  $('#rfast', m.b).onchange = e => $$('tr[data-fast]', m.b).forEach(tr => { tr.hidden = e.target.checked && tr.dataset.fast !== '1'; });
+  $('#rcsv', m.b).onclick = () => download(`ket-qua-${a.id}.csv`, 'Học sinh,Tên đăng nhập,Mã đề,Trạng thái,Điểm (thang 10),Số câu đúng,Số câu chấm,Thời gian làm (giây),Giây mỗi câu,Làm quá nhanh,Nộp lúc\n' +
+    rs.map(r => [r.name, r.username, r.code || '', r.status, r.score10 == null ? '' : r.score10, r.score == null ? '' : r.score, r.max == null ? '' : r.max, r.spent_sec == null ? '' : r.spent_sec, r.sec_per_q == null ? '' : r.sec_per_q, r.fast ? 'có' : '', r.submitted_at ? fmtDate(r.submitted_at) : ''].map(csvCell).join(',')).join('\n'));
   $$('[data-sub]', m.b).forEach(b => b.onclick = () => viewSubmission(+b.dataset.sub, () => showResults(a).catch(fail)).catch(fail));
 }
 async function viewSubmission(id, onSaved) {
   const s = await api.get('/api/submissions/' + id), X = window.LBX;
   const given = (q, g) => g == null || g === '' ? '<i>(bỏ trống)</i>' : Array.isArray(g) ? g.map((v, i) => 'abcd'[i] + ':' + (v === 0 ? 'Đ' : v === 1 ? 'S' : '?')).join(' ') : q.t === 'essay' || q.t === 'short' ? esc(g) : (q.opts && q.opts.length === 2 ? q.opts[g] : 'ABCD'[g]);
   const manualN = s.details.filter(d => d.score == null).length;
-  const m = modal(`<h2>Bài làm của ${esc(s.student)} · ${esc(s.code)}</h2><p style="font-size:12px;color:#667085" id="sscore">Điểm: <b>${fmtScore(s.score)}/${s.max}</b> câu${manualN ? ` · ${manualN} câu cần giáo viên chấm tay (mỗi câu tối đa 1 điểm)` : ''}</p><div style="max-height:60vh;overflow:auto">
+  const m = modal(`<h2>Bài làm của ${esc(s.student)} · ${esc(s.code)}</h2><p style="font-size:12px;color:#667085" id="sscore">${s.spent_sec != null ? `⏱ Làm trong <b>${fmtDur(s.spent_sec)}</b> (${s.sec_per_q} giây/câu)${s.fast ? ' <span class="pill bad">⚠ Quá nhanh — nghi khoanh bừa</span>' : ''} · ` : ''}Điểm: <b>${fmtScore(s.score)}/${s.max}</b> câu${manualN ? ` · ${manualN} câu cần giáo viên chấm tay (mỗi câu tối đa 1 điểm)` : ''}</p><div style="max-height:60vh;overflow:auto">
     ${s.questions.map((q, i) => { const d = s.details[i] || {}, ok = d.score, man = s.manual[i];
       const grader = ok == null ? `<div style="margin-top:6px;font-size:12px">Điểm giáo viên chấm (0–1): <input type="number" min="0" max="1" step="0.25" data-g="${i}" value="${man == null ? '' : man}" style="width:80px;padding:5px;border:1px solid var(--line);border-radius:6px"></div>` : '';
       return `<div class="q-item"><div class="qn">Câu ${i + 1}. ${X.qBody(q)} ${ok == null ? (man == null ? '<span class="pill warn">Chờ chấm</span>' : `<span class="pill ok">${fmtScore(man)} điểm</span>`) : ok === 1 ? '<span class="pill ok">Đúng</span>' : ok > 0 ? `<span class="pill warn">${ok} điểm</span>` : '<span class="pill bad">Sai</span>'}</div>

@@ -834,11 +834,32 @@ def r_assign_get(c):
             "exam": {"title": ex["title"], "subject": ex["subject"], "grade": ex["grade"], "topic": ex["topic"], "variations": json.loads(ex["variations"])}}
 
 
+# Nghi khoanh bừa: làm quá nhanh. Thời gian làm = từ lúc học sinh bấm “Bắt đầu làm bài” đến lúc nộp.
+FAST_SEC_PER_Q = int(os.environ.get("LBAI_FAST_SEC_PER_Q") or 15)   # trung bình dưới ngần này giây mỗi câu
+FAST_VS_MEDIAN = 0.35                                                 # hoặc chưa bằng 35% thời gian trung vị của cả lớp (cần ≥ 4 bài đã nộp)
+
+
+def spent_of(s):
+    return max(0, s["submitted_at"] - s["started_at"]) if s["submitted_at"] and s["started_at"] else None
+
+
+def fast_flag(spent, nq, median):
+    """(làm quá nhanh?, lý do) của một bài đã nộp."""
+    if spent is None or not nq:
+        return False, ""
+    if spent / nq < FAST_SEC_PER_Q:
+        return True, f"trung bình {spent / nq:.0f} giây/câu (dưới {FAST_SEC_PER_Q} giây)"
+    if median and spent < FAST_VS_MEDIAN * median:
+        return True, f"chỉ bằng {spent * 100 // median}% thời gian trung vị của lớp"
+    return False, ""
+
+
 @route("GET", r"/api/assignments/(\d+)/results", TEACHER_ROLES)
 def r_assign_results(c):
     a = get_assignment(c.con, c.user, int(c.p[0]))
     ex = c.con.execute("SELECT variations FROM exams WHERE id=?", (a["exam_id"],)).fetchone()
-    codes = [v["code"] for v in json.loads(ex["variations"])]
+    vs = json.loads(ex["variations"])
+    codes = [v["code"] for v in vs]
     rows = c.con.execute("SELECT s.student_id, s.variation, u.name, u.username FROM assignment_students s JOIN users u ON u.id=s.student_id WHERE s.assignment_id=? ORDER BY u.name", (a["id"],)).fetchall()
     out = []
     for r in rows:
@@ -852,8 +873,14 @@ def r_assign_results(c):
                     "score": best["score"] if best else None, "max": best["max_score"] if best else None,
                     "score10": score10(best["score"], best["max_score"]) if best else None,
                     "late": bool(best["late"]) if best else False, "submitted_at": best["submitted_at"] if best else None,
-                    "sub_id": best["id"] if best else None})
-    return {"results": out}
+                    "sub_id": best["id"] if best else None,
+                    "spent_sec": spent_of(best) if best else None, "n_q": len(vs[var]["questions"]) if best and var is not None and var < len(vs) else None})
+    spents = sorted(r["spent_sec"] for r in out if r["spent_sec"] is not None)
+    median = spents[len(spents) // 2] if len(spents) >= 4 else None
+    for r in out:
+        r["fast"], r["fast_why"] = fast_flag(r["spent_sec"], r["n_q"], median)
+        r["sec_per_q"] = round(r["spent_sec"] / r["n_q"], 1) if r["spent_sec"] is not None and r["n_q"] else None
+    return {"results": out, "median_sec": median, "fast_n": sum(1 for r in out if r["fast"]), "fast_sec_per_q": FAST_SEC_PER_Q}
 
 
 @route("GET", r"/api/submissions/(\d+)", TEACHER_ROLES)
@@ -865,9 +892,12 @@ def r_sub_get(c):
     ex = json.loads(c.con.execute("SELECT variations FROM exams WHERE id=?", (a["exam_id"],)).fetchone()["variations"])
     stu = c.con.execute("SELECT name FROM users WHERE id=?", (s["student_id"],)).fetchone()
     manual = {str(r["qi"]): r["score"] for r in c.con.execute("SELECT qi,score FROM essay_grades WHERE submission_id=?", (s["id"],)).fetchall()}
-    return {"student": stu["name"], "questions": ex[s["variation"]]["questions"], "code": ex[s["variation"]]["code"],
+    qs = ex[s["variation"]]["questions"]
+    spent = spent_of(s)
+    return {"student": stu["name"], "questions": qs, "code": ex[s["variation"]]["code"],
             "answers": json.loads(s["answers"] or "[]"), "details": json.loads(s["details"] or "[]"), "score": s["score"], "max": s["max_score"],
-            "manual": manual, "submitted": bool(s["submitted_at"])}
+            "manual": manual, "submitted": bool(s["submitted_at"]), "started_at": s["started_at"], "submitted_at": s["submitted_at"], "spent_sec": spent,
+            "sec_per_q": round(spent / len(qs), 1) if spent is not None and qs else None, "fast": fast_flag(spent, len(qs), None)[0]}
 
 
 def recompute_score(con, sub):

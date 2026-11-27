@@ -1477,6 +1477,54 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(pa["parts"]["tests"], 5000)                                                 # điểm 10/10 → được thưởng sau khi chấm lại
         self.assertTrue(any(t["title"] == "Bài thưởng" for t in pa["tests"]))
 
+    def test_zz_timing(self):
+        """Đo thời gian làm bài: kết quả hiện thời gian làm của từng học sinh, trung vị của lớp và gắn cờ “quá nhanh” (dưới 15 giây/câu hoặc chưa bằng 35% trung vị) để phát hiện khoanh bừa."""
+        lan = self.C()
+        lan.post("/api/login", {"username": "lan", "password": LAN_PW})
+        cid = lan.post("/api/classes", {"name": "TGIAN", "grade": "9"})[1]["id"]
+        accs = lan.post("/api/students/bulk", {"class_id": cid, "rows": ["Nhanh Quá", "Làm Kỹ A", "Làm Kỹ B", "Làm Kỹ C", "Hơi Nhanh"]})[1]["accounts"]
+        v = {"code": "G1", "questions": [mcq(i, 0) for i in range(1, 5)]}                          # 4 câu
+        aid = lan.post("/api/assignments", {"title": "Đo giờ", "class_id": cid, "dist_mode": "alt", "duration_min": 0, "max_attempts": 1, "show_result": True,
+                                            "exam": {"title": "Đo giờ", "variations": [v]}})[1]["id"]
+        subs = {}
+        for acc in accs:
+            st = self.C()
+            st.post("/api/login", {"username": acc["username"], "password": acc["password"]})
+            st.post(f"/api/assignments/{aid}/start")
+            subs[acc["id"]] = st.post(f"/api/assignments/{aid}/submit", {"answers": [0, 0, 0, 0]})[1]["submission_id"]
+        spent = dict(zip([a["id"] for a in accs], [5, 600, 700, 800, 100]))                       # giây
+        con = db.connect()
+        for sid, sec in spent.items():
+            con.execute("UPDATE submissions SET started_at = submitted_at - ? WHERE id=?", (sec, subs[sid]))
+        con.commit(); con.close()
+        st, r = lan.get(f"/api/assignments/{aid}/results")
+        self.assertEqual(st, 200, r)
+        by = {x["student_id"]: x for x in r["results"]}
+        self.assertEqual({i: x["spent_sec"] for i, x in by.items()}, spent)
+        self.assertEqual(by[accs[1]["id"]]["sec_per_q"], 150.0)
+        self.assertEqual(r["median_sec"], 600)
+        flags = {i: x["fast"] for i, x in by.items()}
+        self.assertEqual(flags, {accs[0]["id"]: True, accs[1]["id"]: False, accs[2]["id"]: False, accs[3]["id"]: False, accs[4]["id"]: True})
+        self.assertIn("giây/câu", by[accs[0]["id"]]["fast_why"])                                   # 5 giây / 4 câu: dưới 15 giây mỗi câu
+        self.assertIn("trung vị", by[accs[4]["id"]]["fast_why"])                                   # 100 giây < 35% của 600 giây
+        self.assertEqual((r["fast_n"], r["fast_sec_per_q"]), (2, 15))
+        # chi tiết một bài làm
+        d = lan.get(f"/api/submissions/{subs[accs[0]['id']]}")[1]
+        self.assertEqual((d["spent_sec"], d["fast"], d["sec_per_q"]), (5, True, 1.2))
+        self.assertEqual(lan.get(f"/api/submissions/{subs[accs[2]['id']]}")[1]["fast"], False)
+        # quyền: giáo viên khác không xem được, học sinh không xem được
+        binh = self.C()
+        binh.post("/api/login", {"username": "binh", "password": self.__class__.binh_pw})
+        self.assertEqual(binh.get(f"/api/assignments/{aid}/results")[0], 404)
+        st2 = self.C()
+        st2.post("/api/login", {"username": accs[0]["username"], "password": accs[0]["password"]})
+        self.assertEqual(st2.get(f"/api/assignments/{aid}/results")[0], 403)
+        # ít hơn 4 bài đã nộp thì không có trung vị (chỉ xét giây/câu)
+        a2 = lan.post("/api/assignments", {"title": "Ít bài", "class_id": cid, "dist_mode": "alt", "duration_min": 0, "max_attempts": 1, "show_result": True,
+                                           "exam": {"title": "Ít bài", "variations": [v]}})[1]["id"]
+        r2 = lan.get(f"/api/assignments/{a2}/results")[1]
+        self.assertEqual((r2["median_sec"], r2["fast_n"]), (None, 0))
+
     def test_zz_attendance_rules(self):
         """Học sinh mới tạo vẫn có lịch; phút đi muộn; chốt điểm danh; phạt muộn và thưởng điểm theo quy tắc từng tháng."""
         import datetime as dt

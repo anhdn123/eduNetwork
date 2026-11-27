@@ -425,6 +425,7 @@ process.on('exit', cleanup);
     await click('[data-x=res]'); await waitFor("document.querySelector('[data-sub]')", 8, 'bảng kết quả');
     const rtxt = await ev("document.querySelector('.lb-modal').innerText.replace(/\\s+/g,' ')");
     check('giáo viên xem kết quả từng học sinh', /Nguyễn Văn An/.test(rtxt) && /Đã nộp/.test(rtxt), rtxt.slice(0, 200));
+    check('kết quả hiện cột thời gian làm bài (giây/câu) và ô lọc bài làm quá nhanh', /thời gian làm/i.test(rtxt) && /giây\/câu/.test(rtxt) && (await ev("!!document.querySelector('#rfast')")) === true, rtxt.slice(0, 260));
     await shot('e2e_teacher_results');
     await click('[data-sub]'); await waitFor("/Bài làm của/.test(document.body.innerText)", 8, 'xem bài làm');
     check('xem chi tiết bài làm', true);
