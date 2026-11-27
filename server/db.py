@@ -245,6 +245,29 @@ CREATE TABLE IF NOT EXISTS answer_reports(          -- học sinh báo đáp án
 );
 CREATE INDEX IF NOT EXISTS idx_rep_owner ON answer_reports(owner_id, status);
 CREATE INDEX IF NOT EXISTS idx_rep_stu ON answer_reports(student_id, source, source_id);
+CREATE TABLE IF NOT EXISTS help_requests(          -- học sinh hỏi bài (ảnh / chữ): AI giải trước, giáo viên của lớp xem và trả lời khi AI không chắc hoặc học sinh nhờ thêm
+  id INTEGER PRIMARY KEY,
+  student_id INTEGER NOT NULL,
+  class_id INTEGER,
+  subject TEXT NOT NULL DEFAULT '',
+  text TEXT NOT NULL DEFAULT '',
+  images TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'waiting' CHECK(status IN ('ai','waiting','answered','closed')),   -- ai: AI đã trả lời · waiting: chờ giáo viên · answered: giáo viên đã trả lời/xác nhận · closed: học sinh đã hiểu
+  ai_answer TEXT,
+  ai_solution TEXT,
+  ai_conf TEXT,
+  ai_note TEXT,
+  ai_error TEXT,
+  asked_teacher INTEGER NOT NULL DEFAULT 0,
+  teacher_id INTEGER,
+  teacher_answer TEXT NOT NULL DEFAULT '',
+  teacher_verified INTEGER NOT NULL DEFAULT 0,  -- giáo viên xác nhận lời giải của AI là đúng
+  student_seen INTEGER NOT NULL DEFAULT 1,      -- 0 = giáo viên vừa trả lời, học sinh chưa xem
+  created_at INTEGER NOT NULL,
+  answered_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_help_stu ON help_requests(student_id, id);
+CREATE INDEX IF NOT EXISTS idx_help_class ON help_requests(class_id, status);
 CREATE TABLE IF NOT EXISTS class_schedule(
   class_id INTEGER NOT NULL,
   from_date TEXT NOT NULL,

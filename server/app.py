@@ -1261,6 +1261,150 @@ def _clean_answer(snap, v, what="Đáp án"):
     return {"idx": i, "text": str(opts[i])}
 
 
+# ---------- hỏi bài: học sinh gửi đề (ảnh / chữ), AI giải; giáo viên của lớp xem và trả lời khi AI không chắc ----------
+HELP_MAX_IMAGES = 4
+HELP_DAILY = 20
+
+
+def _help_dict(con, r, teacher=False):
+    d = {"id": r["id"], "subject": r["subject"], "text": r["text"], "images": json.loads(r["images"] or "[]"), "status": r["status"], "asked_teacher": bool(r["asked_teacher"]),
+         "created_at": r["created_at"], "answered_at": r["answered_at"], "teacher_answer": r["teacher_answer"], "verified": bool(r["teacher_verified"]), "seen": bool(r["student_seen"]),
+         "ai": ({"answer": r["ai_answer"] or "", "solution": r["ai_solution"] or "", "conf": r["ai_conf"] or "low", "note": r["ai_note"] or ""} if r["ai_conf"] else None),
+         "ai_error": r["ai_error"] or ""}
+    if r["teacher_id"]:
+        t = con.execute("SELECT name FROM users WHERE id=?", (r["teacher_id"],)).fetchone()
+        d["teacher_name"] = t["name"] if t else ""
+    if teacher:
+        st = con.execute("SELECT name FROM users WHERE id=?", (r["student_id"],)).fetchone()
+        cl = con.execute("SELECT name FROM classes WHERE id=?", (r["class_id"],)).fetchone() if r["class_id"] else None
+        d["student"] = st["name"] if st else "?"
+        d["class_name"] = cl["name"] if cl else ""
+    return d
+
+
+def _help_for_teacher(c, hid):
+    r = c.con.execute("SELECT * FROM help_requests WHERE id=?", (hid,)).fetchone()
+    if not r:
+        raise ApiError(404, "Không tìm thấy câu hỏi")
+    if c.user["role"] != "admin" and r["class_id"] not in {k["id"] for k in visible_classes(c.con, c.user)}:
+        raise ApiError(404, "Không tìm thấy câu hỏi")
+    return r
+
+
+@route("POST", "/api/help/image", ("student",))
+def r_help_image(c):
+    return r_report_image(c)
+
+
+@route("POST", "/api/help", ("student",))
+def r_help_new(c):
+    """Học sinh gửi đề (ảnh đã tải qua /api/help/image và / hoặc chữ). AI giải ngay; nếu AI không chắc hoặc chưa bật thì chuyển cho giáo viên của lớp."""
+    text = str(c.body.get("text") or "").strip()[:4000]
+    subject = str(c.body.get("subject") or "").strip()[:40]
+    imgs = c.body.get("images") or []
+    if not isinstance(imgs, list) or len(imgs) > HELP_MAX_IMAGES or len(set(map(str, imgs))) != len(imgs):
+        raise ApiError(400, f"Đính kèm tối đa {HELP_MAX_IMAGES} ảnh")
+    blobs = []
+    for i in imgs:
+        row = c.con.execute("SELECT mime, data FROM images WHERE id=? AND owner_id=?", (i, c.user["id"])).fetchone() if valid_img_id(i) else None
+        if not row:
+            raise ApiError(400, "Ảnh đính kèm không hợp lệ")
+        blobs.append((row["mime"], bytes(row["data"])))
+    if not text and not blobs:
+        raise ApiError(400, "Hãy chụp / tải ảnh đề bài hoặc gõ nội dung câu hỏi")
+    if c.con.execute("SELECT COUNT(*) n FROM help_requests WHERE student_id=? AND created_at>?", (c.user["id"], db.now() - 86400)).fetchone()["n"] >= HELP_DAILY:
+        raise ApiError(429, f"Hôm nay bạn đã hỏi {HELP_DAILY} câu rồi, hãy thử lại vào ngày mai")
+    res, err = None, ""
+    if ai.configured():
+        try:
+            res = ai.tutor(c.user["id"], blobs, text, subject)
+        except ai.AiError as e:
+            err = e.msg
+    else:
+        err = "AI chưa được bật — câu hỏi đã gửi cho thầy cô."
+    status = "ai" if res and res["answer"] and res["solution"] and res["conf"] != "low" else "waiting"   # AI không chắc / không có đáp án → giáo viên hỗ trợ
+    cur = c.con.execute("INSERT INTO help_requests(student_id, class_id, subject, text, images, status, ai_answer, ai_solution, ai_conf, ai_note, ai_error, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (c.user["id"], c.user["class_id"], subject, text, json.dumps(imgs), status, res and res["answer"], res and res["solution"], res and res["conf"], res and res["note"], err, db.now()))
+    return _help_dict(c.con, c.con.execute("SELECT * FROM help_requests WHERE id=?", (cur.lastrowid,)).fetchone())
+
+
+@route("GET", "/api/help", ("student", "teacher", "admin"))
+def r_help_list(c):
+    if c.user["role"] == "student":
+        rows = c.con.execute("SELECT * FROM help_requests WHERE student_id=? ORDER BY id DESC LIMIT 100", (c.user["id"],)).fetchall()
+        unseen = c.con.execute("SELECT COUNT(*) n FROM help_requests WHERE student_id=? AND status='answered' AND student_seen=0", (c.user["id"],)).fetchone()["n"]
+        return {"requests": [_help_dict(c.con, r) for r in rows], "unseen": unseen}
+    where, args = ["1=1"], []
+    if c.user["role"] != "admin":
+        ids = [k["id"] for k in visible_classes(c.con, c.user)]
+        if not ids:
+            return {"requests": [], "waiting": 0}
+        where.append(f"class_id IN ({','.join('?' * len(ids))})")
+        args += ids
+    waiting = c.con.execute(f"SELECT COUNT(*) n FROM help_requests WHERE status='waiting' AND {' AND '.join(where)}", args).fetchone()["n"]
+    st = c.query.get("status") or "waiting"
+    if st == "none":   # chỉ lấy số câu đang chờ (hiện trên tab / chuông)
+        return {"requests": [], "waiting": waiting}
+    if st in ("waiting", "ai", "answered", "closed"):
+        where.append("status=?")
+        args.append(st)
+    rows = c.con.execute(f"SELECT * FROM help_requests WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT 200", args).fetchall()
+    return {"requests": [_help_dict(c.con, r, True) for r in rows], "waiting": waiting}
+
+
+@route("POST", r"/api/help/(\d+)/ask-teacher", ("student",))
+def r_help_ask(c):
+    r = c.con.execute("SELECT * FROM help_requests WHERE id=? AND student_id=?", (int(c.p[0]), c.user["id"])).fetchone()
+    if not r:
+        raise ApiError(404, "Không tìm thấy câu hỏi")
+    if r["status"] in ("ai", "closed"):
+        c.con.execute("UPDATE help_requests SET status='waiting', asked_teacher=1, student_seen=1 WHERE id=?", (r["id"],))
+    return {"ok": True}
+
+
+@route("POST", r"/api/help/(\d+)/seen", ("student",))
+def r_help_seen(c):
+    c.con.execute("UPDATE help_requests SET student_seen=1 WHERE id=? AND student_id=?", (int(c.p[0]), c.user["id"]))
+    return {"ok": True}
+
+
+@route("POST", r"/api/help/(\d+)/close", ("student",))
+def r_help_close(c):
+    c.con.execute("UPDATE help_requests SET status='closed', student_seen=1 WHERE id=? AND student_id=? AND status IN ('ai','answered')", (int(c.p[0]), c.user["id"]))
+    return {"ok": True}
+
+
+@route("DELETE", r"/api/help/(\d+)", ("student", "teacher", "admin"))
+def r_help_del(c):
+    if c.user["role"] == "student":
+        r = c.con.execute("SELECT * FROM help_requests WHERE id=? AND student_id=?", (int(c.p[0]), c.user["id"])).fetchone()
+    else:
+        r = _help_for_teacher(c, int(c.p[0]))
+    if not r:
+        raise ApiError(404, "Không tìm thấy câu hỏi")
+    c.con.execute("DELETE FROM help_requests WHERE id=?", (r["id"],))
+    for i in json.loads(r["images"] or "[]"):
+        if valid_img_id(i):
+            drop_image_if_unused(c.con, i)
+    return {"ok": True}
+
+
+@route("POST", r"/api/help/(\d+)/answer", TEACHER_ROLES)
+def r_help_answer(c):
+    """Giáo viên của lớp (hoặc quản trị) trả lời, hoặc xác nhận lời giải của AI là đúng (approve_ai)."""
+    r = _help_for_teacher(c, int(c.p[0]))
+    text = str(c.body.get("text") or "").strip()[:4000]
+    approve = bool(c.body.get("approve_ai"))
+    if approve and not r["ai_answer"]:
+        raise ApiError(400, "Câu này AI chưa có lời giải để xác nhận")
+    if not text and not approve:
+        raise ApiError(400, "Hãy nhập lời giải / hướng dẫn cho học sinh")
+    c.con.execute("UPDATE help_requests SET status='answered', teacher_id=?, teacher_answer=?, teacher_verified=?, student_seen=0, answered_at=? WHERE id=?",
+                  (c.user["id"], text, 1 if approve else 0, db.now(), r["id"]))
+    audit(c.con, c.user["id"], "help_answer", f"#{r['id']}")
+    return {"ok": True}
+
+
 @route("POST", "/api/reports", ("student",))
 def r_report_create(c):
     b = c.body

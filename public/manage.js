@@ -10,12 +10,12 @@ let tab = 'classes', classes = [], curClass = null;
 if (me.role === 'admin') $('#tab-teachers').hidden = false;
 $$('#tabs button').forEach(b => b.onclick = () => { tab = b.dataset.tab; $$('#tabs button').forEach(x => x.classList.toggle('on', x === b)); draw(); });
 
-const draw = () => ({classes: drawClasses, attend: drawAttend, practice: drawPractice, bonus: drawBonus, points: drawPoints, reports: drawReports, assign: drawAssign, parents: drawParents, teachers: drawTeachers})[tab]();
-const hashTab = () => { if (['#practice', '#bonus', '#attend', '#points', '#reports'].includes(location.hash)) { tab = location.hash.slice(1); $$('#tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === tab)); return true; } };
+const draw = () => ({classes: drawClasses, attend: drawAttend, practice: drawPractice, bonus: drawBonus, points: drawPoints, reports: drawReports, help: drawHelp, assign: drawAssign, parents: drawParents, teachers: drawTeachers})[tab]();
+const hashTab = () => { if (['#practice', '#bonus', '#attend', '#points', '#reports', '#help'].includes(location.hash)) { tab = location.hash.slice(1); $$('#tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === tab)); return true; } };
 hashTab();
 window.addEventListener('hashchange', () => { if (hashTab()) draw(); });
 const fail = e => toast(e.message || 'Có lỗi xảy ra');
-setTimeout(() => refreshReportBadge(), 0);   // số báo cáo chờ duyệt hiện ngay trên tab
+setTimeout(() => { refreshReportBadge(); refreshHelpBadge(); }, 0);   // số báo cáo chờ duyệt hiện ngay trên tab
 
 /* ---------- Mã QR đăng nhập: máy khác cùng mạng wifi/LAN quét để vào hệ thống, không phải gõ địa chỉ ---------- */
 let SERVER = {lan: false, urls: []}, qrIdx = 0;
@@ -472,6 +472,39 @@ async function drawBonus() {
         <div style="max-height:56vh;overflow:auto"><table class="tbl"><tr><th>Bài luyện tập</th><th>Đúng/Tổng</th><th>Câu được cộng (TN · Đ/S · TLN)</th><th>Câu làm lại</th><th style="text-align:right">Điểm cộng</th><th>Lúc</th></tr>
         ${d.sessions.map(x => `<tr><td>${esc(x.title)}</td><td>${fmtScore(x.score)}/${x.max}</td><td>${x.mcq} · ${x.tf} · ${x.short}</td><td>${x.repeat ? `<span title="Câu đã làm đúng trước đó trong tháng, không cộng thêm">${x.repeat}</span>` : '—'}</td><td style="text-align:right"><b>+${x.points.toLocaleString('vi-VN')}</b></td><td>${fmtDate(x.at)}</td></tr>`).join('')}</table></div>`, true);
     } catch (e) { fail(e); }
+  });
+}
+/* ---------- TAB: hỏi bài — học sinh gửi đề (ảnh / chữ); AI giải trước, giáo viên của lớp xem, trả lời hoặc xác nhận lời giải AI ---------- */
+const hv = {status: 'waiting'};
+async function refreshHelpBadge() {
+  try { const r = await api.get('/api/help?status=none'); const b = $('#tab-help'); if (b) b.textContent = r.waiting ? `🙋 Hỏi bài (${r.waiting})` : '🙋 Hỏi bài'; return r.waiting; } catch (e) { return 0; }
+}
+async function drawHelp() {
+  view.innerHTML = '<div class="card empty">Đang tải...</div>';
+  let r;
+  try { r = await api.get('/api/help?status=' + hv.status); } catch (e) { return fail(e); }
+  const tb = $('#tab-help'); if (tb) tb.textContent = r.waiting ? `🙋 Hỏi bài (${r.waiting})` : '🙋 Hỏi bài';
+  const ST = {ai: ['🤖 AI đã giải', 'ok'], waiting: ['⏳ Chờ giáo viên', 'warn'], answered: ['✅ Đã trả lời', 'ok'], closed: ['Học sinh đã hiểu', '']};
+  const chips = [['waiting', `⏳ Chờ giáo viên${r.waiting ? ' (' + r.waiting + ')' : ''}`], ['ai', '🤖 AI đã giải'], ['answered', '✅ Đã trả lời'], ['closed', 'Đã hiểu'], ['all', 'Tất cả']];
+  const card = x => { const [lb, cl] = ST[x.status] || ['', ''];
+    return `<div class="card" style="margin-bottom:12px" data-h="${x.id}">
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><div><b>${esc(x.student)}</b> <span class="muted" style="font-size:12px">· Lớp ${esc(x.class_name || '—')} · ${esc(x.subject)} · ${fmtDate(x.created_at)}</span></div><span class="pill ${cl}">${lb}</span></div>
+      ${x.text ? `<p style="white-space:pre-wrap;margin:8px 0;font-size:13px">${esc(x.text)}</p>` : ''}
+      ${x.images.length ? `<div class="lb-row" style="margin:6px 0">${x.images.map(i => `<a href="/api/img/${i}" target="_blank"><img src="/api/img/${i}" style="max-height:150px;border-radius:8px;border:1px solid var(--line)"></a>`).join('')}</div>` : ''}
+      ${x.ai ? `<details ${x.status === 'waiting' ? 'open' : ''} style="background:#f5f6ff;border:1px solid #d9dcfb;border-radius:10px;padding:10px;margin:8px 0"><summary style="cursor:pointer;font-weight:700;font-size:13px">🤖 AI: ${x.ai.answer ? esc(x.ai.answer) : '<span style="color:#b42318">không có đáp án</span>'} <small style="color:${x.ai.conf === 'high' ? '#067647' : '#b45309'}">(độ tin cậy: ${{high: 'cao', medium: 'vừa', low: 'thấp'}[x.ai.conf] || x.ai.conf})</small></summary>${x.ai.solution ? `<div style="white-space:pre-wrap;font-size:13px;margin-top:8px;line-height:1.6">${esc(x.ai.solution)}</div>` : ''}${x.ai.note ? `<div class="muted" style="font-size:12px;margin-top:6px">💡 ${esc(x.ai.note)}</div>` : ''}</details>` : (x.ai_error ? `<div class="muted" style="font-size:12px;margin:6px 0">⚠ ${esc(x.ai_error)}</div>` : '')}
+      ${x.asked_teacher ? '<div style="font-size:12px;color:#b45309;margin:4px 0">🙋 Học sinh chủ động nhờ giáo viên giúp.</div>' : ''}
+      ${x.verified ? `<div style="font-size:12px;color:#067647;margin:4px 0">✅ ${esc(x.teacher_name || 'Giáo viên')} đã xác nhận lời giải của AI.</div>` : ''}
+      <textarea data-t rows="3" maxlength="4000" placeholder="Viết lời giải / hướng dẫn cho học sinh..." style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;font:inherit;font-size:13px;margin-top:6px">${esc(x.teacher_answer)}</textarea>
+      <div class="lb-row" style="margin-top:6px"><button class="btn btn-blue sm" data-send>Gửi lời giải cho học sinh</button>${x.ai && x.ai.answer && !x.verified ? '<button class="btn btn-outline sm" data-approve>✓ Xác nhận lời giải AI là đúng</button>' : ''}<button class="btn btn-outline sm" data-del style="color:#b42318">Xóa</button></div></div>`; };
+  view.innerHTML = `<h3 style="margin:0 0 4px">Học sinh hỏi bài</h3><p class="section-sub" style="margin:0 0 10px">Học sinh gửi đề (ảnh hoặc chữ) và được AI giải trước. Câu nào AI không chắc chắn hoặc học sinh nhờ thêm sẽ nằm ở “Chờ giáo viên”. Bạn viết lời giải, hoặc xác nhận lời giải của AI là đúng.</p>
+    <div class="lb-tabs" style="margin-bottom:10px">${chips.map(([k, t]) => `<button data-hs="${k}" class="${hv.status === k ? 'on' : ''}">${t}</button>`).join('')}</div>
+    ${r.requests.length ? r.requests.map(card).join('') : '<div class="card empty">Không có câu hỏi nào.</div>'}`;
+  $$('[data-hs]', view).forEach(b => b.onclick = () => { hv.status = b.dataset.hs; drawHelp(); });
+  $$('[data-h]', view).forEach(el => { const id = +el.dataset.h;
+    const send = o => api.post(`/api/help/${id}/answer`, o).then(() => { toast('Đã gửi cho học sinh'); drawHelp(); }).catch(fail);
+    $('[data-send]', el).onclick = () => { const t = $('[data-t]', el).value.trim(); if (!t) return toast('Hãy viết lời giải / hướng dẫn'); send({text: t}); };
+    const ap = $('[data-approve]', el); if (ap) ap.onclick = () => send({approve_ai: true, text: $('[data-t]', el).value.trim()});
+    $('[data-del]', el).onclick = () => { if (confirm('Xóa câu hỏi này?')) api.del('/api/help/' + id).then(() => { toast('Đã xóa'); drawHelp(); }).catch(fail); };
   });
 }
 /* ---------- TAB: báo đáp án sai — học sinh báo (kèm ảnh), giáo viên / quản trị duyệt: sửa đáp án + chấm lại bài đã nộp ---------- */

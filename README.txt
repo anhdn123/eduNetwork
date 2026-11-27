@@ -284,3 +284,9 @@ dùng bucket riêng tư, giữ khóa bí mật, và xem lại yêu cầu pháp l
    - Tự bỏ biểu tượng bút đứng đầu câu ("L Câu 1.") và các dòng đầu / chân trang lặp lại ("Năm học … Trang 6/163").
    - Chuyên đề mới tự hiện trong danh sách chuyên đề luyện tập, nút Xem / sửa; đổi tên hàng loạt trong "Quản lý ngân hàng" (ô Chuyên đề ở thanh thao tác hàng loạt).
    - Không dùng chung với chế độ "Đây là các đề thi" (mỗi chế độ tách theo một kiểu).
+
+26. HỎI BÀI (HỌC SINH GỬI ĐỀ, AI GIẢI, GIÁO VIÊN HỖ TRỢ)
+   - Học sinh: trang "Bài của tôi" → tab "🙋 Hỏi bài": chọn môn, chụp / tải tối đa 4 ảnh đề (hoặc dán ảnh vào ô, hoặc gõ chữ) → "Gửi câu hỏi". AI giải từng bước ngay (mất tới ~1 phút). Mỗi học sinh tối đa 20 câu / ngày và 12 lần gọi AI / giờ (đổi bằng biến LBAI_HELP_HOURLY).
+   - Trạng thái: 🤖 AI đã giải (AI chắc chắn) · ⏳ Đang chờ thầy cô (AI không chắc, AI lỗi / chưa bật khóa, hoặc học sinh bấm "Nhờ thầy cô giúp") · ✅ Thầy cô đã trả lời · Đã hiểu.
+   - Giáo viên / quản trị: tab "🙋 Hỏi bài" ở trang Lớp & học sinh (có số câu đang chờ; chuông thông báo cũng báo). Chỉ thấy câu của học sinh thuộc lớp mình (quản trị thấy tất cả). Xem ảnh đề, lời giải AI và độ tin cậy; viết lời giải gửi học sinh, hoặc bấm "Xác nhận lời giải AI là đúng". Học sinh nhận thông báo trên chuông.
+   - AI dùng chung khóa GEMINI_API_KEY / ANTHROPIC_API_KEY như phần giải đáp án. Chỉ gửi ảnh / chữ của đề cho AI, không kèm tên hay lớp. Chưa có khóa AI thì mọi câu hỏi chuyển thẳng cho giáo viên.

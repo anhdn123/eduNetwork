@@ -243,15 +243,81 @@ async function drawPoints() {
   $('#pt-m', host).onchange = e => { ptMonth = e.target.value; drawPoints(); };
 }
 
+/* ---------- Hỏi bài: tải ảnh đề / gõ câu hỏi → AI giải từng bước; chưa hiểu hoặc AI không chắc thì nhờ thầy cô ---------- */
+const HELP_ST = {ai: ['🤖 AI đã giải', 'ok'], waiting: ['⏳ Đang chờ thầy cô', 'warn'], answered: ['✅ Thầy cô đã trả lời', 'ok'], closed: ['Đã hiểu', '']};
+let helpPics = [];
+async function drawHelp() {
+  const host = $('#v-help');
+  if (!host.dataset.init) {
+    host.dataset.init = '1';
+    host.innerHTML = `<div class="grid2"><div><div class="card">
+      <b style="font-size:15px">🙋 Hỏi bài</b>
+      <p class="muted" style="font-size:12px;margin:6px 0 10px">Chụp hoặc tải ảnh đề bài (tối đa 4 ảnh), hoặc gõ câu hỏi. AI sẽ giải từng bước; nếu AI không chắc hoặc bạn chưa hiểu, thầy cô của lớp sẽ xem và trả lời.</p>
+      <select id="hp-s" style="padding:8px;border:1px solid #cbd5e1;border-radius:8px;width:100%;margin-bottom:8px">${['Toán', 'Vật lí', 'Hóa học', 'Tiếng Anh', 'Ngữ văn', 'Khác'].map(s => `<option>${s}</option>`).join('')}</select>
+      <textarea id="hp-t" rows="4" maxlength="4000" placeholder="Gõ đề bài hoặc điều em chưa hiểu (không bắt buộc nếu đã có ảnh)..." style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font:inherit;font-size:13px"></textarea>
+      <div id="hp-pics" class="lb-row" style="margin:8px 0"></div>
+      <div class="lb-row"><button class="btn btn-outline sm" id="hp-add">📷 Chụp / chọn ảnh</button><button class="btn btn-blue" id="hp-go">Gửi câu hỏi</button></div>
+      <input type="file" id="hp-f" accept="image/*" multiple hidden>
+      <div id="hp-msg" class="muted" style="font-size:12px;margin-top:8px"></div>
+      <p class="muted" style="font-size:11px;margin:10px 0 0">Ảnh / chữ của bạn được gửi tới dịch vụ AI để giải (không kèm tên hay lớp). Lời giải của AI có thể sai — hãy kiểm tra lại hoặc nhờ thầy cô.</p>
+    </div></div><div id="hp-list"></div></div>`;
+    const drawPics = () => { $('#hp-pics', host).innerHTML = helpPics.map((p, i) => `<span style="position:relative"><img src="${p}" style="height:70px;border-radius:8px;border:1px solid var(--line)"><button data-rm="${i}" title="Bỏ ảnh" style="position:absolute;top:-6px;right:-6px;border:0;background:#e53935;color:#fff;border-radius:50%;width:20px;height:20px;cursor:pointer">×</button></span>`).join(''); $$('[data-rm]', host).forEach(b => b.onclick = () => { helpPics.splice(+b.dataset.rm, 1); drawPics(); }); };
+    const addFiles = async files => { for (const f of files) { if (helpPics.length >= 4) { toast('Tối đa 4 ảnh'); break; } try { helpPics.push(await shrinkImage(f)); } catch (e) { toast(e.message); } } drawPics(); };
+    $('#hp-add', host).onclick = () => $('#hp-f', host).click();
+    $('#hp-f', host).onchange = e => { addFiles([...e.target.files]); e.target.value = ''; };
+    $('#hp-t', host).addEventListener('paste', e => { const fs = [...(e.clipboardData && e.clipboardData.files || [])].filter(f => f.type.startsWith('image/')); if (fs.length) { e.preventDefault(); addFiles(fs); } });
+    $('#hp-go', host).onclick = async () => {
+      const text = $('#hp-t', host).value.trim();
+      if (!text && !helpPics.length) return toast('Hãy chụp / tải ảnh đề bài hoặc gõ câu hỏi');
+      const go = $('#hp-go', host), msg = $('#hp-msg', host); go.disabled = true; msg.textContent = '⏳ Đang gửi ảnh... AI đang đọc và giải bài (có thể mất tới 1 phút), đừng đóng trang nhé.';
+      try {
+        const ids = []; for (const p of helpPics) ids.push((await api.post('/api/help/image', {data: p})).id);
+        const r = await api.post('/api/help', {text, images: ids, subject: $('#hp-s', host).value});
+        helpPics = []; drawPics(); $('#hp-t', host).value = '';
+        msg.textContent = r.status === 'ai' ? '✅ AI đã giải xong — xem lời giải bên dưới.' : '⏳ AI chưa chắc chắn hoặc đang bận nên câu hỏi đã chuyển cho thầy cô của lớp.';
+      } catch (e) { msg.textContent = ''; toast(e.message); }
+      go.disabled = false; loadHelp();
+    };
+  }
+  loadHelp();
+}
+async function loadHelp() {
+  const host = $('#hp-list'); let r;
+  try { r = await api.get('/api/help'); } catch (e) { return toast(e.message); }
+  const card = x => { const [lb, cl] = HELP_ST[x.status] || ['', ''];
+    return `<div class="card" style="margin-bottom:12px" data-h="${x.id}">
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><span class="pill ${cl}">${lb}</span><small class="muted">${esc(x.subject)} · ${fmtDate(x.created_at)}</small></div>
+      ${x.text ? `<p style="white-space:pre-wrap;margin:8px 0;font-size:13px">${esc(x.text)}</p>` : ''}
+      ${x.images.length ? `<div class="lb-row" style="margin:6px 0">${x.images.map(i => `<a href="/api/img/${i}" target="_blank"><img src="/api/img/${i}" style="max-height:110px;border-radius:8px;border:1px solid var(--line)"></a>`).join('')}</div>` : ''}
+      ${x.teacher_answer ? `<div style="background:#ecfdf3;border:1px solid #abefc6;border-radius:10px;padding:10px;margin:8px 0"><b style="font-size:12px;color:#067647">👩‍🏫 ${esc(x.teacher_name || 'Thầy cô')} trả lời</b><div style="white-space:pre-wrap;font-size:13px;margin-top:4px">${esc(x.teacher_answer)}</div></div>` : ''}
+      ${x.verified ? '<div style="font-size:12px;color:#067647;margin:6px 0">✅ Thầy cô đã kiểm tra: lời giải của AI là đúng.</div>' : ''}
+      ${x.ai && x.ai.solution ? `<details ${x.status === 'ai' || (x.verified && !x.seen) ? 'open' : ''} style="background:#f5f6ff;border:1px solid #d9dcfb;border-radius:10px;padding:10px;margin:8px 0"><summary style="cursor:pointer;font-weight:700;font-size:13px">🤖 Lời giải của AI${x.ai.answer ? ': ' + esc(x.ai.answer) : ''} ${x.ai.conf === 'medium' ? '<small style="color:#b45309">(AI chưa thật chắc — hãy kiểm tra lại)</small>' : ''}</summary><div style="white-space:pre-wrap;font-size:13px;margin-top:8px;line-height:1.6">${esc(x.ai.solution)}</div>${x.ai.note ? `<div class="muted" style="font-size:12px;margin-top:6px">💡 ${esc(x.ai.note)}</div>` : ''}</details>` : ''}
+      ${x.status === 'waiting' && x.ai_error ? `<div class="muted" style="font-size:12px;margin:6px 0">${esc(x.ai_error)}</div>` : ''}
+      ${x.status === 'waiting' && x.ai && !x.ai.answer ? `<div class="muted" style="font-size:12px;margin:6px 0">AI chưa chắc chắn nên đã chuyển cho thầy cô${x.ai.note ? ': ' + esc(x.ai.note) : ''}.</div>` : ''}
+      <div class="lb-row" style="margin-top:8px">${x.status === 'ai' ? '<button class="btn btn-outline sm" data-ask>🙋 Nhờ thầy cô giúp</button>' : ''}${x.status === 'ai' || x.status === 'answered' ? '<button class="btn btn-outline sm" data-ok>👍 Đã hiểu</button>' : ''}<button class="btn btn-outline sm" data-del style="color:#b42318">Xóa</button></div></div>`; };
+  host.innerHTML = r.requests.length ? r.requests.map(card).join('') : '<div class="card empty">Bạn chưa hỏi câu nào. Hãy gửi đề bài đầu tiên nhé!</div>';
+  $$('[data-h]', host).forEach(el => { const id = +el.dataset.h, x = r.requests.find(z => z.id === id);
+    const run = async (fn, msg) => { try { await fn(); if (msg) toast(msg); loadHelp(); } catch (e) { toast(e.message); } };
+    const a = $('[data-ask]', el), o = $('[data-ok]', el), d = $('[data-del]', el);
+    if (a) a.onclick = () => run(() => api.post(`/api/help/${id}/ask-teacher`), 'Đã gửi cho thầy cô');
+    if (o) o.onclick = () => run(() => api.post(`/api/help/${id}/close`));
+    if (d) d.onclick = () => { if (confirm('Xóa câu hỏi này?')) run(() => api.del('/api/help/' + id)); };
+    if (x.status === 'answered' && !x.seen) api.post(`/api/help/${id}/seen`).catch(() => {});
+  });
+  const tb = $('#stabs [data-t="help"]'); if (tb) tb.textContent = r.unseen ? `🙋 Hỏi bài (${r.unseen} trả lời mới)` : '🙋 Hỏi bài';
+}
+
 $$('#stabs button').forEach(b => b.onclick = () => {
   $$('#stabs button').forEach(x => x.classList.toggle('on', x === b));
-  $('#v-assigned').hidden = b.dataset.t !== 'assigned'; $('#v-practice').hidden = b.dataset.t !== 'practice'; $('#v-points').hidden = b.dataset.t !== 'points';
+  $('#v-assigned').hidden = b.dataset.t !== 'assigned'; $('#v-practice').hidden = b.dataset.t !== 'practice'; $('#v-points').hidden = b.dataset.t !== 'points'; $('#v-help').hidden = b.dataset.t !== 'help';
   if (b.dataset.t === 'practice') drawPractice();
   if (b.dataset.t === 'points') drawPoints();
+  if (b.dataset.t === 'help') drawHelp();
 });
 
 draw();
-const hashTab = () => { const t = location.hash.slice(1); if (t === 'practice' || t === 'points') { const b = $('#stabs [data-t="' + t + '"]'); if (b) b.click(); } };
+api.get('/api/help').then(r => { const tb = $('#stabs [data-t="help"]'); if (tb && r.unseen) tb.textContent = `🙋 Hỏi bài (${r.unseen} trả lời mới)`; }).catch(() => {});
+const hashTab = () => { const t = location.hash.slice(1); if (t === 'practice' || t === 'points' || t === 'help') { const b = $('#stabs [data-t="' + t + '"]'); if (b) b.click(); } };
 hashTab();
 window.addEventListener('hashchange', hashTab);
 })();

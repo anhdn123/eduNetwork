@@ -155,20 +155,21 @@ def _items_text(it):
 
 
 # ---------------------------------------------------------------- Gemini (REST, chỉ dùng thư viện chuẩn)
-def _gemini_call(items):
+def _gemini_call(items, parts=None, system=None):
     key = os.environ.get("GEMINI_API_KEY") or ""
     if not key:
         raise AiError(503, "Chưa bật AI: quản trị viên cần đặt biến môi trường GEMINI_API_KEY (khóa miễn phí lấy tại Google AI Studio) trên máy chủ.")
-    parts = []
-    for it in items:
-        if it.get("image"):
-            mime, data = it["image"]
-            parts.append({"text": _items_text(it) + " Ảnh đề:"})
-            parts.append({"inline_data": {"mime_type": mime, "data": base64.standard_b64encode(data).decode("ascii")}})
-        else:
-            parts.append({"text": _items_text(it) + "\nĐề (văn bản):\n" + (it.get("text") or "")[:6000]})
-    parts.append({"text": "Giải tất cả các câu trên. " + JSON_FORMAT})
-    body = {"system_instruction": {"parts": [{"text": SYSTEM}]}, "contents": [{"role": "user", "parts": parts}],
+    if parts is None:
+        parts = []
+        for it in items:
+            if it.get("image"):
+                mime, data = it["image"]
+                parts.append({"text": _items_text(it) + " Ảnh đề:"})
+                parts.append({"inline_data": {"mime_type": mime, "data": base64.standard_b64encode(data).decode("ascii")}})
+            else:
+                parts.append({"text": _items_text(it) + "\nĐề (văn bản):\n" + (it.get("text") or "")[:6000]})
+        parts.append({"text": "Giải tất cả các câu trên. " + JSON_FORMAT})
+    body = {"system_instruction": {"parts": [{"text": system or SYSTEM}]}, "contents": [{"role": "user", "parts": parts}],
             "generationConfig": {"responseMimeType": "application/json"}}
     url = f"{GEMINI_BASE}/v1beta/models/{GEMINI_MODEL}:generateContent"
 
@@ -225,25 +226,26 @@ def _gemini_call(items):
 
 
 # ---------------------------------------------------------------- Claude (SDK chính thức, tùy chọn)
-def _claude_call(items):
+def _claude_call(items, content=None, system=None, schema=None):
     if anthropic is None:
         raise AiError(503, "Máy chủ chưa cài thư viện AI cho Claude (pip install -r requirements.txt).")
     if not (_has("ANTHROPIC_API_KEY") or _has("ANTHROPIC_AUTH_TOKEN")):
         raise AiError(503, "Chưa bật AI: quản trị viên cần đặt biến môi trường ANTHROPIC_API_KEY trên máy chủ.")
-    content = []
-    for it in items:
-        if it.get("image"):
-            mime, data = it["image"]
-            content.append({"type": "text", "text": _items_text(it) + " Ảnh đề:"})
-            content.append({"type": "image", "source": {"type": "base64", "media_type": mime, "data": base64.standard_b64encode(data).decode("ascii")}})
-        else:
-            content.append({"type": "text", "text": _items_text(it) + "\nĐề (văn bản):\n" + (it.get("text") or "")[:6000]})
-    content.append({"type": "text", "text": "Giải tất cả các câu trên và trả về JSON theo đúng định dạng yêu cầu, mỗi câu một mục với đúng id đã cho."})
+    if content is None:
+        content = []
+        for it in items:
+            if it.get("image"):
+                mime, data = it["image"]
+                content.append({"type": "text", "text": _items_text(it) + " Ảnh đề:"})
+                content.append({"type": "image", "source": {"type": "base64", "media_type": mime, "data": base64.standard_b64encode(data).decode("ascii")}})
+            else:
+                content.append({"type": "text", "text": _items_text(it) + "\nĐề (văn bản):\n" + (it.get("text") or "")[:6000]})
+        content.append({"type": "text", "text": "Giải tất cả các câu trên và trả về JSON theo đúng định dạng yêu cầu, mỗi câu một mục với đúng id đã cho."})
     client = anthropic.Anthropic(timeout=TIMEOUT, max_retries=1)
     try:
         resp = client.messages.create(
-            model=CLAUDE_MODEL, max_tokens=16000, system=SYSTEM,
-            output_config={"effort": EFFORT, "format": {"type": "json_schema", "schema": SCHEMA}},
+            model=CLAUDE_MODEL, max_tokens=16000, system=system or SYSTEM,
+            output_config={"effort": EFFORT, "format": {"type": "json_schema", "schema": schema or SCHEMA}},
             messages=[{"role": "user", "content": content}],
         )
     except anthropic.AuthenticationError:
@@ -308,3 +310,63 @@ def solve(user_id, items):
         else:
             out.append({"id": it["id"], "ok": True, "ans": ans, "conf": conf, "note": note, "sol": sol})
     return out
+
+
+# ---------------------------------------------------------------- Hỏi bài: học sinh gửi đề (ảnh / chữ), AI giải thích từng bước
+TUTOR_HOURLY = int(os.environ.get("LBAI_HELP_HOURLY") or 12)          # số lần hỏi AI mỗi học sinh mỗi giờ
+TUTOR_SYSTEM = """Bạn là gia sư thân thiện cho học sinh Việt Nam (THCS – THPT), giỏi mọi môn, đặc biệt Toán. Học sinh gửi ảnh chụp hoặc chữ của một bài tập để nhờ giải.
+Hãy đọc kỹ đề, tự giải cẩn thận rồi kiểm tra lại kết quả. Viết lời giải bằng tiếng Việt, dễ hiểu cho học sinh: mỗi bước một dòng (phân cách bằng ký tự xuống dòng \\n), giải thích ngắn gọn vì sao làm vậy, viết công thức bằng ký hiệu thông thường (√, ^, /, π, ∠, ≤, ≥…), tối đa 3000 ký tự.
+- "answer": kết luận ngắn gọn (một dòng, ví dụ "x = 3" hoặc "Chọn B").
+- "solution": các bước giải chi tiết.
+- "confidence": "high" khi bạn đã kiểm tra lại và chắc chắn; "medium" khi còn chút nghi ngờ; "low" khi không chắc, ảnh mờ/thiếu dữ kiện/đề có lỗi hoặc ngoài khả năng — khi đó đừng đoán bừa, để "answer" rỗng và nêu rõ cần thêm gì trong "note".
+- "note": một hai câu lưu ý hoặc gợi ý ôn tập (tối đa 300 ký tự).
+Nếu nội dung không phải bài học, hãy lịch sự từ chối, confidence "low"."""
+TUTOR_JSON = """Chỉ trả về MỘT đối tượng JSON hợp lệ, không kèm chữ nào khác: {"answer": "...", "solution": "...", "confidence": "high|medium|low", "note": "..."}"""
+TUTOR_SCHEMA = {"type": "object", "properties": {"answer": {"type": "string"}, "solution": {"type": "string"}, "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                "note": {"type": "string"}}, "required": ["answer", "solution", "confidence", "note"], "additionalProperties": False}
+
+
+def tutor(user_id, images, text="", subject=""):
+    """images: [(mime, bytes)] · trả về {answer, solution, conf, note}. Chỉ gửi ảnh / chữ của đề, không kèm tên hay lớp học sinh."""
+    p = provider()
+    if p is None or not configured():
+        raise AiError(503, "AI chưa được bật")
+    now = time.time()
+    with _lock:
+        key = ("help", user_id)
+        used = [t for t in _usage.get(key, []) if now - t < 3600]
+        if len(used) >= TUTOR_HOURLY:
+            raise AiError(429, f"Bạn đã hỏi AI {len(used)} lần trong 1 giờ qua (tối đa {TUTOR_HOURLY}). Hãy thử lại sau hoặc nhờ thầy cô.")
+        used.append(now)
+        _usage[key] = used
+    intro = "Bài của học sinh" + (f" (môn {subject})" if subject else "") + "."
+    if p == "gemini":
+        parts = [{"text": intro}]
+        if text:
+            parts.append({"text": "Đề bài (chữ):\n" + text[:6000]})
+        for mime, data in images:
+            parts.append({"inline_data": {"mime_type": mime, "data": base64.standard_b64encode(data).decode("ascii")}})
+        parts.append({"text": "Hãy giải bài này. " + TUTOR_JSON})
+        raw = _gemini_call(None, parts=parts, system=TUTOR_SYSTEM)
+    else:
+        content = [{"type": "text", "text": intro}]
+        if text:
+            content.append({"type": "text", "text": "Đề bài (chữ):\n" + text[:6000]})
+        for mime, data in images:
+            content.append({"type": "image", "source": {"type": "base64", "media_type": mime, "data": base64.standard_b64encode(data).decode("ascii")}})
+        content.append({"type": "text", "text": "Hãy giải bài này và trả về JSON theo đúng định dạng."})
+        raw = _claude_call(None, content=content, system=TUTOR_SYSTEM, schema=TUTOR_SCHEMA)
+    t = re.sub(r"^```(?:json)?\s*|\s*```$", "", (raw or "").strip())
+    try:
+        d = json.loads(t)
+    except ValueError:
+        m = re.search(r"\{[\s\S]*\}", t)
+        try:
+            d = json.loads(m.group(0)) if m else None
+        except ValueError:
+            d = None
+    if not isinstance(d, dict):
+        raise AiError(502, "AI trả về dữ liệu không đúng định dạng — hãy thử lại.")
+    conf = d.get("confidence") if d.get("confidence") in ("high", "medium", "low") else "low"
+    clean = lambda v, n: "\n".join(re.sub(r"[ \t]+", " ", ln).strip() for ln in str(v or "").replace("\\n", "\n").splitlines() if ln.strip())[:n]
+    return {"answer": clean(d.get("answer"), 300), "solution": clean(d.get("solution"), 3500), "conf": conf, "note": clean(d.get("note"), 400)}

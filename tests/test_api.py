@@ -1608,6 +1608,100 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(con.execute("SELECT COUNT(*) n FROM post_shares WHERE post_id=?", (p2,)).fetchone()["n"], 0)
         con.close()
 
+    def test_zz_help_requests(self):
+        """Hỏi bài: học sinh gửi đề (ảnh / chữ) → AI giải (dịch vụ giả); AI không chắc / lỗi / chưa bật thì chuyển giáo viên của lớp; giáo viên trả lời hoặc xác nhận lời giải AI; phân quyền theo lớp."""
+        from server import ai
+        lan, binh, adm = self.C(), self.C(), self.C()
+        lan.post("/api/login", {"username": "lan", "password": LAN_PW})
+        binh.post("/api/login", {"username": "binh", "password": self.__class__.binh_pw})
+        adm.post("/api/login", {"username": "admin", "password": ADMIN_PW})
+        c1 = lan.post("/api/classes", {"name": "HB1", "grade": "9"})[1]["id"]
+        c2 = binh.post("/api/classes", {"name": "HB2", "grade": "9"})[1]["id"]
+        a1 = lan.post("/api/students/bulk", {"class_id": c1, "rows": ["Hỏi Một", "Hỏi Hai"]})[1]["accounts"]
+        a2 = binh.post("/api/students/bulk", {"class_id": c2, "rows": ["Hỏi Ba"]})[1]["accounts"]
+        login = lambda acc: (lambda cl: (cl.post("/api/login", {"username": acc["username"], "password": acc["password"]}), cl)[1])(self.C())
+        s1, s2, s3 = login(a1[0]), login(a1[1]), login(a2[0])
+        png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        script = {"mode": "high"}
+        calls = []
+
+        def fake_tutor(uid, images, text="", subject=""):
+            calls.append((len(images), text, subject))
+            if script["mode"] == "err":
+                raise ai.AiError(429, "Hết hạn mức")
+            return {"answer": "x = 3" if script["mode"] == "high" else "", "solution": "Bước 1\nBước 2\nĐáp án: x = 3" if script["mode"] == "high" else "", "conf": script["mode"], "note": "ghi chú"}
+        old_t, old_c = ai.tutor, ai.configured
+        ai.tutor, ai.configured = fake_tutor, lambda: True
+        try:
+            # quyền: chỉ học sinh hỏi; ảnh của người khác / không hợp lệ bị từ chối; phải có ảnh hoặc chữ
+            self.assertEqual(lan.post("/api/help", {"text": "x"})[0], 403)
+            self.assertEqual(s1.post("/api/help", {})[0], 400)
+            self.assertEqual(s1.post("/api/help", {"text": "x", "images": ["a" * 24]})[0], 400)
+            im = s1.post("/api/help/image", {"data": png})[1]["id"]
+            self.assertEqual(s2.post("/api/help", {"text": "x", "images": [im]})[0], 400)                      # ảnh của bạn khác
+            self.assertEqual(lan.post("/api/help/image", {"data": png})[0], 403)
+            # AI trả lời chắc chắn → trạng thái ai, kèm lời giải; ảnh + chữ + môn được chuyển cho AI
+            st, r = s1.post("/api/help", {"text": "Giải phương trình x + 1 = 4", "images": [im], "subject": "Toán"})
+            self.assertEqual((st, r["status"], r["ai"]["answer"], r["ai"]["conf"]), (200, "ai", "x = 3", "high"), r)
+            self.assertEqual(calls[-1], (1, "Giải phương trình x + 1 = 4", "Toán"))
+            h_ai = r["id"]
+            # AI không chắc → chuyển giáo viên; AI lỗi / chưa bật → cũng chuyển giáo viên
+            script["mode"] = "low"
+            h_low = s1.post("/api/help", {"text": "đề khó"})[1]
+            self.assertEqual((h_low["status"], h_low["ai"]["conf"]), ("waiting", "low"))
+            script["mode"] = "err"
+            h_err = s2.post("/api/help", {"text": "đề lỗi"})[1]
+            self.assertEqual((h_err["status"], h_err["ai"], "hạn mức" in h_err["ai_error"]), ("waiting", None, True))
+            ai.configured = lambda: False
+            h_off = s2.post("/api/help", {"text": "AI tắt"})[1]
+            self.assertEqual((h_off["status"], "chưa được bật" in h_off["ai_error"]), ("waiting", True))
+            ai.configured = lambda: True
+            # học sinh chỉ thấy câu của mình
+            mine = {x["id"] for x in s1.get("/api/help")[1]["requests"]}
+            self.assertEqual((h_ai in mine, h_low["id"] in mine, h_err["id"] in mine), (True, True, False))
+            # giáo viên: chỉ thấy câu của lớp mình; quản trị thấy tất cả; số câu đang chờ
+            w = lan.get("/api/help")[1]
+            self.assertEqual({x["id"] for x in w["requests"]}, {h_low["id"], h_err["id"], h_off["id"]})
+            self.assertEqual((w["waiting"], w["requests"][0]["class_name"], w["requests"][0]["student"] in ("Hỏi Một", "Hỏi Hai")), (3, "HB1", True))
+            self.assertEqual(binh.get("/api/help")[1]["requests"], [])
+            self.assertEqual(binh.post(f"/api/help/{h_low['id']}/answer", {"text": "x"})[0], 404)
+            self.assertEqual(s3.post(f"/api/help/{h_low['id']}/ask-teacher")[0], 404)
+            self.assertTrue(all(x in {y["id"] for y in adm.get("/api/help?status=all")[1]["requests"]} for x in (h_ai, h_low["id"], h_err["id"])))
+            # giáo viên trả lời → học sinh thấy thông báo mới, xem rồi thì hết báo
+            self.assertEqual(lan.post(f"/api/help/{h_low['id']}/answer", {})[0], 400)
+            self.assertEqual(lan.post(f"/api/help/{h_low['id']}/answer", {"approve_ai": True})[0], 400)         # AI chưa có lời giải để xác nhận
+            self.assertEqual(lan.post(f"/api/help/{h_low['id']}/answer", {"text": "Em đặt ẩn rồi lập phương trình nhé"})[0], 200)
+            l = s1.get("/api/help")[1]
+            self.assertEqual(l["unseen"], 1)
+            got = {x["id"]: x for x in l["requests"]}[h_low["id"]]
+            self.assertEqual((got["status"], got["teacher_answer"], got["verified"]), ("answered", "Em đặt ẩn rồi lập phương trình nhé", False))
+            self.assertTrue(got["teacher_name"])
+            self.assertEqual(s1.post(f"/api/help/{h_low['id']}/seen")[0], 200)
+            self.assertEqual(s1.get("/api/help")[1]["unseen"], 0)
+            self.assertEqual(lan.get("/api/help")[1]["waiting"], 2)
+            # học sinh nhờ thầy cô khi chưa tin lời giải AI; giáo viên xác nhận lời giải AI là đúng
+            self.assertEqual(s1.post(f"/api/help/{h_ai}/ask-teacher")[0], 200)
+            self.assertIn(h_ai, {x["id"] for x in lan.get("/api/help")[1]["requests"]})
+            self.assertEqual(lan.post(f"/api/help/{h_ai}/answer", {"approve_ai": True})[0], 200)
+            ok = {x["id"]: x for x in s1.get("/api/help")[1]["requests"]}[h_ai]
+            self.assertEqual((ok["status"], ok["verified"], ok["asked_teacher"]), ("answered", True, True))
+            # học sinh đánh dấu đã hiểu, xóa câu của mình; câu của bạn thì không xóa được
+            self.assertEqual(s1.post(f"/api/help/{h_ai}/close")[0], 200)
+            self.assertEqual({x["id"]: x for x in s1.get("/api/help")[1]["requests"]}[h_ai]["status"], "closed")
+            self.assertEqual(s2.call("DELETE", f"/api/help/{h_ai}")[0], 404)
+            self.assertEqual(s1.call("DELETE", f"/api/help/{h_ai}")[0], 200)
+            self.assertEqual(h_ai in {x["id"] for x in s1.get("/api/help")[1]["requests"]}, False)
+            # giới hạn số câu hỏi mỗi ngày
+            old = app.HELP_DAILY
+            app.HELP_DAILY = 1
+            try:
+                self.assertEqual(s3.post("/api/help", {"text": "câu 1"})[0], 200)
+                self.assertEqual(s3.post("/api/help", {"text": "câu 2"})[0], 429)
+            finally:
+                app.HELP_DAILY = old
+        finally:
+            ai.tutor, ai.configured = old_t, old_c
+
     def test_zz_attendance_rules(self):
         """Học sinh mới tạo vẫn có lịch; phút đi muộn; chốt điểm danh; phạt muộn và thưởng điểm theo quy tắc từng tháng."""
         import datetime as dt

@@ -106,10 +106,14 @@ async function loadBell(me) {
     if (me.role === 'teacher' || me.role === 'admin') {
       const r = await api.get('/api/reports?status=none');
       if (r.pending) items.push([`🚩 ${r.pending} báo đáp án sai đang chờ duyệt`, 'manage.html#reports', r.pending]);
+      const h = await api.get('/api/help?status=none');
+      if (h.waiting) items.push([`🙋 ${h.waiting} câu hỏi bài đang chờ bạn trả lời`, 'manage.html#help', h.waiting]);
     } else if (me.role === 'student') {
       const r = await api.get('/api/assignments'), now = Date.now() / 1000;
       const n = r.assignments.filter(a => !a.closed && a.attempts < a.max_attempts && !(a.due_at && a.due_at < now)).length;
       if (n) items.push([`📝 ${n} bài đang chờ bạn làm`, 'students.html', n]);
+      const h = await api.get('/api/help');
+      if (h.unseen) items.push([`🙋 Thầy cô đã trả lời ${h.unseen} câu hỏi của bạn`, 'students.html#help', h.unseen]);
     }
   } catch (e) { /* không tải được thông báo: bỏ qua */ }
   const total = items.reduce((s, x) => s + x[2], 0), b = $('#bell .bell-n'), m = $('#bellm');
