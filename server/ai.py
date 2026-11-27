@@ -156,7 +156,7 @@ def _items_text(it):
 
 # ---------------------------------------------------------------- Gemini (REST, chỉ dùng thư viện chuẩn)
 def _gemini_call(items, parts=None, system=None):
-    key = os.environ.get("GEMINI_API_KEY") or ""
+    key = (os.environ.get("GEMINI_API_KEY") or "").strip().strip("\"' ")   # bỏ khoảng trắng / dấu nháy dán thừa
     if not key:
         raise AiError(503, "Chưa bật AI: quản trị viên cần đặt biến môi trường GEMINI_API_KEY (khóa miễn phí lấy tại Google AI Studio) trên máy chủ.")
     if parts is None:
@@ -203,7 +203,7 @@ def _gemini_call(items, parts=None, system=None):
                 continue
             if e.code == 429:
                 raise AiError(429, "Đã chạm giới hạn của gói miễn phí Gemini (theo phút hoặc theo ngày) — chờ ít phút rồi thử lại, hoặc để mai.")
-            if e.code in (401, 403):
+            if e.code in (401, 403) or (e.code == 400 and "API_KEY_INVALID" in (msg + str(getattr(e, "reason", "")))) or (e.code == 400 and "api key" in msg.lower()):
                 raise AiError(502, "Khóa Gemini không hợp lệ hoặc không có quyền — quản trị viên kiểm tra GEMINI_API_KEY.")
             if e.code == 404:
                 raise AiError(502, f"Không tìm thấy model Gemini “{GEMINI_MODEL}” — đặt LBAI_AI_MODEL_GEMINI theo tên model hiện hành của Google.")
