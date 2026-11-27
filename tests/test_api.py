@@ -531,7 +531,7 @@ class ApiTest(unittest.TestCase):
                 ids = [t.split("id=")[1].split(" ")[0] for t in texts if "id=" in t]
                 kinds = [t.split("dạng: ")[1].split(" ")[0] for t in texts if "dạng: " in t]
                 table = {"mcq": ("b", "high", "Chọn B"), "tf": ("ĐSSĐ", "medium", "Ý b, c sai"), "short": ("3.5", "high", "= 3,5")}
-                ans = [{"id": i, "answer": table[k][0], "confidence": table[k][1], "note": table[k][2]} for i, k in zip(ids, kinds)]
+                ans = [{"id": i, "answer": table[k][0], "confidence": table[k][1], "note": table[k][2], "solution": "Bước 1: đọc đề.\nBước 2:   tính   toán.\n\nĐáp án: " + table[k][0]} for i, k in zip(ids, kinds)]
                 if script["mode"] == "bad":
                     ans = [{"id": i, "answer": "E", "confidence": "high", "note": "lạ"} for i in ids]
                 if script["mode"] == "partial":
@@ -585,6 +585,7 @@ class ApiTest(unittest.TestCase):
             self.assertEqual((res["q1"]["ans"], res["q1"]["conf"]), (1, "high"))                    # B → chỉ số 1
             self.assertEqual((res["q2"]["ans"], res["q2"]["conf"]), ([0, 1, 1, 0], "medium"))        # ĐSSĐ → 0 là Đúng
             self.assertEqual(res["q3"]["ans"], "3,5")                                                # dấu chấm → dấu phẩy
+            self.assertEqual(res["q3"]["sol"], "Bước 1: đọc đề.\nBước 2: tính toán.\nĐáp án: 3.5")           # lời giải chi tiết được làm sạch: gộp khoảng trắng, bỏ dòng trống, giữ xuống dòng
             req = seen[-1]                                                                            # yêu cầu gửi đi đúng chuẩn
             self.assertEqual(req["model"], ai.CLAUDE_MODEL)
             self.assertEqual(req["output_config"]["format"]["type"], "json_schema")

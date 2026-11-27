@@ -469,6 +469,19 @@ function findPairedStart(text, force) {
   return -1;
 }
 
+// File gồm NHIỀU ĐỀ nối tiếp (vd. “26 đề thi thử vào 10”): mỗi đề bắt đầu bằng chữ “PHẦN I” và số câu quay lại 1; nhãn “ĐỀ SỐ n” (hộp màu ở góc trang) nằm trong đề đó.
+// Chỉ dùng khi import ở chế độ “Đây là các đề thi”. Trả về [{start, label}] (label = số in ở “ĐỀ SỐ n” hoặc null), rỗng nếu file chỉ có một đề.
+let PARSE_MULTI = false;
+function findExamSegments(text) {
+  const heads = [...text.matchAll(new RegExp('^[ \\t]*PH[ẦÀẪẲẢẤA]N\\s+(?:I(?![IVX' + NOLET + '])|1(?!\\d)|TRẮC)[^\\n]*$', 'gim'))];
+  if (heads.length < 2) return [];
+  const segs = heads.map((h, i) => ({start: h.index, end: i + 1 < heads.length ? heads[i + 1].index : text.length}));
+  const good = segs.filter(g => ([...text.slice(g.start, g.end).matchAll(CAU_RE)]).length >= 3);
+  if (good.length < 2 || good.length < segs.length * 0.8) return [];   // các “PHẦN I” còn lại không phải đầu một đề (vd. lời giải in lại)
+  // nhãn “ĐỀ SỐ n” đứng riêng một dòng (không nhầm với chữ “đề số …” trong câu hỏi)
+  return good.map(g => { const m = /^[ \t]*ĐỀ\s*SỐ\s*(\d+)[ \t]*$/m.exec(text.slice(g.start, g.end)); return {start: g.start, label: m ? +m[1] : null}; });
+}
+
 // Tách phần đề và phần đáp án / lời giải
 function splitKeySection(text) {
   const re = /^[ \t]*(?:BẢNG\s+)?(?:ĐÁP\s*ÁN|HƯỚNG\s+DẪN\s+(?:GIẢI|CHẤM)|LỜI\s+GIẢI)(?:[ \t]+[^\n]{0,90})?[ \t]*[:.]?[ \t]*$/gm;
@@ -638,6 +651,12 @@ function parseBlock(raw, sec, ke, infer) {
     const o3 = up3.map((p, k) => flat.slice(p.e, k < 2 ? up3[k + 1].i : undefined).trim());
     return [mk({t: 'mcq', q: esc(flat.slice(0, up3[0].i).trim()), opts: [...o3, '…'], ans: info && info.l ? 'ABCD'.indexOf(info.l) : null, warn: true})];
   }
+  // công thức làm mất nhãn “A.” (chỉ còn B. C. D.): vẫn là trắc nghiệm, phương án A để trống (ảnh cắt từ PDF vẫn có đủ A–D)
+  const upBCD = !up3 && !lowFirst && sec !== 'short' && sec !== 'essay' && findSeq(flat, ['B', '(?:C|c|e|E|€)', 'D'], '[.)]');
+  if (upBCD) {
+    const ob = upBCD.map((p, k) => flat.slice(p.e, k < 2 ? upBCD[k + 1].i : undefined).trim());
+    return [mk({t: 'mcq', q: esc(flat.slice(0, upBCD[0].i).trim()), opts: ['…', ...ob], ans: info && info.l ? 'ABCD'.indexOf(info.l) : null, warn: true})];
+  }
   const low = findSeq(flat, ['a', 'b', '[ce]', 'd'], '[)]');
   if (low && sec !== 'short' && sec !== 'essay' && (infer !== 'essay' || sec === 'tf')) {
     const stem = flat.slice(0, low[0].i).trim();
@@ -680,6 +699,8 @@ function parseQuestionBank(raw, src, hasLines) {
   const lineOf = off => { let lo = 0, hi = nl.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (nl[mid] < off) lo = mid + 1; else hi = mid; } return lo; };
   const textLines = hasLines ? text.split('\n') : null;
   const {body, key} = splitKeySection(text);
+  const segs = PARSE_MULTI && !key ? findExamSegments(text) : [];   // nhiều đề trong một file (chỉ khi không có phần lời giải riêng)
+  const segOf = off => { let k = -1; segs.forEach((g, i) => { if (g.start <= off) k = i; }); return k; };
   const secs = [];
   for (const m of body.matchAll(new RegExp(PHAN_RE + '[^\\n]*(?:\\n(?![ \\t]*(?:Câu|Bài|Question)\\s*\\d)[^\\n]*)?', 'gim'))) {
     const hit = SEC_HINT.find(h => h[0].test(m[0]));
@@ -789,13 +810,14 @@ function parseQuestionBank(raw, src, hasLines) {
       if (q.sol && (solMathy || (ke && ke.a && ke.a.solBad) || solGarbled(q))) q.solBad = true;
       delete q.grp;
       q.num = n;   // số câu in trong đề (“Câu 61.”): để nhập nhanh đáp án theo đúng số câu thay vì thứ tự trong danh sách
-      const k = bankKey({...q, src}); if (seen.has(k)) return; seen.add(k);
+      if (segs.length) q._seg = segOf(mk.index);
+      const k = bankKey({...q, src}) + (segs.length ? '|s' + q._seg : ''); if (seen.has(k)) return; seen.add(k);
       out.push({id: 'b' + Date.now().toString(36) + (BID++), src, ...q});
     });
   });
   const stats = {total: out.length, noAns: out.filter(q => !hasAns(q)).length};
   ORD.forEach(t => { stats[t] = out.filter(q => q.t === t).length; });
-  return {questions: out, stats};
+  return {questions: out, stats, segs};
 }
 function parseExamTextFromWeb(raw) { return parseQuestionBank(raw, 'web').questions; }
 
@@ -1273,7 +1295,10 @@ async function aiFill(qs, onProgress) {
       const q = todo[i++];
       try {
         const x = (await LB.api.post('/api/ai/solve', {items: [item(q)]})).results[0];
-        if (x && x.ok) { q.ans = x.ans; q.aiAns = {c: x.conf, n: x.note || ''}; out.ok++; bad = 0; }
+        if (x && x.ok) {
+          q.ans = x.ans; q.aiAns = {c: x.conf, n: x.note || ''}; out.ok++; bad = 0;
+          if (x.sol && !q.sol && !q.solImg) { q.sol = esc('🤖 Lời giải do AI viết (giáo viên chưa kiểm tra):\n' + x.sol).replace(/\n/g, '<br>'); q.solAi = true; out.sols = (out.sols || 0) + 1; }   // lời giải chi tiết do AI viết, có ghi chú ở đầu để học sinh biết
+        }
         else { out.fail++; out.errors.push(`${(x && x.error) || 'AI không trả lời'}`); }
       } catch (e) { out.fail++; bad++; out.errors.push(e.message); }
       done++; onProgress && onProgress(done, todo.length);
@@ -1356,12 +1381,24 @@ async function importSmart(files, labels, withImg, onChange, examOpt, aiOn) {
       else if (keys.length && !kf) log('⚠ Có nhiều file đề nhưng số file đáp án không khớp — bỏ qua file đáp án riêng, chỉ đọc đáp án nằm trong file đề.', 'warn');
       if (text.replace(/\s/g, '').length < 40) { log('✗ Không đọc được chữ trong file này (ảnh quá mờ hoặc file rỗng).', 'err'); continue; }
       PARSE_DEFAULT = labels.subject === 'Ngữ văn' ? 'essay' : 'short';
-      const res = parseQuestionBank(text, f.name, !!((ext || kExt) && withImg));
+      PARSE_MULTI = !!examOpt;
+      let res; try { res = parseQuestionBank(text, f.name, !!((ext || kExt) && withImg)); } finally { PARSE_MULTI = false; }
       if (!res.questions.length) { log('✗ Không nhận diện được câu hỏi nào (cần dạng "Câu 1. ... A. ... B. ..." hoặc có nhãn Câu/Bài).', 'err'); continue; }
       const topicOf = buildTopicIndex(labels, batchId);
       res.questions.forEach(q => { Object.assign(q, labels); q.batch = batchId; q.at = batchAt; if (!q.topic) q.topic = topicOf(q) || guessTopic(labels.subject, labels.grade, q); });
       const eo = examOpt && examOpt.byName.get(f.name);
-      if (eo) {   // đề thi: mỗi file là một đề — lưu kèm nhóm đề, tên đề, số đề, phần (I TN · II Đ/S · III TLN) và số câu trong phần
+      if (eo && res.segs && res.segs.length > 1) {   // một file chứa nhiều đề: mỗi “PHẦN I” mở đầu một đề; số đề lấy từ “ĐỀ SỐ n” (trùng số thì lấy số trống nhỏ nhất kế tiếp)
+        const used = new Set(), nos = res.segs.map(g => { let no = g.label && !used.has(g.label) ? g.label : 0; if (!no) { no = 1; while (used.has(no)) no++; } used.add(no); return no; });
+        const cnts = res.segs.map(() => ({}));
+        res.questions.forEach(q => {
+          const k = q._seg; delete q._seg;
+          if (k == null || k < 0) return;
+          const part = {mcq: 'I', tf: 'II', short: 'III', essay: 'IV'}[q.t] || 'IV', cnt = cnts[k]; cnt[part] = (cnt[part] || 0) + 1;
+          Object.assign(q, {examId: batchId + '-' + eo.no + '-' + nos[k], examCat: examOpt.cat, examName: 'Đề ' + nos[k], examNo: nos[k], examPart: part, examIdx: cnt[part]});
+        });
+        log(`   📑 File có ${res.segs.length} đề — tự tách thành ${res.segs.length} đề trong nhóm “${examOpt.cat}”:`, 'ok');
+        res.segs.forEach((g, k) => log(`      Đề ${nos[k]}${g.label && g.label !== nos[k] ? ` (nhãn trong file: ĐỀ SỐ ${g.label})` : ''}: ${cnts[k].I || 0} TN · ${cnts[k].II || 0} Đ/S · ${cnts[k].III || 0} TLN`, 'ok'));
+      } else if (eo) {   // đề thi: mỗi file là một đề — lưu kèm nhóm đề, tên đề, số đề, phần (I TN · II Đ/S · III TLN) và số câu trong phần
         const cnt = {};
         res.questions.forEach(q => { const part = {mcq: 'I', tf: 'II', short: 'III', essay: 'IV'}[q.t] || 'IV'; cnt[part] = (cnt[part] || 0) + 1; Object.assign(q, {examId: batchId + '-' + eo.no, examCat: examOpt.cat, examName: eo.name, examNo: eo.no, examPart: part, examIdx: cnt[part]}); });
         log(`   📑 Lưu thành “${examOpt.cat} · ${eo.name}” (Đề ${eo.no}): ${cnt.I || 0} TN · ${cnt.II || 0} Đ/S · ${cnt.III || 0} TLN.`, 'ok');

@@ -88,10 +88,11 @@ Quy tắc ghi đáp án (trường "answer"):
 
 Nếu ảnh bị cắt, mờ, thiếu dữ kiện hoặc đề có lỗi khiến không thể kết luận chắc chắn, đừng đoán bừa: để "answer" là chuỗi rỗng, đặt "confidence" là "low" và nêu lý do ngắn gọn trong "note".
 "confidence": "high" khi bạn đã kiểm tra lại kết quả và chắc chắn; "medium" khi còn một chút nghi ngờ; "low" khi không chắc.
-"note": một câu tiếng Việt ngắn (tối đa 200 ký tự) nêu ý chính của lời giải hoặc điểm cần giáo viên lưu ý."""
+"note": một câu tiếng Việt ngắn (tối đa 200 ký tự) nêu ý chính của lời giải hoặc điểm cần giáo viên lưu ý.
+"solution": lời giải chi tiết bằng tiếng Việt cho học sinh lớp 9 đọc hiểu được: các bước tính ngắn gọn, mỗi bước một dòng (phân cách bằng ký tự xuống dòng \\n), tối đa 1200 ký tự, viết công thức bằng ký hiệu thông thường (√, ^, /, π, ∠, ≤, ≥…), kết thúc bằng dòng "Đáp án: …". Nếu không giải được thì để chuỗi rỗng."""
 
 JSON_FORMAT = """Chỉ trả về MỘT đối tượng JSON hợp lệ, không kèm chữ nào khác, đúng dạng:
-{"answers": [{"id": "<id câu>", "answer": "<đáp án>", "confidence": "high|medium|low", "note": "<ghi chú ngắn>"}]}
+{"answers": [{"id": "<id câu>", "answer": "<đáp án>", "confidence": "high|medium|low", "note": "<ghi chú ngắn>", "solution": "<lời giải chi tiết>"}]}
 Mỗi câu đúng một mục, dùng đúng id đã cho."""
 
 SCHEMA = {   # chỉ Claude ép được lược đồ; với Gemini lược đồ được mô tả bằng JSON_FORMAT và kiểm tra lại ở phía máy chủ
@@ -106,8 +107,9 @@ SCHEMA = {   # chỉ Claude ép được lược đồ; với Gemini lược đ�
                     "answer": {"type": "string"},
                     "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
                     "note": {"type": "string"},
+                    "solution": {"type": "string"},
                 },
-                "required": ["id", "answer", "confidence", "note"],
+                "required": ["id", "answer", "confidence", "note", "solution"],
                 "additionalProperties": False,
             },
         }
@@ -300,8 +302,9 @@ def solve(user_id, items):
         ans = normalize(it["kind"], a.get("answer"))
         conf = a.get("confidence") if a.get("confidence") in ("high", "medium", "low") else "low"
         note = re.sub(r"\s+", " ", str(a.get("note") or "")).strip()[:300]
+        sol = "\n".join(re.sub(r"[ \t]+", " ", ln).strip() for ln in str(a.get("solution") or "").replace("\\n", "\n").splitlines() if ln.strip())[:1500]
         if ans is None:
             out.append({"id": it["id"], "ok": False, "error": note or "AI không chắc chắn nên không đưa đáp án", "conf": "low"})
         else:
-            out.append({"id": it["id"], "ok": True, "ans": ans, "conf": conf, "note": note})
+            out.append({"id": it["id"], "ok": True, "ans": ans, "conf": conf, "note": note, "sol": sol})
     return out

@@ -239,3 +239,22 @@ dùng bucket riêng tư, giữ khóa bí mật, và xem lại yêu cầu pháp l
    - Khi duyệt: đáp án được sửa ở ngân hàng câu hỏi, mọi đề đã giao có câu đó (mã đề đã đảo phương án được đối chiếu theo nội dung phương án) và bài tự luyện của lớp;
      các bài kiểm tra đã nộp được CHẤM LẠI nên điểm kiểm tra và điểm thưởng tự cập nhật. Học sinh thấy trạng thái (chờ duyệt / đã duyệt / từ chối kèm lời giáo viên) ngay trong màn xem lại.
    - Lưu ý: điểm cộng của bài tự luyện đã được cộng trước đó (điểm thưởng theo từng câu) không tính lại; chỉ điểm số của bài luyện tập được chấm lại.
+
+20. MỘT FILE CHỨA NHIỀU ĐỀ + AI VIẾT LỜI GIẢI
+   - Import ở chế độ "📑 Đây là các đề thi": nếu một file gồm nhiều đề nối tiếp (mỗi đề mở đầu bằng "PHẦN I", số câu quay lại 1; nhãn "ĐỀ SỐ n" nằm trong đề),
+     hệ thống tự tách thành từng đề trong cùng nhóm đề. Số đề lấy từ nhãn "ĐỀ SỐ n"; nhãn trùng thì lấy số trống nhỏ nhất kế tiếp. Câu giống chữ ở hai đề khác nhau không bị bỏ là trùng.
+     Không ở chế độ đề thi thì file vẫn được đọc như một đề / một chuyên đề như trước.
+   - Câu trắc nghiệm bị mất nhãn "A." vì công thức (chỉ còn B. C. D.) vẫn được nhận là trắc nghiệm.
+   - AI giải đáp án (Gemini/Claude) nay viết thêm LỜI GIẢI CHI TIẾT từng bước, lưu vào lời giải của câu với dòng đầu "🤖 Lời giải do AI viết (giáo viên chưa kiểm tra)".
+     Đáp án AI vẫn gắn nhãn 🤖 cho tới khi giáo viên xác nhận. Giới hạn mặc định 400 câu AI mỗi giờ (LBAI_AI_HOURLY): file lớn nên chạy AI làm nhiều lượt
+     (dùng nút "AI giải câu chưa có đáp án" trong Quản lý ngân hàng cho phần còn lại).
+
+21. TỰ ĐỘNG SAO LƯU DỮ LIỆU TỪ FLY VỀ MÁY TÍNH (mỗi đêm, giữ 7 ngày, tuần mới ghi đè)
+   - Tệp: tools\fly-backup.ps1 (sao lưu một lần) và tools\install-fly-backup-task.ps1 (tạo lịch chạy mỗi ngày 23:30 trong Windows Task Scheduler).
+   - Cách hoạt động: kết nối vào máy Fly bằng flyctl đã đăng nhập sẵn (không lưu mật khẩu/khóa nào trong tệp), chụp CSDL nhất quán bằng SQLite backup API cùng thư mục uploads,
+     nén thành một tệp .tgz rồi tải về. Nếu máy Fly đang tắt (tự tắt khi không có người dùng) thì tự bật lên trước.
+   - Kết quả nằm ở %USERPROFILE%\lbai-backups: lbai-Mon.tgz ... lbai-Sun.tgz (mỗi thứ trong tuần một tệp, sang tuần mới tệp cùng thứ bị ghi đè) và backup.log.
+   - Bật lịch (chạy một lần):  powershell -ExecutionPolicy Bypass -File tools\install-fly-backup-task.ps1     Tắt lịch:  Unregister-ScheduledTask -TaskName 'LBAI Fly Backup' -Confirm:$false
+     Máy tính phải bật lúc 23:30; nếu tắt thì tác vụ chạy ngay khi máy bật lại. Chạy tay bất kỳ lúc nào:  powershell -ExecutionPolicy Bypass -File tools\fly-backup.ps1
+   - Khôi phục: giải nén tệp .tgz (tar -xzf lbai-Mon.tgz) được lbai.db và thư mục uploads; đưa lên ổ đĩa Fly (/data) khi ứng dụng đang dừng, rồi khởi động lại.
+   - Bản sao lưu chứa dữ liệu học sinh (tên, điểm, bài làm): giữ máy tính và thư mục lbai-backups an toàn, không chia sẻ ra ngoài.
